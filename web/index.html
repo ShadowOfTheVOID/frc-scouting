@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1240">
+<title>Hub setup · REBUILT</title>
+<link rel="stylesheet" href="/css/desk.css">
+<style>
+  .form{display:flex;flex-direction:column;gap:14px;max-width:560px}
+  .f label{display:block;font:800 10px Barlow,sans-serif;letter-spacing:.14em;color:var(--t4);margin-bottom:5px}
+  .f input,.f select{width:100%;background:var(--raised);border:1px solid var(--btn);border-radius:8px;
+    padding:10px 12px;color:var(--t0);font:500 13.5px Barlow,sans-serif}
+  .f .h{font:500 11.5px Barlow,sans-serif;color:var(--t6);margin-top:4px}
+  .go{padding:11px 18px;border-radius:8px;background:var(--red);border:none;color:#fff;
+    font:800 11.5px Barlow,sans-serif;letter-spacing:.1em;cursor:pointer}
+  .lk{display:inline-block;padding:9px 16px;border-radius:8px;border:1px solid var(--btn);
+    font:800 11px Barlow,sans-serif;letter-spacing:.1em;color:var(--t1)}
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="apphead">
+    <div class="bar"></div>
+    <div class="in">
+      <div><h1>HUB SETUP</h1><div class="sub" id="sub">checking…</div></div>
+      <span class="sp"></span>
+      <div style="display:flex;gap:8px">
+        <a class="lk" href="/scout">SCOUT</a>
+        <a class="lk" href="/dashboard">DASHBOARD</a>
+        <a class="lk" href="/join">JOIN QR</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="cols" style="grid-template-columns:1fr 1fr">
+    <div class="pane mid">
+      <div class="eyebrow">EVENT</div>
+      <div class="form">
+        <div class="f"><label>EVENT KEY</label>
+          <input id="eventKey" placeholder="2026casf" autocapitalize="off" autocorrect="off" spellcheck="false">
+          <div class="h">As shown on frc.events or The Blue Alliance. Nexus uses the same key.</div></div>
+        <div class="f"><label>EVENT LEVEL</label>
+          <select id="eventLevel">
+            <option value="regional">Regional / District — Energized at 100 fuel</option>
+            <option value="dcmp">District Championship — 240</option>
+            <option value="champs">FIRST Championship — 360</option>
+          </select></div>
+        <div class="f"><label>OUR TEAM</label>
+          <input id="ourTeam" inputmode="numeric" placeholder="6059">
+          <div class="h">Optional. Highlights us in every table.</div></div>
+      </div>
+    </div>
+
+    <div class="pane mid">
+      <div class="eyebrow">API KEYS</div>
+      <div class="hint">Stored on this machine only. Scout phones never receive them.
+        All optional — the app runs without any, just without live data.</div>
+      <div class="form">
+        <div class="f"><label>THE BLUE ALLIANCE</label>
+          <input id="tbaKey" placeholder="X-TBA-Auth-Key" autocomplete="off">
+          <div class="h">Official results and per-robot climb. thebluealliance.com/account</div></div>
+        <div class="f"><label>NEXUS</label>
+          <input id="nexusKey" placeholder="Nexus-Api-Key" autocomplete="off">
+          <div class="h">Live queueing, pit map, alliance selection. frc.nexus/api</div></div>
+        <div class="f"><label>NEXUS WEBHOOK TOKEN</label>
+          <input id="nexusToken" placeholder="Nexus-Token" autocomplete="off">
+          <div class="h">Only if you registered a push webhook.</div></div>
+        <div class="f"><label>STRATEGY PASSCODE</label>
+          <input id="strategyPin" placeholder="leave blank for no lock" autocomplete="off">
+          <div class="h">Gates the picklist. Shared, not personal — the hub stores only a hash
+            of the code, never who used it. Changing it signs everyone out.</div></div>
+        <div><button class="go" id="save">SAVE &amp; REFRESH</button></div>
+        <div class="hint" id="status"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import * as net from '/js/net.js';
+const $ = (s) => document.querySelector(s);
+await net.start();
+try {
+  const c = await net.api('/api/config');
+  $('#eventKey').value = c.eventKey || '';
+  $('#eventLevel').value = c.eventLevel || 'regional';
+  const bits = [c.keys.tba ? 'TBA SET' : 'NO TBA KEY', c.keys.nexus ? 'NEXUS SET' : 'NO NEXUS KEY'];
+  bits.push(c.multipliersFittedFrom ? `CALIBRATED · ${c.multipliersFittedFrom} WINDOWS` : 'PRIORS ONLY');
+  bits.push(c.picklistLocked ? 'PICKLIST LOCKED' : 'PICKLIST OPEN');
+  $('#sub').textContent = bits.join(' · ');
+} catch { $('#sub').textContent = 'HUB NOT REACHABLE'; }
+
+$('#save').onclick = async () => {
+  const body = { eventKey: $('#eventKey').value.trim(), eventLevel: $('#eventLevel').value,
+                 ourTeam: $('#ourTeam').value.trim() };
+  for (const k of ['tbaKey','nexusKey','nexusToken']) { const v = $('#'+k).value.trim(); if (v) body[k] = v; }
+  const pin = $('#strategyPin').value;
+  if (pin !== '') body.strategyPin = pin.trim();
+  $('#status').textContent = 'saving…';
+  try {
+    await net.api('/api/config', { method:'POST', body: JSON.stringify(body) });
+    $('#status').textContent = 'Saved. Fetching event data…';
+    for (const k of ['tbaKey','nexusKey','nexusToken','strategyPin']) $('#'+k).value = '';
+  } catch (e) { $('#status').textContent = 'Failed: ' + e.message; }
+};
+</script>
+</body>
+</html>

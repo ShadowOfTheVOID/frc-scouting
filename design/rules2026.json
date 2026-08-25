@@ -1,0 +1,133 @@
+{
+  "game": "REBUILT",
+  "year": 2026,
+  "matchSeconds": 160,
+  "phases": [
+    {
+      "id": "auto",
+      "label": "AUTO",
+      "start": 0,
+      "end": 20,
+      "bothHubsActive": true,
+      "short": "AUTO"
+    },
+    {
+      "id": "transition",
+      "label": "TRANSITION",
+      "start": 20,
+      "end": 30,
+      "bothHubsActive": true,
+      "short": "TRANS"
+    },
+    {
+      "id": "shift1",
+      "label": "SHIFT 1",
+      "start": 30,
+      "end": 55,
+      "bothHubsActive": false,
+      "shiftIndex": 1,
+      "short": "S1"
+    },
+    {
+      "id": "shift2",
+      "label": "SHIFT 2",
+      "start": 55,
+      "end": 80,
+      "bothHubsActive": false,
+      "shiftIndex": 2,
+      "short": "S2"
+    },
+    {
+      "id": "shift3",
+      "label": "SHIFT 3",
+      "start": 80,
+      "end": 105,
+      "bothHubsActive": false,
+      "shiftIndex": 3,
+      "short": "S3"
+    },
+    {
+      "id": "shift4",
+      "label": "SHIFT 4",
+      "start": 105,
+      "end": 130,
+      "bothHubsActive": false,
+      "shiftIndex": 4,
+      "short": "S4"
+    },
+    {
+      "id": "endgame",
+      "label": "END GAME",
+      "start": 130,
+      "end": 160,
+      "bothHubsActive": true,
+      "short": "END"
+    }
+  ],
+  "fuelPoints": 1,
+  "tower": {
+    "auto": {
+      "Level1": 15,
+      "Level2": 0,
+      "Level3": 0,
+      "None": 0
+    },
+    "teleop": {
+      "Level1": 10,
+      "Level2": 20,
+      "Level3": 30,
+      "None": 0
+    },
+    "maxAutoLevel1PerAlliance": 2
+  },
+  "rankingPoints": {
+    "win": 3,
+    "tie": 1,
+    "energized": {
+      "regional": 100,
+      "dcmp": 240,
+      "champs": 360
+    },
+    "supercharged": {
+      "regional": 360,
+      "dcmp": 360,
+      "champs": 360
+    },
+    "traversal": {
+      "regional": 50,
+      "dcmp": 50,
+      "champs": 50
+    }
+  },
+  "fouls": {
+    "minor": 5,
+    "major": 15
+  },
+  "preloadMax": 8,
+  "intensityBuckets": [
+    {
+      "id": "trickle",
+      "label": "Trickle",
+      "prior": 1.2
+    },
+    {
+      "id": "steady",
+      "label": "Steady",
+      "prior": 3.5
+    },
+    {
+      "id": "dumping",
+      "label": "Dumping",
+      "prior": 11.0
+    }
+  ],
+  "tbaBreakdownWindows": {
+    "auto": "autoCount",
+    "transition": "transitionCount",
+    "shift1": "shift1Count",
+    "shift2": "shift2Count",
+    "shift3": "shift3Count",
+    "shift4": "shift4Count",
+    "endgame": "endgameCount"
+  }
+}

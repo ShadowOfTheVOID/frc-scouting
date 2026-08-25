@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no,maximum-scale=1">
+<meta name="theme-color" content="#05060a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Pit · REBUILT</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="stylesheet" href="/css/hud.css">
+<style>
+  /* Pit scouting is portrait, one-handed, walking. The match HUD is landscape
+     because it is a two-thumb controller; this is the opposite job. */
+  html,body{overflow:hidden}
+  .screen{--safe-l:max(env(safe-area-inset-left),12px);--safe-r:max(env(safe-area-inset-right),12px)}
+  .hdr{padding:0 14px}
+  .pbody{flex:1;min-height:0;display:flex;flex-direction:column;
+    padding:10px var(--safe-r) max(env(safe-area-inset-bottom),12px) var(--safe-l);gap:8px}
+
+  .toggle{display:flex;gap:2px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);
+    border-radius:10px;padding:3px;flex:none}
+  .toggle button{flex:1;min-height:38px;border:none;background:transparent;border-radius:8px;
+    font:800 11px Barlow,sans-serif;letter-spacing:.12em;color:var(--muted)}
+  .toggle button.on{background:var(--red);color:#fff}
+
+  .bar{height:6px;border-radius:3px;background:rgba(255,255,255,.08);overflow:hidden;flex:none}
+  .bar i{display:block;height:6px;background:var(--green)}
+  .barlbl{display:flex;justify-content:space-between;font:700 10px Barlow,sans-serif;
+    letter-spacing:.14em;color:var(--muted);flex:none}
+
+  .mapwrap{flex:1;min-height:0;overflow:auto;-webkit-overflow-scrolling:touch;
+    border-radius:14px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);
+    display:flex;align-items:flex-start;justify-content:center;padding:8px}
+  svg.pitmap{display:block;max-width:100%;max-height:100%;width:auto;height:auto}
+  .pit{cursor:pointer}
+  .pit rect{stroke:rgba(255,255,255,.16);stroke-width:1.5;fill:rgba(255,255,255,.05)}
+  .pit.done rect{fill:rgba(52,168,106,.32);stroke:var(--green)}
+  .pit.partial rect{fill:rgba(245,165,36,.3);stroke:var(--amber)}
+  .pit.ours rect{stroke:var(--red-alert);stroke-width:3}
+  .pit text{font:700 12px Barlow,sans-serif;fill:#e8edf4;pointer-events:none}
+  .pit text.addr{font:600 8.5px Barlow,sans-serif;fill:var(--muted);letter-spacing:.08em}
+  .emptypit{fill:none;stroke:rgba(255,255,255,.09);stroke-width:1;stroke-dasharray:4 4}
+  .area rect{fill:rgba(255,255,255,.035);stroke:rgba(255,255,255,.08)}
+  .area text{font:700 9px Barlow,sans-serif;fill:var(--dim);letter-spacing:.1em}
+  .wall{fill:rgba(255,255,255,.14)}
+  .arrow{fill:rgba(255,255,255,.2)}
+
+  .qlist{flex:1;min-height:0;overflow:auto;-webkit-overflow-scrolling:touch;
+    display:flex;flex-direction:column;gap:5px}
+  .qrow{display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:12px;
+    background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);
+    border-left:3px solid var(--dead);min-height:56px}
+  .qrow.done{border-left-color:var(--green)}
+  .qrow.partial{border-left-color:var(--amber)}
+  .qrow b{font:700 20px 'Barlow Condensed',sans-serif;min-width:52px}
+  .qrow .nm{flex:1;font:600 12.5px Barlow,sans-serif;color:var(--body);overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  .qrow .st{font:700 9.5px Barlow,sans-serif;letter-spacing:.1em;color:var(--dim)}
+
+  /* the form is a sheet over the map, not a side pane */
+  .sheet{position:fixed;inset:0;z-index:40;background:#05060a;display:flex;flex-direction:column;
+    transform:translateY(100%);transition:transform .18s ease-out}
+  .sheet.open{transform:translateY(0)}
+  .sheethdr{flex:none;display:flex;align-items:center;gap:12px;padding:0 14px;height:56px;
+    border-bottom:1px solid rgba(255,255,255,.08);
+    padding-top:env(safe-area-inset-top)}
+  .sheethdr .no{font:700 30px/1 'Barlow Condensed',sans-serif}
+  .sheethdr .mt{flex:1;min-width:0}
+  .sheethdr .mt div{font:600 11px Barlow,sans-serif;color:var(--muted);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .close{min-height:40px;padding:8px 14px;border-radius:10px;background:rgba(255,255,255,.06);
+    border:1px solid rgba(255,255,255,.12);font:800 11px Barlow,sans-serif;letter-spacing:.1em;color:#fff}
+  .sheetbody{flex:1;min-height:0;overflow:auto;-webkit-overflow-scrolling:touch;
+    padding:12px 14px calc(84px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:16px}
+  .q .lbl{font:800 10px Barlow,sans-serif;letter-spacing:.16em;color:var(--muted);margin-bottom:7px}
+  .q .hint2{font:500 11.5px/1.45 Barlow,sans-serif;color:var(--dim);margin-top:6px}
+  .chips{display:flex;gap:7px;flex-wrap:wrap}
+  .chip{flex:1;min-width:74px;min-height:52px;border-radius:12px;
+    background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.11);
+    font:700 13px Barlow,sans-serif;color:var(--body);display:flex;align-items:center;
+    justify-content:center;text-transform:lowercase}
+  .chip.on{background:linear-gradient(100deg,#e11d2b,#a8121d);border-color:#ff5c66;color:#fff;font-weight:800}
+  .q input,.q textarea{width:100%;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.11);
+    border-radius:12px;padding:13px 14px;color:#fff;font:600 14px Barlow,sans-serif;
+    user-select:text;-webkit-user-select:text}
+  .q textarea{resize:none;line-height:1.5}
+  .insp{font:800 9.5px Barlow,sans-serif;letter-spacing:.1em;padding:4px 8px;border-radius:6px;flex:none}
+  .insp.complete{background:rgba(52,168,106,.2);color:var(--green-soft)}
+  .insp.hold{background:rgba(225,29,43,.18);color:var(--red-alert)}
+  .insp.other{background:rgba(255,255,255,.06);color:var(--muted)}
+  .shots{display:flex;gap:8px;flex-wrap:wrap}
+  .shots img{width:82px;height:82px;object-fit:cover;border-radius:10px;border:1px solid rgba(255,255,255,.12)}
+  .addshot{width:82px;height:82px;border-radius:10px;border:1px dashed rgba(255,255,255,.2);
+    display:flex;align-items:center;justify-content:center;font:700 11px Barlow,sans-serif;color:var(--muted)}
+  .savebar{position:absolute;left:0;right:0;bottom:0;padding:10px 14px calc(10px + env(safe-area-inset-bottom));
+    background:linear-gradient(180deg,transparent,#05060a 26%)}
+  .save{width:100%;min-height:58px;border-radius:14px;border:1px solid #ff5c66;
+    background:linear-gradient(100deg,#e11d2b,#a8121d);color:#fff;
+    font:800 15px Barlow,sans-serif;letter-spacing:.1em}
+  .save.saved{background:rgba(52,168,106,.25);border-color:var(--green)}
+</style>
+</head>
+<body>
+<div class="screen" id="screen">
+  <div class="hdr">
+    <span class="k">PIT SCOUTING</span>
+    <span class="m" id="phdr">…</span>
+    <span class="sp"></span>
+    <span class="m fshint" id="fsHint"></span>
+    <span class="dot" id="pdot"></span>
+  </div>
+
+  <div class="pbody">
+    <div class="toggle">
+      <button id="btnMap" class="on">MAP</button>
+      <button id="btnList">LIST</button>
+    </div>
+    <div class="barlbl"><span id="progLbl">—</span><span id="progPct"></span></div>
+    <div class="bar"><i id="progBar" style="width:0"></i></div>
+    <div class="mapwrap" id="mapHost"></div>
+    <div class="qlist hide" id="listHost"></div>
+  </div>
+</div>
+
+<div class="sheet" id="sheet">
+  <div class="sheethdr">
+    <span class="no" id="pTeam">—</span>
+    <span class="mt"><div id="pName"></div><div id="pAddr"></div></span>
+    <span class="insp other" id="pInsp">—</span>
+    <button class="close" id="pClose">DONE</button>
+  </div>
+  <div class="sheetbody">
+    <div class="q"><div class="lbl">DRIVETRAIN</div>
+      <div class="chips" data-field="drivetrain" data-opts="swerve,tank,mecanum,other"></div></div>
+    <div class="q"><div class="lbl">HOW DO THEY SHOOT</div>
+      <div class="chips" data-field="shooter" data-opts="drum,flywheel,dump,none"></div></div>
+    <div class="q"><div class="lbl">HIGHEST TOWER LEVEL THEY CLAIM</div>
+      <div class="chips" data-field="maxClimb" data-opts="L3,L2,L1,none"></div></div>
+    <div class="q"><div class="lbl">CAN THEY HOLD FUEL THROUGH AN INACTIVE SHIFT</div>
+      <div class="chips" data-field="stockpile" data-opts="yes,some,no"></div>
+      <div class="hint2">The defining REBUILT skill — nothing public measures it.</div></div>
+    <div class="q"><div class="lbl">GROUND PICKUP</div>
+      <div class="chips" data-field="groundPickup" data-opts="yes,no"></div></div>
+    <div class="q"><div class="lbl">AUTO ROUTINES</div>
+      <input id="pAutos" placeholder="2 — centre 8 fuel, wall 5 + L1 climb"></div>
+    <div class="q"><div class="lbl">WEIGHT (LB)</div>
+      <input id="pWeight" inputmode="numeric" placeholder="120"></div>
+    <div class="q"><div class="lbl">NOTES</div>
+      <textarea id="pNotes" rows="3" placeholder="what the numbers won't show"></textarea></div>
+    <div class="q"><div class="lbl">PHOTOS</div>
+      <div class="shots" id="pShots"></div>
+      <input type="file" id="pPhoto" accept="image/*" capture="environment" multiple class="hide"></div>
+  </div>
+  <div class="savebar"><button class="save" id="pSave">SAVE PIT</button></div>
+</div>
+
+<script type="module" src="/js/pit.js"></script>
+</body>
+</html>
