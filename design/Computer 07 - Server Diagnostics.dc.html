@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet><link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"><style>
+html,body{margin:0;background:#0b0b0d;font-family:Barlow,system-ui,sans-serif}body{padding:24px;width:max-content;min-width:100%;box-sizing:border-box}
+a{color:#ff3b45;text-decoration:none}a:hover{color:#ff7a80}
+</style></helmet>
+<div style="width:1240px;background:#0a0a0c;border:1px solid #1e1e24;border-radius:8px;overflow:hidden;color:#f4f4f6;box-shadow:0 30px 70px rgba(0,0,0,.6)">
+
+<div style="display:flex;align-items:stretch;background:#131317;border-bottom:1px solid #1e1e24">
+<div style="display:flex;align-items:center;gap:9px;padding:0 14px"><span style="width:14px;height:14px;border-radius:3px;background:#e11d2b;display:flex;align-items:center;justify-content:center;font:800 8px Barlow,sans-serif;color:#fff">S</span><span style="font:600 11.5px Barlow,sans-serif;color:#9a9aa4">Scout Hub Server — Console</span></div>
+<span style="flex:1"></span>
+<div style="display:flex">
+<span style="width:44px;display:flex;align-items:center;justify-content:center;font:400 11px 'JetBrains Mono',monospace;color:#8b8b95">—</span>
+<span style="width:44px;display:flex;align-items:center;justify-content:center;font:400 9px 'JetBrains Mono',monospace;color:#8b8b95">▢</span>
+<span style="width:46px;display:flex;align-items:center;justify-content:center;font:400 12px 'JetBrains Mono',monospace;color:#c8c8d0;background:#2a2a31">✕</span>
+</div>
+</div>
+
+<div style="display:flex;align-items:stretch;border-bottom:1px solid #1e1e24;background:#0f0f12">
+<div style="width:8px;background:#e11d2b"></div>
+<div style="flex:1;display:flex;align-items:center;gap:16px;padding:14px 22px">
+<div><div style="font:700 17px/1.05 Barlow,sans-serif">SCOUT-HUB-01 · WINDOWS 11 PRO</div><div style="font:600 11.5px Barlow,sans-serif;letter-spacing:.1em;color:#7d7d88;margin-top:3px">UP 6h 22m · 192.168.4.10 · SERVICE ACCOUNT</div></div>
+<span style="flex:1"></span>
+<div style="display:flex;align-items:center;gap:8px;padding:8px 14px;border-radius:8px;background:rgba(52,168,106,.12);border:1px solid #1f5138"><span style="width:8px;height:8px;border-radius:50%;background:#34a86a;display:block"></span><span style="font:800 11px Barlow,sans-serif;letter-spacing:.12em;color:#5fce93">ALL SERVICES HEALTHY</span></div>
+<div style="display:flex;gap:6px">
+<span style="padding:8px 14px;border-radius:7px;border:1px solid #2f2f38;font:700 10.5px Barlow,sans-serif;letter-spacing:.1em;color:#a0a0ab">EXPORT LOGS</span>
+<span style="padding:8px 14px;border-radius:7px;background:#e11d2b;font:800 10.5px Barlow,sans-serif;letter-spacing:.1em;color:#fff">RESTART HUB</span>
+</div>
+</div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 360px;gap:1px;background:#1e1e24">
+<div style="background:#0a0a0c;padding:18px 20px 22px;display:flex;flex-direction:column;gap:14px;min-width:0">
+
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:#1e1e24;border:1px solid #1e1e24">
+<div style="background:#0f0f12;padding:12px 14px"><div style="font:800 10px Barlow,sans-serif;letter-spacing:.14em;color:#7d7d88">CPU</div><div style="font:700 28px/1.15 'Barlow Condensed',sans-serif">18%</div><div style="display:flex;gap:2px;align-items:flex-end;height:16px;margin-top:4px"><span style="flex:1;height:22%;background:#2a2a31;display:block"></span><span style="flex:1;height:35%;background:#2a2a31;display:block"></span><span style="flex:1;height:28%;background:#2a2a31;display:block"></span><span style="flex:1;height:61%;background:#2a2a31;display:block"></span><span style="flex:1;height:44%;background:#2a2a31;display:block"></span><span style="flex:1;height:30%;background:#2a2a31;display:block"></span><span style="flex:1;height:38%;background:#e11d2b;display:block"></span><span style="flex:1;height:25%;background:#e11d2b;display:block"></span></div></div>
+<div style="background:#0f0f12;padding:12px 14px"><div style="font:800 10px Barlow,sans-serif;letter-spacing:.14em;color:#7d7d88">MEMORY</div><div style="font:700 28px/1.15 'Barlow Condensed',sans-serif">5.2<span style="font-size:16px;color:#7d7d88"> / 16 GB</span></div><div style="height:5px;background:#2a2a31;margin-top:8px"><span style="display:block;width:33%;height:5px;background:#e11d2b"></span></div></div>
+<div style="background:#0f0f12;padding:12px 14px"><div style="font:800 10px Barlow,sans-serif;letter-spacing:.14em;color:#7d7d88">DISK · C:</div><div style="font:700 28px/1.15 'Barlow Condensed',sans-serif">61%</div><div style="font:600 11px Barlow,sans-serif;color:#5f5f6a">184 GB free · db 2.1 GB</div></div>
+<div style="background:#0f0f12;padding:12px 14px"><div style="font:800 10px Barlow,sans-serif;letter-spacing:.14em;color:#7d7d88">WRITES / MIN</div><div style="font:700 28px/1.15 'Barlow Condensed',sans-serif">412</div><div style="font:600 11px Barlow,sans-serif;color:#5f5f6a">peak 1,340 at Q38</div></div>
+</div>
+
+<div style="border:1px solid #1e1e24">
+<div style="padding:12px 16px;background:#0f0f12;border-bottom:1px solid #1e1e24;display:flex;justify-content:space-between;align-items:baseline"><span style="font:800 11px Barlow,sans-serif;letter-spacing:.16em">WINDOWS SERVICES</span><span style="font:500 11.5px Barlow,sans-serif;color:#7d7d88">all set to start automatically on boot</span></div>
+<div style="display:grid;grid-template-columns:1fr 90px 110px 100px 96px;padding:9px 16px;background:#0d0d10;border-bottom:1px solid #1e1e24;font:800 9.5px Barlow,sans-serif;letter-spacing:.14em;color:#7d7d88"><span>SERVICE</span><span>STATUS</span><span style="text-align:right">PID</span><span style="text-align:right">MEM</span><span style="text-align:right"></span></div>
+<div style="display:grid;grid-template-columns:1fr 90px 110px 100px 96px;align-items:center;padding:11px 16px;border-bottom:1px solid #16161b;font:500 13px Barlow,sans-serif;font-variant-numeric:tabular-nums"><span>ScoutHub.Api <span style="font:400 11px 'JetBrains Mono',monospace;color:#5f5f6a;margin-left:6px">:8080</span></span><span style="font:700 11px Barlow,sans-serif;letter-spacing:.08em;color:#5fce93">RUNNING</span><span style="text-align:right;font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#9a9aa4">4128</span><span style="text-align:right;color:#9a9aa4">318 MB</span><span style="text-align:right"><span style="padding:5px 10px;border-radius:6px;border:1px solid #2f2f38;font:700 10px Barlow,sans-serif;color:#a0a0ab">RESTART</span></span></div>
+<div style="display:grid;grid-template-columns:1fr 90px 110px 100px 96px;align-items:center;padding:11px 16px;border-bottom:1px solid #16161b;font:500 13px Barlow,sans-serif;font-variant-numeric:tabular-nums;background:#0f0f12"><span>ScoutHub.SyncWorker</span><span style="font:700 11px Barlow,sans-serif;letter-spacing:.08em;color:#5fce93">RUNNING</span><span style="text-align:right;font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#9a9aa4">4131</span><span style="text-align:right;color:#9a9aa4">96 MB</span><span style="text-align:right"><span style="padding:5px 10px;border-radius:6px;border:1px solid #2f2f38;font:700 10px Barlow,sans-serif;color:#a0a0ab">RESTART</span></span></div>
+<div style="display:grid;grid-template-columns:1fr 90px 110px 100px 96px;align-items:center;padding:11px 16px;border-bottom:1px solid #16161b;font:500 13px Barlow,sans-serif;font-variant-numeric:tabular-nums"><span>PostgreSQL 16</span><span style="font:700 11px Barlow,sans-serif;letter-spacing:.08em;color:#5fce93">RUNNING</span><span style="text-align:right;font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#9a9aa4">2904</span><span style="text-align:right;color:#9a9aa4">1.4 GB</span><span style="text-align:right"><span style="padding:5px 10px;border-radius:6px;border:1px solid #2f2f38;font:700 10px Barlow,sans-serif;color:#a0a0ab">RESTART</span></span></div>
+<div style="display:grid;grid-template-columns:1fr 90px 110px 100px 96px;align-items:center;padding:11px 16px;border-bottom:1px solid #16161b;font:500 13px Barlow,sans-serif;font-variant-numeric:tabular-nums;background:#0f0f12"><span>ScoutHub.Ingest <span style="font:400 11px 'JetBrains Mono',monospace;color:#5f5f6a;margin-left:6px">TBA / Nexus</span></span><span style="font:700 11px Barlow,sans-serif;letter-spacing:.08em;color:#f5a524">RETRYING</span><span style="text-align:right;font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#9a9aa4">4140</span><span style="text-align:right;color:#9a9aa4">72 MB</span><span style="text-align:right"><span style="padding:5px 10px;border-radius:6px;background:#e11d2b;font:800 10px Barlow,sans-serif;color:#fff">RESTART</span></span></div>
+<div style="display:grid;grid-template-columns:1fr 90px 110px 100px 96px;align-items:center;padding:11px 16px;font:500 13px Barlow,sans-serif;font-variant-numeric:tabular-nums"><span>ScoutHub.Backup <span style="font:400 11px 'JetBrains Mono',monospace;color:#5f5f6a;margin-left:6px">nightly 02:00</span></span><span style="font:700 11px Barlow,sans-serif;letter-spacing:.08em;color:#8b8b95">IDLE</span><span style="text-align:right;font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#5f5f6a">—</span><span style="text-align:right;color:#5f5f6a">—</span><span style="text-align:right"><span style="padding:5px 10px;border-radius:6px;border:1px solid #2f2f38;font:700 10px Barlow,sans-serif;color:#a0a0ab">RUN NOW</span></span></div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+<div style="border:1px solid #1e1e24">
+<div style="padding:12px 16px;background:#0f0f12;border-bottom:1px solid #1e1e24;font:800 11px Barlow,sans-serif;letter-spacing:.16em">SYNC QUEUE</div>
+<div style="padding:14px 16px;display:flex;flex-direction:column;gap:11px">
+<div style="display:flex;align-items:baseline;gap:10px"><span style="font:700 34px/1 'Barlow Condensed',sans-serif">28</span><span style="font:600 12px Barlow,sans-serif;color:#7d7d88">records waiting to write</span></div>
+<div style="display:flex;height:8px;background:#2a2a31"><span style="width:64%;background:#34a86a;display:block"></span><span style="width:25%;background:#f5a524;display:block"></span><span style="width:11%;background:#e11d2b;display:block"></span></div>
+<div style="display:flex;flex-direction:column;gap:6px;font:500 12.5px Barlow,sans-serif;color:#9a9aa4">
+<div style="display:flex;justify-content:space-between"><span>Accepted</span><span style="color:#5fce93">18</span></div>
+<div style="display:flex;justify-content:space-between"><span>Waiting on conflict review</span><span style="color:#f5a524">7</span></div>
+<div style="display:flex;justify-content:space-between"><span>Rejected · bad schema version</span><span style="color:#ff5c66">3</span></div>
+</div>
+</div>
+</div>
+<div style="border:1px solid #1e1e24">
+<div style="padding:12px 16px;background:#0f0f12;border-bottom:1px solid #1e1e24;font:800 11px Barlow,sans-serif;letter-spacing:.16em">NETWORK</div>
+<div style="padding:14px 16px;display:flex;flex-direction:column;gap:9px;font:500 12.5px Barlow,sans-serif;color:#9a9aa4">
+<div style="display:flex;justify-content:space-between"><span>Ethernet · venue drop</span><span style="color:#5fce93">up · 1 Gb</span></div>
+<div style="display:flex;justify-content:space-between"><span>Wi-Fi AP · scout-hub</span><span style="color:#5fce93">9 clients</span></div>
+<div style="display:flex;justify-content:space-between"><span>Uplink to internet</span><span style="color:#f5a524">42% loss</span></div>
+<div style="display:flex;justify-content:space-between"><span>Windows Firewall</span><span style="color:#9a9aa4">8080, 5432 allowed</span></div>
+<div style="margin-top:3px;padding:11px 12px;border:1px dashed #3a2226;background:rgba(225,29,43,.06);font:500 12px/1.5 Barlow,sans-serif;color:#9a9aa4">Venue uplink is flaky — Ingest keeps retrying TBA. Local scouting is unaffected; phones write to the hub, not the internet.</div>
+</div>
+</div>
+</div>
+
+<div style="border:1px solid #1e1e24">
+<div style="padding:12px 16px;background:#0f0f12;border-bottom:1px solid #1e1e24;display:flex;justify-content:space-between;align-items:baseline"><span style="font:800 11px Barlow,sans-serif;letter-spacing:.16em">EVENT LOG</span><span style="font:500 11.5px Barlow,sans-serif;color:#7d7d88">tailing · last 60s</span></div>
+<div style="padding:12px 16px;display:flex;flex-direction:column;gap:6px;font:400 11.5px/1.5 'JetBrains Mono',monospace;background:#08080a">
+<div style="color:#6b6b76">14:22:08 <span style="color:#5fce93">INFO </span> api: match Q41 record accepted from seat RED-2 (AK)</div>
+<div style="color:#6b6b76">14:22:04 <span style="color:#f5a524">WARN </span> ingest: TBA request timed out, retry 3 of 8 in 30s</div>
+<div style="color:#6b6b76">14:21:51 <span style="color:#5fce93">INFO </span> sync: 6 queued records flushed from device pixel-7-jordan</div>
+<div style="color:#6b6b76">14:21:37 <span style="color:#ff5c66">ERROR</span> api: schema v3 payload rejected — device on build 1.4.2, hub expects 1.5.x</div>
+<div style="color:#6b6b76">14:21:20 <span style="color:#5fce93">INFO </span> auth: seat BLUE-3 claimed by MK (Mika)</div>
+<div style="color:#6b6b76">14:20:58 <span style="color:#5fce93">INFO </span> db: vacuum complete in 812ms</div>
+</div>
+</div>
+</div>
+
+<div style="background:#0a0a0c;padding:18px;display:flex;flex-direction:column;gap:14px">
+<div style="font:800 11px Barlow,sans-serif;letter-spacing:.18em;color:#7d7d88">CONNECTED DEVICES</div>
+<div style="display:flex;flex-direction:column;gap:5px">
+<div style="display:flex;align-items:center;gap:10px;padding:11px 12px;background:#0f0f12;border-left:3px solid #e11d2b"><span style="font:700 12px Barlow,sans-serif;min-width:52px;color:#ff7a80">RED 1</span><span style="flex:1;font:500 12.5px Barlow,sans-serif;color:#9a9aa4">pixel-7-jordan<div style="font:400 10.5px 'JetBrains Mono',monospace;color:#5f5f6a">.11 · 1.5.0 · 88%</div></span><span style="font:600 11px Barlow,sans-serif;color:#34a86a">live</span></div>
+<div style="display:flex;align-items:center;gap:10px;padding:11px 12px;background:#0f0f12;border-left:3px solid #e11d2b"><span style="font:700 12px Barlow,sans-serif;min-width:52px;color:#ff7a80">RED 2</span><span style="flex:1;font:500 12.5px Barlow,sans-serif;color:#9a9aa4">iphone-13-avery<div style="font:400 10.5px 'JetBrains Mono',monospace;color:#5f5f6a">.14 · 1.5.0 · 41%</div></span><span style="font:600 11px Barlow,sans-serif;color:#34a86a">live</span></div>
+<div style="display:flex;align-items:center;gap:10px;padding:11px 12px;background:rgba(225,29,43,.08);border-left:3px solid #6d2b30"><span style="font:700 12px Barlow,sans-serif;min-width:52px;color:#ff7a80">RED 3</span><span style="flex:1;font:500 12.5px Barlow,sans-serif;color:#ff8a91">no device<div style="font:400 10.5px 'JetBrains Mono',monospace;color:#5f5f6a">seat open 2 matches</div></span><span style="font:600 11px Barlow,sans-serif;color:#ff5c66">—</span></div>
+<div style="display:flex;align-items:center;gap:10px;padding:11px 12px;background:#0f0f12;border-left:3px solid #3a5f8f"><span style="font:700 12px Barlow,sans-serif;min-width:52px;color:#7fa8d8">BLUE 1</span><span style="flex:1;font:500 12.5px Barlow,sans-serif;color:#9a9aa4">pixel-6a-riley<div style="font:400 10.5px 'JetBrains Mono',monospace;color:#5f5f6a">.19 · 1.5.0 · 63%</div></span><span style="font:600 11px Barlow,sans-serif;color:#34a86a">live</span></div>
+<div style="display:flex;align-items:center;gap:10px;padding:11px 12px;background:#0f0f12;border-left:3px solid #3a5f8f"><span style="font:700 12px Barlow,sans-serif;min-width:52px;color:#7fa8d8">BLUE 2</span><span style="flex:1;font:500 12.5px Barlow,sans-serif;color:#9a9aa4">moto-g-theo<div style="font:400 10.5px 'JetBrains Mono',monospace;color:#f5a524">.22 · 1.4.2 · needs update</div></span><span style="font:600 11px Barlow,sans-serif;color:#f5a524">stale</span></div>
+<div style="display:flex;align-items:center;gap:10px;padding:11px 12px;background:#0f0f12;border-left:3px solid #3a5f8f"><span style="font:700 12px Barlow,sans-serif;min-width:52px;color:#7fa8d8">BLUE 3</span><span style="flex:1;font:500 12.5px Barlow,sans-serif;color:#9a9aa4">iphone-se-mika<div style="font:400 10.5px 'JetBrains Mono',monospace;color:#5f5f6a">.25 · 1.5.0 · 92%</div></span><span style="font:600 11px Barlow,sans-serif;color:#34a86a">live</span></div>
+<div style="display:flex;align-items:center;gap:10px;padding:11px 12px;background:#0f0f12;border-left:3px solid #2f2f38"><span style="font:700 12px Barlow,sans-serif;min-width:52px;color:#8b8b95">LAPTOP</span><span style="flex:1;font:500 12.5px Barlow,sans-serif;color:#9a9aa4">strategy-laptop<div style="font:400 10.5px 'JetBrains Mono',monospace;color:#5f5f6a">.31 · dashboard</div></span><span style="font:600 11px Barlow,sans-serif;color:#34a86a">live</span></div>
+</div>
+
+<div style="font:800 11px Barlow,sans-serif;letter-spacing:.18em;color:#7d7d88;margin-top:4px">BACKUPS</div>
+<div style="display:flex;flex-direction:column;gap:5px">
+<div style="display:flex;justify-content:space-between;padding:10px 12px;background:#0f0f12;font:500 12.5px Barlow,sans-serif;color:#9a9aa4"><span>Last snapshot</span><span style="color:#5fce93">12m ago</span></div>
+<div style="display:flex;justify-content:space-between;padding:10px 12px;background:#0f0f12;font:500 12.5px Barlow,sans-serif;color:#9a9aa4"><span>USB mirror · E:\scout</span><span style="color:#5fce93">in sync</span></div>
+<div style="display:flex;justify-content:space-between;padding:10px 12px;background:#0f0f12;font:500 12.5px Barlow,sans-serif;color:#9a9aa4"><span>Cloud copy</span><span style="color:#f5a524">queued · no uplink</span></div>
+</div>
+
+<div style="margin-top:4px;padding:13px 14px;border:1px dashed #3a2226;border-radius:10px;background:rgba(225,29,43,.06)"><div style="font:800 10.5px Barlow,sans-serif;letter-spacing:.14em;color:#ff8a91">PUSH BUILD 1.5.0 TO THEO</div><div style="font:500 12.5px/1.5 Barlow,sans-serif;color:#9a9aa4;margin-top:5px">His phone is on 1.4.2, which the hub rejects. Update takes about 20 seconds over the local AP — do it between matches, not during one.</div></div>
+
+<span style="flex:1"></span>
+<div style="display:flex;gap:6px">
+<span style="flex:1;text-align:center;padding:11px 0;border-radius:8px;border:1px solid #2f2f38;font:700 11px Barlow,sans-serif;letter-spacing:.1em;color:#a0a0ab">OPEN DB SHELL</span>
+<span style="flex:1;text-align:center;padding:11px 0;border-radius:8px;border:1px solid #2f2f38;font:700 11px Barlow,sans-serif;letter-spacing:.1em;color:#a0a0ab">EVENT SETTINGS</span>
+</div>
+</div>
+</div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1296,&quot;height&quot;:900}}"></script>
+</body>
+</html>

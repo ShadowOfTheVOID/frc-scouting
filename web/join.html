@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Join · REBUILT Scouting</title>
+<link rel="stylesheet" href="/css/desk.css">
+<style>
+  .qrs { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .qr { background: #fff; padding: 16px; border-radius: 14px; text-align: center; }
+  .qr img, .qr canvas { width: 100%; max-width: 300px; height: auto; image-rendering: pixelated; }
+  .qr .u { color: #111; font: 600 14px ui-monospace, Menlo, monospace; margin-top: 10px; word-break: break-all; }
+</style>
+</head>
+<body>
+<div class="shell"><div class="apphead"><div class="bar"></div><div class="in"><div><h1>POINT A PHONE CAMERA AT THIS</h1><div class="sub">SCANNING USES THE PHONE'S OWN CAMERA APP — NOTHING TO INSTALL</div></div></div></div><div class="pane mid">
+  <div class="qrs" id="qrs"><p class="hint">finding addresses…</p></div>
+  <div><div class="eyebrow">IF A PHONE CAN'T CONNECT</div>
+    <ul class="hint" style="line-height:1.7">
+      <li>Make sure it's on the same wifi, or joined the laptop's hotspot.</li>
+      <li><b>Windows:</b> allow Python through Windows Firewall on <b>Private</b> networks.
+          It prompts the first time and silently blocks everything if dismissed.</li>
+      <li>Guest wifi often isolates clients from each other — use the laptop's hotspot instead.</li>
+    </ul>
+  </div>
+</div></div>
+<script src="/js/vendor/qrcode.js"></script>
+<script>
+(async () => {
+  const box = document.getElementById('qrs');
+  let urls = [];
+  try {
+    const r = await fetch('/api/discover');
+    urls = (await r.json()).urls || [];
+  } catch {}
+  if (!urls.length) urls = [location.origin];
+
+  box.innerHTML = '';
+  for (const u of urls) {
+    const target = u + '/scout';
+    const qr = qrcode(0, 'M');
+    qr.addData(target);
+    qr.make();
+    const d = document.createElement('div');
+    d.className = 'qr';
+    d.innerHTML = qr.createImgTag(6, 8) + `<div class="u">${target}</div>`;
+    box.appendChild(d);
+  }
+})();
+</script>
+</body>
+</html>

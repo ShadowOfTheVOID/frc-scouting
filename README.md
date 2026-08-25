@@ -1,0 +1,250 @@
+# REBUILT Scouting — FRC 2026
+
+Scouting for **REBUILT presented by Haas**, built for FRC Team 6059.
+
+One laptop runs the whole thing. Scouts open a web page on their phones — nothing to install,
+no app store. A strategy dashboard runs on any other laptop or tablet on the same network.
+
+**You do not need to be a programmer to run this.** If you can open a terminal and type one
+line, you are done. Everything below assumes you have never done that before.
+
+---
+
+## Start here — first time only
+
+You do this **once**, at home, before your first competition. Give yourself 20 minutes.
+
+### 1. Install Python
+
+Python is the only thing this needs. It is free.
+
+- **Windows** — go to [python.org/downloads](https://www.python.org/downloads/), click the big
+  yellow button, run the installer. **Tick the box that says "Add python.exe to PATH"** on the
+  first screen. This matters; if you miss it, nothing else will work.
+- **Mac** — open the Terminal app and type `python3 --version`. If it prints a number like
+  `3.11.6`, you already have it and can skip ahead. If it offers to install developer tools,
+  say yes.
+
+### 2. Get the files onto the laptop
+
+Download this repository as a ZIP (green **Code** button → **Download ZIP**) and unzip it
+somewhere you will find again — the Desktop is fine.
+
+### 3. Start it once, to check it works
+
+- **Windows** — open the unzipped folder and double-click **`start-server.bat`**
+- **Mac** — open the unzipped folder and double-click **`start-server.command`**
+
+> **Mac, first time: "cannot be opened" or nothing happens?** Downloading a ZIP strips the
+> permission that lets a file be double-clicked. Fix it once and it works forever after:
+> open the **Terminal** app, type `chmod +x ` (with the space), then **drag the
+> `start-server.command` file into the Terminal window** and press Enter. Now double-click it.
+>
+> If you would rather skip that entirely, you can always start it by dragging the *folder* into
+> a Terminal window and typing `python3 server/hub.py`.
+
+A black window appears and prints something like this:
+
+```
+  FRC 2026 REBUILT scouting server
+  ----------------------------------------------------
+    http://192.168.1.120:8080  <- try this first
+
+  Scouts:    open  http://192.168.1.120:8080/scout
+  Dashboard: open  http://192.168.1.120:8080/dashboard
+  Join QR:   open  http://localhost:8080/join   on this screen and let scouts scan it
+  Settings:  open  http://localhost:8080/       on this screen (API keys live here)
+```
+
+**Leave that black window open.** Closing it stops the server. Minimise it instead.
+
+> **Windows will pop up a firewall warning the first time.** Tick **Private networks** and click
+> **Allow access**. If you click Cancel, phones will not be able to connect and there is no
+> other symptom — it just silently does not work. This is the single most common problem.
+
+### 4. Add your API keys
+
+On the **laptop itself**, open a browser and go to **http://localhost:8080/**
+
+> Keys can only be entered here, on the hub laptop. Open that address from a phone and it will
+> politely tell you to go to the laptop. That is on purpose — nobody on the venue wifi can
+> change your settings.
+
+Paste in whichever keys you have. All of them are free and all of them are optional; the app
+runs without any, just with less live data.
+
+| Key | What it gets you | Where to get it |
+|---|---|---|
+| **The Blue Alliance** | official match results, per-robot climb | [thebluealliance.com/account](https://www.thebluealliance.com/account) |
+| **Nexus** | live queueing, match timing, pit map, alliance selection | [frc.nexus/api](https://frc.nexus/api) |
+| **FRC Events** | fastest official live scores | [frc-events.firstinspires.org](https://frc-events.firstinspires.org/services/API) |
+| Statbotics | EPA next to your own numbers | nothing to do — no key needed |
+
+Also set the **event key** (like `2026casf` — the code on frc.events or The Blue Alliance) and
+**our team** (6059). Click **SAVE & REFRESH**.
+
+### 5. Try it before you rely on it
+
+Practice with a fake event before you are standing in a venue. See
+[Practice without a competition](#practice-without-a-competition) at the bottom.
+
+---
+
+## At the competition
+
+### Setting up (15 minutes, once per event)
+
+1. **Turn on the laptop's hotspot.** This is the most reliable option by a mile — venue wifi is
+   usually blocked, overloaded, or set up so devices cannot see each other.
+   - Windows: Settings → Network & internet → **Mobile hotspot** → on
+   - Mac: System Settings → General → Sharing → **Internet Sharing** → on
+2. **Connect all six scout phones to that hotspot.**
+3. **Start the server** (double-click the launcher as before).
+4. **Check the event key is right** at http://localhost:8080/ — it changes every competition.
+5. **Open http://localhost:8080/join on the laptop screen.** It shows a big QR code.
+6. **Each scout points their normal camera at the QR** and taps the link that pops up. Not a
+   scanner app — the camera app they already have.
+7. **Each scout picks the station matching the sign above their chair.** RED 2 means tap RED 2.
+   There is no field map on purpose, so there is nothing to mirror or get backwards.
+8. **Each scout adds it to their home screen** so it opens full-screen like an app:
+   - iPhone: Share button → **Add to Home Screen**
+   - Android: Chrome menu (⋮) → **Add to home screen**
+
+That is it. From here on they tap the icon.
+
+### During matches
+
+Scouts do not have to do anything except watch their robot:
+
+- **Left thumb** picks how fast the robot is shooting — *a trickle*, *steady*, *dumping*.
+- **Right thumb** holds the big pad while the robot is actually shooting. That is the whole job.
+- The first scout to tap the pad starts the clock **for everyone on that match**. The others'
+  phones jump straight into the match on the same clock.
+- **Tapping late is fine.** Really. Tell them to tap when they notice the match started, not to
+  race the buzzer — the hub corrects the timing afterwards from official results.
+- After the buzzer: a few taps for driving, defence, anything that went wrong, then **SEND IT IN**.
+
+### If the wifi drops
+
+Nothing is lost and nobody needs to do anything. The phone keeps working, saves everything on
+itself, and sends it the moment the hub is reachable again. The header changes to say so.
+
+The one thing to tell scouts: **do not force-reload the page while out of range.** Their data is
+safe either way, but the page will not load again until they are back in range.
+
+---
+
+## For the scout lead
+
+Open the dashboard on your laptop — `http://<the address the server printed>:8080/dashboard` —
+and stay on the **CREW** tab. It answers the only question you have during quals: *is data
+coming in, and if not, who do I go talk to?*
+
+It tells you in plain words:
+
+- `RED 2 — nobody seated, those robots are unwatched`
+- `AK on RED 1 — app is not open on their phone` → go tell them to reopen it
+- `CJ on BLUE 3 — gone quiet 6m ago, check their wifi`
+
+When everything is fine it says so in one green line and you can go back to watching robots.
+
+**THIS MATCH** lists the six robots on the field and who is watching each, so an unwatched robot
+is obvious *before* the match instead of after.
+
+### People swapping in and out
+
+Six scouts and no spare, so this happens all day.
+
+- **Same phone, new person** — on the standby screen, tap **HAND OVER**, type the new initials.
+  The seat and the match stay put; the previous scout's work is saved under their name.
+- **Different phone** — the new scout just claims the station from their own phone. The old
+  phone is told immediately and stops, so you never get two people logging one robot.
+- **FREE** on the crew board releases a chair when someone walks off.
+
+### Training someone new
+
+Send them to **`/scout?practice=1`**. It is the real screen against a fake match — everything
+behaves exactly as it will in a real one — and nothing they do is saved. Two fake matches and
+they have got it.
+
+---
+
+## The picklist
+
+Everyone on the network can **look** at the picklist. Only people with the strategy passcode can
+**change** it, so a bored student cannot flag a team as do-not-pick an hour before alliance
+selection.
+
+Set the passcode on the settings page. Leave it blank and anyone can edit. Changing it signs
+everyone out, which is handy right before alliance selection.
+
+During alliance selection the board crosses teams off by itself as they are picked, so the next
+available name is always at the top.
+
+---
+
+## When something goes wrong
+
+| What you see | What it is | What to do |
+|---|---|---|
+| Phones cannot connect at all | Windows Firewall blocked it | Restart the server, click **Allow access** on **Private networks** |
+| A phone says it cannot reach the hub | out of range, or the laptop moved networks | Walk back toward the laptop. Data is safe; it sends itself |
+| Scouts see an old event's teams | event key not changed | http://localhost:8080/ on the laptop, set the new event key |
+| Fuel numbers look wrong for one team | a scout was on their own clock, or missed matches | Check the **HEALTH** tab — flagged matches and scout reliability are listed |
+| Nothing at all loads | the black window got closed | Double-click the launcher again |
+| The QR code will not scan | screen too dim, or too far | Turn brightness up; hold the phone about a foot away |
+
+If a phone is truly stuck, the scout can keep scouting anyway — everything saves locally — and
+you can collect it later with **SAVE A BACKUP FILE** on their offline screen.
+
+---
+
+## Practice without a competition
+
+Generate a full fake event and poke at everything:
+
+```
+python3 server/seed_demo.py --db data/demo.db --event 2026demo
+python3 server/hub.py --db data/demo.db
+```
+
+(On Windows, type `python` instead of `python3`.)
+
+That builds 31 teams, 40 matches with 26 already played, scout data already logged, and a real
+pit map. The teams are FIRST's actual **Off-Season Demo Teams (9970–9999)** plus **6059**, so
+nothing here can be confused with a real team's record.
+
+Everything works with no keys and no internet: the numbers crunch, the picklist ranks, the pit
+map draws.
+
+---
+
+## What is in here
+
+```
+start-server.bat / .command   double-click these
+server/                       the hub — Python, no dependencies to install
+web/                          what phones and laptops actually open
+design/                       the UI specification the screens were built to
+data/                         your event database — never share this, it holds your keys
+docs/how-it-works.md          why the tricky parts work the way they do
+```
+
+`data/` is excluded from git on purpose: it holds your API keys and strategy passcode.
+
+## For the curious
+
+[docs/how-it-works.md](docs/how-it-works.md) covers the parts with real reasoning behind them —
+how per-robot fuel counts are worked out when nobody can count that fast, why the match clock
+matters less than you would think, and how accurate any of it actually is.
+
+Run the maths tests with:
+
+```
+python3 server/tests_solver.py
+```
+
+## License
+
+MIT — see [LICENSE](LICENSE). Third-party code, fonts, and data are credited in
+[NOTICE.md](NOTICE.md).

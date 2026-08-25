@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1240">
+<title>Strategy · REBUILT</title>
+<link rel="stylesheet" href="/css/desk.css">
+</head>
+<body>
+<div class="shell">
+
+  <div class="apphead">
+    <div class="bar"></div>
+    <div class="in">
+      <div>
+        <h1 id="evTitle">REBUILT · STRATEGY</h1>
+        <div class="sub" id="evSub">NO EVENT · 0 TEAMS</div>
+      </div>
+      <span class="sp"></span>
+      <div class="seg" id="tabs">
+        <button data-tab="crew" class="on">CREW</button>
+        <button data-tab="live">LIVE</button>
+        <button data-tab="teams">TEAMS</button>
+        <button data-tab="picklist">PICKLIST</button>
+        <button data-tab="health">HEALTH</button>
+        <button data-tab="seats">SEATS</button>
+        <button data-tab="server">SERVER</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════ CREW ═══ -->
+  <div class="cols" id="t-crew" style="grid-template-columns:1fr 340px">
+    <div class="pane mid">
+      <div id="crewAlert"></div>
+      <div class="tbl">
+        <div class="cap"><span class="t">WHO IS ON RIGHT NOW</span>
+          <span class="n" id="crewSub">—</span></div>
+        <div class="hd" id="crewHead"></div>
+        <div id="crewBody"></div>
+      </div>
+      <div class="tbl">
+        <div class="cap"><span class="t">THIS MATCH</span>
+          <span class="n">every robot needs a pair of eyes</span></div>
+        <div id="crewMatch"></div>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="eyebrow">GET A PHONE ON</div>
+      <div class="hint">Open <a href="/join" target="_blank">the join page</a> on this screen.
+        The scout points their normal camera at it, taps the link, then picks the station
+        matching the sign above their chair.</div>
+      <div id="joinMini" style="margin-top:10px"></div>
+      <div class="eyebrow" style="margin-top:14px">TRAINING</div>
+      <div class="hint">Send a new scout to
+        <a href="/scout?practice=1" target="_blank">practice mode</a> — the full HUD against a
+        fake match, and nothing they log is saved.</div>
+      <div class="eyebrow" style="margin-top:14px">RECENT SWAPS</div>
+      <div id="crewSwaps"></div>
+      <div class="eyebrow" style="margin-top:14px">COVERAGE</div>
+      <div id="crewCoverage"></div>
+    </div>
+  </div>
+
+  <!-- ═════════════════════════════════════════════════════════ LIVE ═══ -->
+  <div class="cols live hide" id="t-live">
+    <div class="pane">
+      <div class="eyebrow">ON FIELD</div>
+      <div id="onfield"></div>
+      <div class="callout hide" id="headsup">
+        <div class="h">HEADS UP</div>
+        <div class="b" id="headsupBody"></div>
+      </div>
+    </div>
+
+    <div class="pane mid">
+      <div class="tiles" id="tiles"></div>
+      <div class="tbl">
+        <div class="cap">
+          <span class="t">TEAM RANKING</span>
+          <span class="n">fuel is <b>estimated</b> · climb / auto / RP exact</span>
+        </div>
+        <div class="hd" id="rankHead"></div>
+        <div id="rankBody"></div>
+      </div>
+    </div>
+
+    <div class="pane">
+      <div style="display:flex;align-items:baseline;justify-content:space-between">
+        <span class="eyebrow">PICKLIST</span>
+        <span class="hint" id="pkHint">drag to reorder</span>
+      </div>
+      <div class="list" id="pkMini"></div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════ TEAMS ═══ -->
+  <div class="cols one hide" id="t-teams">
+    <div class="pane mid">
+      <div class="tbl">
+        <div class="cap">
+          <span class="t">ALL TEAMS</span>
+          <span class="n">fuel is <b>estimated</b> and carries a band · climb / auto / RP exact</span>
+        </div>
+        <div class="hd" id="allHead"></div>
+        <div id="allBody"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═════════════════════════════════════════════════════ PICKLIST ═══ -->
+  <div class="cols hide" id="t-picklist" style="grid-template-columns:1fr 290px">
+    <div class="pane mid">
+      <div id="pkEditBar"></div>
+      <div class="tbl">
+        <div class="cap">
+          <span class="t">DRAFT BOARD</span>
+          <span class="n" id="pkStatus">alliance selection not started</span>
+        </div>
+        <div id="pkFull"></div>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="eyebrow">WEIGHTS</div>
+      <div class="hint">Exact fields carry the ranking. Fuel is estimated, so it only breaks ties.</div>
+      <div class="list" id="weights" style="gap:10px"></div>
+      <div class="eyebrow" style="margin-top:6px">DO NOT PICK</div>
+      <div class="list" id="dnpList"></div>
+      <button id="pinLock" class="hide" style="margin-top:14px;padding:10px;border-radius:8px;
+        background:transparent;border:1px solid var(--btn);color:var(--t4);
+        font:700 10.5px Barlow,sans-serif;letter-spacing:.12em;cursor:pointer">STOP EDITING</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════ HEALTH ═══ -->
+  <div class="cols hide" id="t-health" style="grid-template-columns:1fr 360px">
+    <div class="pane mid">
+      <div class="tiles" id="healthTiles"></div>
+      <div class="tbl">
+        <div class="cap">
+          <span class="t">SCOUT RELIABILITY</span>
+          <span class="n">how well each scout's runs reconcile with official window totals</span>
+        </div>
+        <div class="hd" id="scoutHead"></div>
+        <div id="scoutBody"></div>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="eyebrow red">NEED RECONCILE</div>
+      <div class="list" id="flags"></div>
+      <div class="eyebrow" style="margin-top:6px">CALIBRATION</div>
+      <div id="calib"></div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════ MATCH PREVIEW ═══ -->
+  <div class="cols hide" id="t-match" style="grid-template-columns:1fr 1fr">
+    <div class="pane mid" id="mvRed"></div>
+    <div class="pane mid" id="mvBlue"></div>
+  </div>
+
+  <!-- ═════════════════════════════════════════════════════ TEAM DETAIL ═══ -->
+  <div class="cols hide" id="t-team" style="grid-template-columns:1fr 340px">
+    <div class="pane mid" id="tdMain"></div>
+    <div class="pane" id="tdSide"></div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════ SEATS ═══ -->
+  <div class="cols hide" id="t-seats" style="grid-template-columns:1fr 320px">
+    <div class="pane mid">
+      <div class="tbl">
+        <div class="cap"><span class="t">SEAT GRID · NEXT FOUR MATCHES</span>
+          <span class="n" id="seatSub">who is watching whom</span></div>
+        <div class="hd" id="seatHead"></div>
+        <div id="seatBody"></div>
+      </div>
+      <div class="tbl">
+        <div class="cap"><span class="t">SCOUTS ON THE ROSTER</span></div>
+        <div class="hd" id="rosterHead"></div>
+        <div id="rosterBody"></div>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="eyebrow">COVERAGE THIS EVENT</div>
+      <div id="seatCoverage"></div>
+      <div class="eyebrow" style="margin-top:8px">JOIN</div>
+      <div class="hint">Open <a href="/join" target="_blank">the join page</a> on this screen and
+        let a scout point a phone camera at it.</div>
+      <div id="seatWarn"></div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════ SERVER ═══ -->
+  <div class="cols hide" id="t-server" style="grid-template-columns:1fr 360px">
+    <div class="pane mid">
+      <div class="tiles" id="srvTiles"></div>
+      <div class="tbl">
+        <div class="cap"><span class="t">SERVICES</span><span class="n" id="srvHealth">—</span></div>
+        <div class="hd" id="srvHead"></div>
+        <div id="srvBody"></div>
+      </div>
+      <div class="tbl">
+        <div class="cap"><span class="t">EVENT LOG</span>
+          <span class="n">newest first</span></div>
+        <div id="srvLog"></div>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="eyebrow">NETWORK</div>
+      <div id="srvNet"></div>
+      <div class="eyebrow" style="margin-top:8px">DATA</div>
+      <div id="srvData"></div>
+    </div>
+  </div>
+
+</div>
+<script type="module" src="/js/desk.js"></script>
+</body>
+</html>
