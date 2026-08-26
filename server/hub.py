@@ -1421,10 +1421,10 @@ def main():
 
     responder = None
     if not args.no_mdns:
-        ips = discover.local_ipv4s()
-        if ips:
-            responder = discover.MDNSResponder(ips[0])
-            responder.start()
+        # No address check first: the responder finds its own and keeps checking,
+        # so starting the hub before the hotspot exists is fine.
+        responder = discover.MDNSResponder()
+        responder.start()
 
     print(discover.banner(args.port))
     try:

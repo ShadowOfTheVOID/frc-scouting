@@ -99,9 +99,17 @@ Practice with a fake event before you are standing in a venue. See
 
 1. **Turn on the laptop's hotspot.** This is the most reliable option by a mile — venue wifi is
    usually blocked, overloaded, or set up so devices cannot see each other.
-   - Windows: Settings → Network & internet → **Mobile hotspot** → on
-   - Mac: System Settings → General → Sharing → **Internet Sharing** → on
-2. **Connect all six scout phones to that hotspot.**
+   - Windows: Settings → Network & internet → **Mobile hotspot** → on. Windows will share the
+     laptop's own wifi connection, so this works with nothing plugged in.
+   - Mac: System Settings → General → Sharing → **Internet Sharing** → on. macOS will **not**
+     share wifi to wifi, so the laptop needs its internet arriving some other way first: plug in
+     ethernet, or connect an iPhone by cable and turn on its Personal Hotspot, then share **from**
+     that **to** Wi-Fi. On a Mac with nothing but wifi, the option is simply not offered.
+   - **Mac with nothing to plug in?** Turn on a *phone's* hotspot instead and join the laptop and
+     every scout phone to it. Same result — one small network with nobody else on it.
+2. **Connect all six scout phones to that hotspot.** An iPhone Personal Hotspot usually stops at
+   five devices, which is one short of six scouts plus the laptop — host from the laptop or from
+   an Android phone if you are running a full crew.
 3. **Start the server** (double-click the launcher as before).
 4. **Check the event key is right** at http://localhost:8080/ — it changes every competition.
 5. **Open http://localhost:8080/join on the laptop screen.** It shows a big QR code.
@@ -114,6 +122,14 @@ Practice with a fake event before you are standing in a venue. See
    - Android: Chrome menu (⋮) → **Add to home screen**
 
 That is it. From here on they tap the icon.
+
+> **What actually needs the internet.** Only the outside data: The Blue Alliance, Nexus, FRC
+> Events, Statbotics. Scouting itself never leaves the hotspot — the phones talk to the laptop and
+> to nothing else, so a hotspot with no way out still runs a full event. Everything already pulled
+> stays put: the schedule holds, the numbers crunch, the picklist ranks, the pit map draws. Only
+> official results and Nexus queueing stop arriving, and they resume by themselves the moment the
+> laptop is back online — nothing to restart. Pull the schedule once while you still have signal
+> and you are covered for the day.
 
 ### During matches
 
