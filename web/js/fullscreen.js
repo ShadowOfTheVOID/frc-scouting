@@ -11,7 +11,7 @@
 //
 // Net effect: both platforms end up chrome-free, by different means.
 
-const isiOS = /iP(hone|ad|od)/.test(navigator.platform) ||
+export const isiOS = /iP(hone|ad|od)/.test(navigator.platform) ||
   (navigator.userAgent.includes('Mac') && 'ontouchend' in document);
 
 export function isStandalone() {
@@ -79,4 +79,26 @@ export function install({ triggers = [], orientation, hintEl } = {}) {
       hintEl.remove();
     }
   }
+}
+
+/**
+ * Offer "Add to Home Screen" — iPhone only, and only while still in Safari.
+ *
+ * This is not cosmetic. iOS gives a home-screen web app its own storage
+ * partition, so IndexedDB written in the Safari tab is NOT visible to the
+ * installed app. A scout who logs two matches and *then* installs leaves that
+ * data stranded in a tab nobody opens again. So the ask has to land before the
+ * first match, which is why this runs on the seat screen and says so plainly.
+ *
+ * Android is deliberately excluded: over plain HTTP Chrome only makes a
+ * shortcut, not a WebAPK, so `enter()` above is the better route there.
+ */
+export function offerHomeScreen({ el, skipKey = 'a2hsSkipped' } = {}) {
+  if (!el) return;
+  const pointless = !isiOS || isStandalone() || localStorage.getItem(skipKey) === '1';
+  if (pointless) { el.remove(); return; }
+
+  el.classList.remove('hide');
+  const dismiss = () => { localStorage.setItem(skipKey, '1'); el.remove(); };
+  el.querySelector('#a2hsSkip').addEventListener('click', dismiss);
 }
