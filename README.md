@@ -125,7 +125,11 @@ Scouts do not have to do anything except watch their robot:
   phones jump straight into the match on the same clock.
 - **Tapping late is fine.** Really. Tell them to tap when they notice the match started, not to
   race the buzzer — the hub corrects the timing afterwards from official results.
+- **Before the buzzer**, while the robot is lining up, the waiting screen asks two things in one
+  tap each: where it starts, and how much fuel it is carrying. Both can be left blank.
 - After the buzzer: a few taps for driving, defence, anything that went wrong, then **SEND IT IN**.
+  If they logged any defence, one extra tap asks which robot they were blocking — scouts who
+  logged none never see the question.
 
 ### If the wifi drops
 
@@ -181,9 +185,7 @@ selection.
 Set the passcode on the settings page. Leave it blank and anyone can edit. Changing it signs
 everyone out, which is handy right before alliance selection.
 
-The passcode also gates the **per-scout** panel on the HEALTH tab. Without it, a dashboard in the
-stands shows how good the *data* is and never how good a *person* is — see
-[Judging the data, not the scouts](#judging-the-data-not-the-scouts).
+The passcode also gates the **per-scout** panel on the HEALTH tab — see below.
 
 During alliance selection the board crosses teams off by itself as they are picked, so the next
 available name is always at the top.
@@ -200,6 +202,26 @@ second-pick board). One laptop is one laptop, and this is the ten minutes where 
 
 ---
 
+## Judging the data, not the scouts
+
+A dashboard left open in the stands is readable by anyone walking past, so it is careful about
+what it puts on screen.
+
+**Who needs help is public.** Whose phone has gone dark, which station has logged nothing in
+twenty minutes — that is equipment, you have to act on it immediately, and it is on the CREW
+tab in plain words.
+
+**Who is any good is not.** Per-scout reconciliation rates are on the HEALTH tab behind the
+strategy passcode, or on the hub laptop itself. It is coaching material — someone to go and
+stand next to for a match — not a leaderboard for the room.
+
+What the room sees instead is **SCOUTS vs TBA** on the HEALTH tab: what our scouting said each
+match was worth against the official result, and whether we are running hot or cold today. That
+is a statement about the data, and it is the number that actually tells you how far to trust
+the fuel column.
+
+---
+
 ## When something goes wrong
 
 | What you see | What it is | What to do |
@@ -207,7 +229,8 @@ second-pick board). One laptop is one laptop, and this is the ten minutes where 
 | Phones cannot connect at all | Windows Firewall blocked it | Restart the server, click **Allow access** on **Private networks** |
 | A phone says it cannot reach the hub | out of range, or the laptop moved networks | Walk back toward the laptop. Data is safe; it sends itself |
 | Scouts see an old event's teams | event key not changed | http://localhost:8080/ on the laptop, set the new event key |
-| Fuel numbers look wrong for one team | a scout was on their own clock, or missed matches | Check the **HEALTH** tab — flagged matches and scout reliability are listed |
+| Fuel numbers look wrong for one team | a scout was on their own clock, or missed matches | Check the **HEALTH** tab — flagged matches are listed with the reason |
+| Every team's fuel looks too high, or too low | scouts are calling shooting harder or softer than it scores | **HEALTH** tab, ACCURACY panel — it says `running N% hot` or `cold`. Worth a word about the rate ladder; the solver corrects for it either way |
 | Nothing at all loads | the black window got closed | Double-click the launcher again |
 | The database is damaged, or a whole day looks wrong | anything from a bad shutdown to a full disk | Stop the server. Copy the newest file out of `data/snapshots/` over `data/scouting.db`, delete `data/scouting.db-wal` and `-shm` if they are there, and start it again. The hub writes a snapshot every ten minutes and keeps the last twelve |
 | The QR code will not scan | screen too dim, or too far | Turn brightness up; hold the phone about a foot away |
@@ -222,7 +245,9 @@ The **SERVER** tab on the dashboard has all of it:
 - **JSON export** — the whole event. This is the one that imports back in, and the one to send
   another laptop.
 - **CSV** — team summary, every scout entry, or pit scouting. For a spreadsheet, or for handing
-  numbers to an alliance partner.
+  numbers to an alliance partner. The team summary carries the same scout-vs-official check the
+  HEALTH tab shows, plus defence in both directions and each robot's usual start zone, so the
+  spreadsheet and the dashboard cannot disagree.
 - **Printable picklist** — see above.
 
 ---
@@ -245,6 +270,10 @@ nothing here can be confused with a real team's record.
 Everything works with no keys and no internet: the numbers crunch, the picklist ranks, the pit
 map draws.
 
+Adding `--via-nexus` builds the same event but feeds the schedule in the way a real competition
+does, through Nexus rather than as finished results. It is worth using if you are changing how
+matches are ingested — that path is the one that broke once.
+
 ---
 
 ## What is in here
@@ -256,12 +285,16 @@ web/                          what phones and laptops actually open
 design/                       the UI specification the screens were built to
 data/                         your event database — never share this, it holds your keys
 data/snapshots/               automatic backups, newest is the one to restore from
+docs/features.md              what every screen and field does
 docs/how-it-works.md          why the tricky parts work the way they do
 ```
 
 `data/` is excluded from git on purpose: it holds your API keys and strategy passcode.
 
-## For the curious
+## Two more documents
+
+[docs/features.md](docs/features.md) is the reference: every screen, every tab, every field a
+scout can fill in, and who is allowed to see what. Hand it to a new strategy student.
 
 [docs/how-it-works.md](docs/how-it-works.md) covers the parts with real reasoning behind them —
 how per-robot fuel counts are worked out when nobody can count that fast, why the match clock
