@@ -46,6 +46,9 @@ TBA_POLL_SECONDS = 45
 STATBOTICS_POLL_SECONDS = 600
 # Only ever used to fill in matches TBA has not posted yet, so it can be slow.
 FRC_EVENTS_POLL_SECONDS = 60
+# The whole event lives on one laptop that gets carried around a venue all day.
+SNAPSHOT_SECONDS = 600
+SNAPSHOT_KEEP = 12
 
 
 # ------------------------------------------------------------------- hub
@@ -61,6 +64,7 @@ class Hub:
         self.port = 8080
         self.status = {"nexus": None, "tba": None, "statbotics": None,
                        "frcEvents": None, "lastUpdate": None}
+        self.last_snapshot = None
         self.started_at = time.time()
         self._recal_lock = threading.Lock()
         self._recal_pending = False
@@ -107,6 +111,9 @@ class Hub:
                 else age(self.status["statbotics"]),
                 not self.status["statbotics"]),
             svc("solver", True, f"multipliers fitted from {self.store.get('multipliersFittedFrom') or 0} windows"),
+            svc("snapshots", True,
+                f"last {age(self.last_snapshot)}, keeping {SNAPSHOT_KEEP}"
+                if self.last_snapshot else f"every {SNAPSHOT_SECONDS // 60}m, none yet"),
         ]
         return {
             "host": socket.gethostname(),
@@ -638,6 +645,11 @@ class Hub:
                                 f"{official} fuel officially, no scout intervals")
         if out_rows:
             self.store.put_solved(ek, match_key, out_rows)
+            # The scouts who logged this match can now be told their numbers
+            # reconciled against the official totals. "Touched by a sync" is not
+            # the same thing - solving only happens once TBA has posted.
+            self.broadcast("solved", {"matchKey": match_key,
+                                      "teams": sorted(r["team"] for r in out_rows)})
         if offset:
             shared = sum(1 for e in entries if (e.get("payload") or {}).get("clockShared"))
             fixes = self.store.get("clockFixes") or {}
@@ -733,6 +745,26 @@ class Hub:
             self.note("info", f"solved {len(todo)} match(es) on startup")
             self.recalibrate()
         return len(todo)
+
+    def run_snapshots(self):
+        """Copy the database aside every few minutes.
+
+        data/ is one file on one laptop that gets carried around a venue all
+        day, and /api/export only helps if somebody remembered to click it. A
+        snapshot is a whole working database: to recover, stop the hub, copy one
+        out of data/snapshots/ over data/scouting.db, and start it again.
+        """
+        while not self.stop_flag.is_set():
+            self.stop_flag.wait(SNAPSHOT_SECONDS)
+            if self.stop_flag.is_set():
+                return
+            try:
+                dest = self.store.snapshot(keep=SNAPSHOT_KEEP)
+                self.last_snapshot = time.time()
+                self.note("info", f"snapshot written to {os.path.basename(dest)}")
+            except Exception as e:
+                self.note("error", f"snapshot failed: {e}")
+                sys.stderr.write(f"[snapshot] {e}\n")
 
     # ---------------------------------------------------------- poller
     def run_poller(self):
@@ -1385,6 +1417,7 @@ def main():
         sys.stderr.write(f"[reconcile] {e}\n")
     srv = Server(("0.0.0.0", args.port), Handler)
     threading.Thread(target=hub.run_poller, daemon=True, name="poller").start()
+    threading.Thread(target=hub.run_snapshots, daemon=True, name="snapshots").start()
 
     responder = None
     if not args.no_mdns:

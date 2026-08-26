@@ -72,15 +72,23 @@ def _team_summary(team, meta, entries, solved, by_match, ranking=None, epa=None)
     rps = []
     official_matches = 0
 
+    # One match counts once, however many scouts watched the robot. These numbers
+    # come from TBA, not from the scout - and a HAND OVER mid-match leaves two
+    # entries for the same (match, team), which would otherwise double every
+    # climb, tower point and RP for that match.
+    seen_matches = set()
     for e in entries:
         m = by_match.get(e["matchKey"])
         if not m or not m.get("breakdown"):
+            continue
+        if e["matchKey"] in seen_matches:
             continue
         alliance = e.get("alliance")
         info = (m["breakdown"] or {}).get(alliance)
         lineup = m.get(alliance) or []
         if not info or team not in lineup:
             continue
+        seen_matches.add(e["matchKey"])
         official_matches += 1
         opp = "blue" if alliance == "red" else "red"
         ours = info.get("totalPoints")

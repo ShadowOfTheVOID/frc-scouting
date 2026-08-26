@@ -223,6 +223,35 @@ class Store:
         return [{"photoId": r["photo_id"], "team": r["team"]}
                 for r in self.conn().execute(q + " ORDER BY updated_at DESC", a).fetchall()]
 
+    # ------------------------------------------------------------ backups
+    def snapshot(self, keep=12):
+        """Copy the whole database to data/snapshots/ and prune old ones.
+
+        sqlite's own backup API, not a file copy: WAL means the .db file on disk
+        is not a complete database on its own, and a half-copied event is worse
+        than no copy at all. Safe to call while scouts are syncing.
+        """
+        base = os.path.dirname(self.path)
+        stem = os.path.splitext(os.path.basename(self.path))[0]
+        out_dir = os.path.join(base, "snapshots")
+        os.makedirs(out_dir, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        dest = os.path.join(out_dir, f"{stem}-{stamp}.db")
+        target = sqlite3.connect(dest)
+        try:
+            self.conn().backup(target)
+        finally:
+            target.close()
+
+        existing = sorted(f for f in os.listdir(out_dir)
+                          if f.startswith(stem + "-") and f.endswith(".db"))
+        for old in existing[:-keep] if keep > 0 else []:
+            try:
+                os.remove(os.path.join(out_dir, old))
+            except OSError:
+                pass
+        return dest
+
     def flag(self, event_key, match_key, kind, detail=""):
         self.conn().execute(
             "INSERT INTO flags(event_key,match_key,kind,detail,created_at) VALUES(?,?,?,?,?)"
