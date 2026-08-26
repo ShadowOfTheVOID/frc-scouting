@@ -1,0 +1,378 @@
+/* FRC scouting — phone HUD.
+   Values are taken verbatim from design/Phone *.dc.html.
+   Layout uses flex/grid per the handoff; the mock files' absolute positioning
+   was only there to place the presentation bezel, which we do not build. */
+
+@import url('/css/fonts.css');
+
+:root{
+  /* palette — handoff README, copied exactly */
+  --page:#0b0b0d; --panel:#0a0a0c; --raised:#0f0f12; --chrome:#131317;
+  --thead:#0d0d10; --logwell:#08080a;
+  --line-panel:#1e1e24; --line-row:#16161b; --track:#2a2a31; --btn:#2f2f38; --seg:#26262d;
+  --red:#e11d2b; --red-link:#ff3b45; --red-alert:#ff5c66; --red-label:#ff7a80;
+  --red-soft:#ff8a91; --red-dim:#6d2b30; --red-ring:#4a181e; --red-dash:#3a2226;
+  --blue-rail:#3a5f8f; --blue-label:#7fa8d8;
+  --green:#34a86a; --green-soft:#5fce93; --green-border:#1f5138; --green-dot:#3ad182;
+  --amber:#f5a524;
+  --t0:#f4f4f6; --t1:#a0a0ab; --t2:#9a9aa4; --t3:#8b8b95; --t4:#7d7d88;
+  --t5:#6b6b76; --t6:#5f5f6a; --muted:#6f7684; --body:#9aa2b0;
+
+  /* safe box — worst case of iOS Dynamic Island (44) and Android nav bar (48) */
+  --safe-l: max(env(safe-area-inset-left), 44px);
+  --safe-r: max(env(safe-area-inset-right), 48px);
+  --safe-b: 20px;
+  --hdr-h: 44px;
+  /* side columns hold thumb controls: a thumb does not grow with the phone */
+  --col-l: 196px;
+  --col-r: 196px;
+  --gap: 16px;
+}
+
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;overflow:hidden}
+body{
+  background:#05060a;color:#eef1f5;
+  font-family:Barlow,system-ui,sans-serif;
+  -webkit-text-size-adjust:100%;
+  -webkit-tap-highlight-color:transparent;
+  user-select:none; -webkit-user-select:none;
+  overscroll-behavior:none;
+}
+.tnum{font-variant-numeric:tabular-nums}
+
+/* ---------------------------------------------------------------- screen */
+.screen{
+  position:relative; height:100dvh; width:100%;
+  display:flex; flex-direction:column; overflow:hidden;
+  background:#05060a;
+}
+/* the two red side glows and the scanline texture from the mock */
+.screen::before{
+  content:''; position:absolute; inset:0; pointer-events:none;
+  background:
+    radial-gradient(70% 120% at 12% 50%,rgba(225,29,43,.16),transparent 60%),
+    radial-gradient(70% 120% at 88% 50%,rgba(225,29,43,.2),transparent 60%);
+}
+.screen::after{
+  content:''; position:absolute; inset:0; pointer-events:none;
+  background:repeating-linear-gradient(0deg,rgba(255,255,255,.035) 0 1px,transparent 1px 3px);
+}
+.screen > *{position:relative; z-index:1}
+
+/* header spans edge to edge; only its padding keeps text off the cutout */
+.hdr{
+  flex:none; height:var(--hdr-h);
+  display:flex; align-items:center; gap:14px; padding:0 74px;
+  border-bottom:1px solid rgba(255,255,255,.07);
+}
+.hdr.tinted{background:linear-gradient(180deg,rgba(225,29,43,.14),transparent)}
+.hdr .k{font:800 11px Barlow,sans-serif;letter-spacing:.2em;color:var(--red-alert)}
+.hdr .k.amber{color:var(--amber)}
+.hdr .m{font:700 11px Barlow,sans-serif;letter-spacing:.18em;color:var(--muted)}
+.hdr .sp{flex:1}
+.hdr .dot{width:7px;height:7px;border-radius:50%;background:var(--green-dot);display:block}
+.hdr .dot.amber{background:var(--amber)}
+.hdr .dot.red{background:var(--red)}
+
+/* content sits inside the safe box */
+.body{
+  flex:1; min-height:0;
+  padding:12px var(--safe-r) var(--safe-b) var(--safe-l);
+  display:grid; gap:12px;
+}
+.body.three{grid-template-columns:var(--col-l) 1fr var(--col-r); gap:var(--gap); padding-top:12px}
+.body.split-260{grid-template-columns:1fr 260px}
+.body.split-300{grid-template-columns:1fr 300px}
+.body.seat{grid-template-columns:218px 1fr 186px}
+
+.col{display:flex;flex-direction:column;gap:6px;min-width:0;min-height:0}
+.caption{font:800 10px Barlow,sans-serif;letter-spacing:.2em;color:var(--muted);padding-left:4px;white-space:nowrap;overflow:hidden}
+.caption.r{text-align:right;padding:0 4px 0 0}
+/* nowrap is for the HUD's tight thumb columns; the seat screen has room and
+   its instruction is a full sentence, so let it wrap as the mock shows. */
+.caption.plain{padding-left:0;white-space:normal;line-height:1.35}
+
+/* ------------------------------------------------------------ rate ladder */
+.ladder{flex:1;display:flex;flex-direction:column;gap:6px;min-height:0}
+.rate{
+  flex:1; position:relative; border-radius:14px;
+  background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.09);
+  display:flex; align-items:center; justify-content:space-between; padding:0 16px;
+  min-height:44px; touch-action:manipulation;
+}
+.rate .nm{font:800 13px Barlow,sans-serif;letter-spacing:.1em;color:#7d8492}
+.rate .vl{font:700 22px 'Barlow Condensed',sans-serif;color:#7d8492}
+.rate.on{
+  flex:1.35;
+  background:linear-gradient(100deg,#e11d2b,#a8121d);
+  border:1px solid #ff5c66; box-shadow:0 0 34px rgba(225,29,43,.4);
+}
+.rate.on .nm{font-size:14px;color:#fff}
+.rate.on .vl{font-size:26px;color:#fff}
+
+/* the two square utility buttons under each thumb column */
+.pair{display:flex;gap:6px;flex:none}
+.ubtn{
+  flex:1; min-height:52px; border-radius:14px;
+  background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1);
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  touch-action:manipulation;
+}
+.ubtn .a{font:800 12px Barlow,sans-serif;letter-spacing:.06em;color:#fff}
+.ubtn .b{font:600 9.5px Barlow,sans-serif;color:var(--muted);letter-spacing:.1em}
+.ubtn.on{background:linear-gradient(100deg,#e11d2b,#a8121d);border-color:#ff5c66}
+.ubtn.on .b{color:#ffd0d3}
+
+/* ------------------------------------------------------------- hold pad */
+.holdpad{
+  flex:1; border-radius:20px; position:relative; overflow:hidden;
+  background:rgba(255,255,255,.04); border:2px solid rgba(255,255,255,.12);
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  min-height:44px; touch-action:none;
+}
+.holdpad.on{
+  background:linear-gradient(180deg,rgba(225,29,43,.2),rgba(225,29,43,.55));
+  border:2px solid #ff5c66; box-shadow:0 0 40px rgba(225,29,43,.35);
+}
+.holdpad .meter{position:absolute;left:0;right:0;bottom:0;height:0;
+  background:linear-gradient(180deg,rgba(225,29,43,.5),#e11d2b)}
+.holdpad .meterline{position:absolute;left:0;right:0;bottom:0;height:2px;background:#fff;opacity:0}
+.holdpad.on .meterline{opacity:1}
+.holdpad .txt{position:relative;text-align:center}
+.holdpad .lb{font:800 11px Barlow,sans-serif;letter-spacing:.2em;color:#ffd0d3}
+.holdpad .big{font:700 62px/1 'Barlow Condensed',sans-serif;letter-spacing:-.03em;color:#fff}
+.holdpad .un{font:700 10.5px Barlow,sans-serif;letter-spacing:.16em;color:#ffd0d3}
+.holdpad:not(.on) .lb,.holdpad:not(.on) .un{color:var(--muted)}
+
+/* ------------------------------------------------------------ centre HUD */
+.centre{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-width:0;overflow:hidden}
+.teamline{display:flex;align-items:flex-end;gap:14px}
+.teamno{font:700 74px/.85 'Barlow Condensed',sans-serif;letter-spacing:-.03em}
+.teammeta{padding-bottom:8px}
+.teammeta div{font:700 11.5px Barlow,sans-serif;letter-spacing:.14em;color:var(--muted)}
+.clockline{display:flex;align-items:baseline;gap:12px}
+.clockbig{font:700 46px/1 'Barlow Condensed',sans-serif;font-variant-numeric:tabular-nums}
+.shotstate{font:800 12px Barlow,sans-serif;letter-spacing:.16em;color:var(--red-alert)}
+.shotstate.dead{color:var(--muted)}
+.shotstate.unknown{color:var(--t4)}
+
+/* phase strip: one segment per window, flex-weighted by its duration */
+.strip{width:100%;height:10px;display:flex;gap:3px;flex:none}
+.strip span{background:rgba(255,255,255,.1);border-radius:5px;position:relative;overflow:hidden}
+.strip span.live{background:rgba(255,255,255,.22)}
+.strip span.now{background:#e11d2b}
+.strip span.now .fill{position:absolute;top:0;bottom:0;left:0;background:#fff;opacity:.5;border-radius:5px}
+
+.stats{display:flex;align-items:center;gap:26px;margin-top:2px}
+.stats .s{text-align:center}
+.stats .n{font:700 34px/1 'Barlow Condensed',sans-serif}
+.stats .n.red{color:var(--red-alert)}
+.stats .l{font:700 10px Barlow,sans-serif;letter-spacing:.14em;color:var(--muted)}
+.stats .div{width:1px;height:34px;background:rgba(255,255,255,.1)}
+
+.runbar{
+  width:100%;height:26px;border-radius:8px;background:rgba(255,255,255,.05);
+  border:1px solid rgba(255,255,255,.09);position:relative;overflow:hidden;margin-top:4px;flex:none;
+}
+.runbar .r{position:absolute;top:3px;bottom:3px;border-radius:3px}
+.runbar .r.trickle{background:#7a2b32}
+.runbar .r.steady{background:#e11d2b}
+.runbar .r.dumping{background:#ff8a91}
+.runbar .cur{position:absolute;top:0;bottom:0;width:2px;background:#fff}
+
+/* ------------------------------------------------------------ seat screen */
+.panel{border-radius:20px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.09)}
+.panel.pad{padding:22px 26px}
+.panel.dashed{border:1px dashed rgba(255,255,255,.14);background:transparent}
+
+.initials{
+  border-radius:16px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);
+  padding:16px 18px;
+}
+.initials{padding:14px 16px;border-radius:14px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1)}
+.initials .v{font:700 26px 'Barlow Condensed',sans-serif;color:#fff}
+.initials .h{font:600 11px Barlow,sans-serif;color:var(--muted);letter-spacing:.1em}
+
+.stations{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:1fr 1fr;gap:6px;flex:1;min-height:0}
+.st{
+  min-width:0;border-radius:14px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:10px 6px;
+  position:relative;overflow:hidden;touch-action:manipulation;
+}
+.st .bar{position:absolute;left:0;right:0;top:0;height:5px}
+.st.red .bar{background:#e11d2b}
+.st.blue .bar{background:#3f7bc4}
+.st .al{font:800 9.5px Barlow,sans-serif;letter-spacing:.16em}
+.st .nu{font:700 34px/1 'Barlow Condensed',sans-serif}
+.st .wh{font:700 9.5px Barlow,sans-serif;letter-spacing:.1em;white-space:nowrap;color:#5c6472}
+.st.red  .al{color:#a85a60} .st.red  .nu{color:#8a4a50}
+.st.blue .al{color:#5f7fa8} .st.blue .nu{color:#4f6b8c}
+.st .wh.open{color:#3ad182}
+.st.on{background:linear-gradient(180deg,#e11d2b,#a8121d);border-color:#ff5c66;box-shadow:0 0 26px rgba(225,29,43,.32)}
+.st.on .al{color:rgba(255,255,255,.9)}
+.st.on .nu{color:#fff}
+.st.on .wh{color:rgba(255,255,255,.85)}
+
+.dashnote{padding:10px 13px;border-radius:12px;background:rgba(255,255,255,.03);
+  border:1px dashed rgba(255,255,255,.13);font:500 12px/1.45 Barlow,sans-serif;color:var(--body)}
+.dashnote b{color:#eef1f5;font-weight:700}
+.dashfill{flex:1;padding:14px 16px;border-radius:14px;background:rgba(255,255,255,.03);
+  border:1px dashed rgba(255,255,255,.13);font:500 12.5px/1.55 Barlow,sans-serif;color:var(--body)}
+
+.note{
+  border-radius:16px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);
+  padding:14px 16px;font:500 12.5px/1.55 Barlow,sans-serif;color:var(--body);
+}
+.note b{color:#fff;font-weight:700}
+
+.cta{
+  border-radius:16px;background:linear-gradient(100deg,#e11d2b,#a8121d);border:1px solid #ff5c66;
+  box-shadow:0 0 34px rgba(225,29,43,.4);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  min-height:72px;touch-action:manipulation;
+}
+.cta .a{font:800 16px Barlow,sans-serif;letter-spacing:.1em;color:#fff}
+.cta .b{font:600 11.5px Barlow,sans-serif;color:#ffd0d3}
+.cta.flat{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.12);box-shadow:none}
+.cta.flat .a{color:var(--body)}
+
+/* --------------------------------------------------------- lists / rows */
+.list{flex:1;border-radius:16px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);overflow:hidden;min-height:0}
+.lrow{display:flex;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.06)}
+.lrow:last-child{border-bottom:none}
+.lrow .code{font:700 15px 'Barlow Condensed',sans-serif;min-width:40px}
+.lrow .team{font:600 13px Barlow,sans-serif;min-width:48px}
+.lrow .desc{flex:1;font:600 12.5px Barlow,sans-serif;color:var(--body);min-width:0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lrow .tag{font:700 10px Barlow,sans-serif;letter-spacing:.1em}
+.lrow .tag.sent{color:var(--green-dot)}
+.lrow .tag.queued{color:var(--amber)}
+
+/* -------------------------------------------------------- standby / offline */
+.bigpanel{border-radius:20px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.09);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;
+  position:relative;overflow:hidden;min-height:0}
+.bigpanel .glow{position:absolute;width:420px;height:420px;border-radius:50%;
+  background:radial-gradient(circle,rgba(225,29,43,.14),transparent 62%)}
+.bigpanel > *{position:relative}
+.eyebrow{font:800 11px Barlow,sans-serif;letter-spacing:.22em;color:var(--muted)}
+.countdown{font:700 92px/.9 'Barlow Condensed',sans-serif;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.until{font:700 13px Barlow,sans-serif;letter-spacing:.14em;color:var(--red-soft)}
+.pill{margin-top:16px;padding:11px 18px;border-radius:999px;background:rgba(255,255,255,.06);
+  border:1px solid rgba(255,255,255,.12);font:700 12px Barlow,sans-serif;letter-spacing:.08em;color:var(--body)}
+
+.offpanel{border-radius:20px;background:rgba(255,255,255,.035);border:1px solid rgba(245,165,36,.28);
+  padding:22px 26px;display:flex;flex-direction:column;justify-content:center;gap:12px}
+.offpanel h2{font:700 30px/1.2 Barlow,sans-serif;margin:0;color:#fff}
+.offpanel p{font:500 14.5px/1.55 Barlow,sans-serif;color:var(--body);max-width:440px;margin:0}
+.obtn{padding:14px 20px;border-radius:14px;background:rgba(255,255,255,.05);
+  border:1px solid rgba(255,255,255,.12);font:800 12.5px Barlow,sans-serif;letter-spacing:.06em;color:#fff}
+.obtn.ghost{background:transparent;font-weight:700;color:var(--body)}
+.amberbox{padding:13px 15px;border-radius:14px;border:1px dashed rgba(245,165,36,.35);
+  background:rgba(245,165,36,.07);font:500 12.5px/1.5 Barlow,sans-serif;color:var(--body)}
+
+/* --------------------------------------------------------- after the buzzer */
+.steps{display:flex;gap:8px;align-items:flex-end;flex:1;min-height:0}
+.step{
+  flex:1;border-radius:14px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.09);
+  display:flex;align-items:flex-end;justify-content:center;padding-bottom:10px;
+  font:600 11.5px Barlow,sans-serif;color:var(--t4);min-height:44px;touch-action:manipulation;
+}
+.step.on{background:linear-gradient(180deg,#e11d2b,#a8121d);border-color:#ff5c66;
+  box-shadow:0 0 34px rgba(225,29,43,.4);color:#fff;font-weight:800}
+.step.sel{border-color:var(--red-alert);color:#fff}
+
+.wrongs{display:grid;grid-template-columns:1fr 1fr;gap:10px;flex:1;min-height:0}
+.wrong{
+  border-radius:14px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.09);
+  display:flex;align-items:center;justify-content:center;text-align:center;padding:10px;
+  font:800 12.5px/1.25 Barlow,sans-serif;letter-spacing:.06em;color:var(--t3);
+  min-height:44px;touch-action:manipulation;
+}
+.wrong.on{background:linear-gradient(180deg,#e11d2b,#a8121d);border-color:#ff5c66;color:#fff;
+  box-shadow:0 0 34px rgba(225,29,43,.4)}
+
+.notebox{border-radius:14px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.09);
+  padding:12px 14px;display:flex;gap:8px;align-items:flex-start;min-height:64px}
+.notebox .lb{font:700 11px Barlow,sans-serif;letter-spacing:.1em;color:var(--muted);padding-top:2px}
+.notebox textarea{
+  flex:1;background:transparent;border:none;outline:none;resize:none;color:#fff;
+  font:600 12.5px/1.5 Barlow,sans-serif;min-height:40px;user-select:text;-webkit-user-select:text;
+}
+.summary{border-radius:16px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);
+  padding:16px 18px;display:flex;flex-direction:column;gap:6px;flex:1;min-height:0}
+.summary .big{display:flex;align-items:flex-end;gap:8px}
+.summary .big .n{font:700 44px/.9 'Barlow Condensed',sans-serif}
+.summary .big .u{font:600 12.5px Barlow,sans-serif;color:var(--body);padding-bottom:5px}
+.srow{display:flex;justify-content:space-between;font:600 12.5px Barlow,sans-serif;color:var(--body)}
+.srow b{color:var(--red-alert);font-weight:700}
+.srow span.w{color:#fff;font-weight:700}
+
+/* ------------------------------------------------------------ responsive */
+/* Side columns are fixed; the centre column is the only 1fr and absorbs
+   every extra or missing pixel. Below 780 the side columns give up 10%
+   before anything else changes. Above 932 the centre caps and letterboxes. */
+@media (max-width:779px){ body.landscape-only{--col-l:176px;--col-r:176px} }
+@media (min-width:933px){ .body.three{justify-content:center} .centre{max-width:640px;margin:0 auto;width:100%} }
+
+/* A phone too small to hold the match HUD is too small to scout a match on.
+   Scoped to .landscape-only so portrait screens (pit scouting) are unaffected. */
+#toosmall{display:none}
+@media (max-height:300px),(max-width:640px){
+  body.landscape-only .screen{display:none}
+  body.landscape-only #toosmall{display:flex;align-items:center;justify-content:center;
+    height:100dvh;padding:24px;text-align:center;font:700 15px/1.5 Barlow,sans-serif;color:var(--body)}
+}
+.hide{display:none !important}
+
+/* The status text sits beside the clock and must never wrap — a reflowing
+   centre column during a match is worse than a truncated word. */
+.shotstate{white-space:nowrap}
+.clockline{min-height:46px}
+
+/* Narrow landscape (iPhone SE, 667px). Type sizes are fixed by the handoff, so
+   the only things that may give are the side columns and the stats gap.
+   NOTE: at 667px the three-stat row is still snug at 10px/.14em labels —
+   flagged for the designer rather than silently restyled. */
+.stats .l{white-space:nowrap}
+.teammeta div{white-space:nowrap}
+@media (max-width:779px){
+  body.landscape-only{--col-l:172px;--col-r:172px;--gap:12px}
+  .stats{gap:14px}
+  .stats .div{height:28px}
+}
+/* iPhone SE landscape. The centre column needs ~270px to hold the 74px team
+   numeral beside its meta block, so the thumb columns give up more width here.
+   Every control stays far above the 44px floor. */
+@media (max-width:700px){
+  body.landscape-only{--col-l:142px;--col-r:142px;--gap:10px}
+  .teamline{gap:8px}
+  .stats{gap:10px}
+}
+
+/* Chrome-hiding affordance. Only rendered where it is actionable — it removes
+   itself in standalone mode and on platforms with no Fullscreen API. */
+.fshint{font:700 9.5px Barlow,sans-serif;letter-spacing:.14em;color:var(--dim);
+  border:1px solid rgba(255,255,255,.12);border-radius:6px;padding:4px 8px;white-space:nowrap}
+.fshint:empty{display:none}
+
+/* Add-to-Home-Screen offer. Shown only on iPhone Safari (see fullscreen.js) and
+   deliberately covering the seat screen: on iOS the home-screen app gets its own
+   storage partition, so this has to be answered before any data is entered. */
+.a2hs{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;
+  padding:16px max(env(safe-area-inset-right),16px) 16px max(env(safe-area-inset-left),16px);
+  background:rgba(5,6,10,.93);backdrop-filter:blur(6px);overflow:auto}
+.a2hscard{display:grid;grid-template-columns:1fr 260px;gap:18px;align-items:start;
+  width:100%;max-width:720px;padding:18px 20px;border-radius:20px;
+  background:rgba(255,255,255,.035);border:1px solid rgba(245,165,36,.28)}
+.a2hscard h2{font:700 24px/1.15 Barlow,sans-serif;margin:0;color:#fff}
+.a2hssteps{margin:2px 0 0;padding-left:20px;display:flex;flex-direction:column;gap:7px;
+  font:500 13px/1.45 Barlow,sans-serif;color:var(--body)}
+.a2hssteps b{color:#eef1f5;font-weight:700}
+.a2hs .obtn{text-align:center}
+/* Portrait, and the shortest landscape phones: stack rather than squeeze. */
+@media (max-width:700px), (orientation:portrait){
+  .a2hscard{grid-template-columns:1fr;gap:12px;padding:16px}
+  .a2hscard h2{font-size:20px}
+}

@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no,maximum-scale=1">
+<meta name="theme-color" content="#05060a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Scout · REBUILT</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<link rel="stylesheet" href="/css/hud.css">
+</head>
+<body class="landscape-only">
+
+<div id="toosmall">This screen is too small to scout on.<br>Rotate to landscape, or use a larger phone.</div>
+
+<!-- ══════════════════════════ ADD TO HOME SCREEN (iPhone) ═════════════ -->
+<div class="a2hs hide" id="a2hs">
+  <div class="a2hscard">
+    <div class="col" style="gap:8px;min-width:0">
+      <div class="eyebrow">DO THIS BEFORE YOUR FIRST MATCH</div>
+      <h2>Put Scout on your home screen.</h2>
+      <ol class="a2hssteps">
+        <li>Tap <b>Share</b> — the square with an arrow coming out of the top.</li>
+        <li>Scroll down the list and tap <b>Add to Home Screen</b>.</li>
+        <li>Tap <b>Add</b>, then open <b>Scout</b> from the new icon from now on.</li>
+      </ol>
+    </div>
+    <div class="col" style="gap:10px;min-width:0">
+      <div class="amberbox">iPhone keeps this tab and the home-screen icon
+        <b>completely separate</b>. Anything you log here before you add it stays stuck
+        in Safari and never reaches the hub — so add it now, not after a match.</div>
+      <div class="obtn ghost" id="a2hsSkip">CAN'T RIGHT NOW — SCOUT IN SAFARI</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════ TAKE A SEAT ══════════════════ -->
+<div class="screen hide" id="s-seat">
+  <div class="hdr">
+    <span class="k">TAKE A SEAT</span>
+    <span class="m" id="seatEvent">LOOKING FOR THE HUB</span>
+    <span class="sp"></span>
+    <span class="m fshint" id="fsHint"></span>
+    <span class="dot" id="seatDot"></span>
+  </div>
+  <div class="body seat">
+    <div class="col" style="gap:8px">
+      <div class="caption plain">WHO ARE YOU</div>
+      <div class="initials" id="btnInitials">
+        <div class="v" id="myInitials">--</div>
+        <div class="h">TAP TO CHANGE INITIALS</div>
+      </div>
+      <div class="caption plain" style="margin-top:4px">SET IT ONCE</div>
+      <div class="dashfill">Your team number gets filled in for every match after this.
+        You never pick a match or type a number again.</div>
+    </div>
+
+    <div class="col" style="gap:8px">
+      <div class="caption plain">READ THE SIGN ABOVE YOUR CHAIR AND TAP THE SAME ONE</div>
+      <div class="stations" id="stations"></div>
+      <div class="dashnote">No field map on purpose — the sign over your chair says
+        <b id="signExample">RED 2</b>, so tap RED 2. Nothing to mirror, nothing to get backwards.</div>
+    </div>
+
+    <div class="col" style="gap:8px">
+      <div class="panel" style="flex:1;padding:14px;border-radius:16px">
+        <div class="caption plain">YOUR SEAT WILL WATCH</div>
+        <div style="font:700 40px/1.1 'Barlow Condensed',sans-serif;margin-top:6px" id="seatTeam">—</div>
+        <div style="font:500 12.5px/1.5 Barlow,sans-serif;color:var(--body);margin-top:6px" id="seatBlurb">
+          pick a station to see who you'll watch</div>
+        <div class="caption plain" style="margin-top:12px">HUB</div>
+        <div style="font:500 12.5px/1.5 Barlow,sans-serif;color:var(--body);margin-top:4px" id="seatHub">
+          searching…</div>
+      </div>
+      <div class="cta" id="btnSit"><span class="a">SIT DOWN</span><span class="b" id="sitSub">pick a station first</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════ STANDBY ═════════════════════ -->
+<div class="screen hide" id="s-standby">
+  <div class="hdr">
+    <span class="k" id="sbSeat">RED 2</span>
+    <span class="m" id="sbMeta">AK</span>
+    <span class="sp"></span>
+    <span class="m" id="sbSync">EVERYTHING SENT</span>
+    <span class="dot" id="sbDot"></span>
+  </div>
+  <div class="body split-260">
+    <div class="bigpanel">
+      <div class="glow"></div>
+      <div class="eyebrow">NOTHING TO DO YET</div>
+      <div class="countdown" id="sbCountdown">--:--</div>
+      <div class="until" id="sbUntil">WAITING FOR THE SCHEDULE</div>
+      <div style="margin-top:12px;display:flex;align-items:flex-end;gap:14px">
+        <div style="font:700 54px/.9 'Barlow Condensed',sans-serif" id="sbTeam">—</div>
+        <div style="padding-bottom:6px">
+          <div style="font:700 11px Barlow,sans-serif;letter-spacing:.14em;color:var(--muted)">YOUR NEXT ROBOT</div>
+          <div style="font:600 12.5px Barlow,sans-serif;color:#9aa2b0" id="sbTeamMeta">—</div>
+        </div>
+      </div>
+      <div class="pill">the screen wakes itself when the match starts</div>
+    </div>
+    <div class="col" style="gap:8px">
+      <div class="caption plain">WHAT YOU LOGGED TODAY</div>
+      <div class="list" id="sbList"></div>
+      <div class="pair" style="gap:6px">
+        <div class="cta flat" style="min-height:56px;flex:1" id="btnFixPast"><span class="a">FIX A PAST MATCH</span></div>
+        <div class="cta flat" style="min-height:56px;flex:1" id="btnHandover"><span class="a">HAND OVER</span><span class="b">someone else takes this chair</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════ OFFLINE ═════════════════════ -->
+<div class="screen hide" id="s-offline">
+  <div class="hdr">
+    <span class="k amber">CAN'T REACH THE HUB</span>
+    <span class="m" id="offSeat">RED 2</span>
+    <span class="sp"></span>
+    <span class="dot amber"></span>
+  </div>
+  <div class="body split-300">
+    <div class="offpanel">
+      <h2>Keep scouting — nothing is lost.</h2>
+      <p id="offBlurb">Everything you enter is saved on this phone and will send itself the moment
+        the hub is back. You don't need to do anything.</p>
+      <div style="display:flex;gap:10px;margin-top:4px">
+        <div class="obtn" id="btnRetry">TRY AGAIN NOW</div>
+        <div class="obtn ghost" id="btnBackup">SAVE A BACKUP FILE</div>
+      </div>
+      <div style="margin-top:6px;font:600 12px Barlow,sans-serif;color:var(--muted)" id="offLast">
+        retrying every 8s</div>
+    </div>
+    <div class="col" style="gap:8px">
+      <div class="caption plain">WAITING ON THIS PHONE</div>
+      <div class="list" id="offList"></div>
+      <div class="amberbox">Wifi in the stands is usually the problem, not you.
+        The hub picks everything up in order.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════ BUMPED ══════════════════════ -->
+<div class="screen hide" id="s-bumped">
+  <div class="hdr">
+    <span class="k amber">YOU ARE NOT SCOUTING</span>
+    <span class="m" id="bumpSeat"></span>
+    <span class="sp"></span>
+    <span class="dot amber"></span>
+  </div>
+  <div class="body split-300">
+    <div class="offpanel">
+      <h2 id="bumpTitle">Someone else took this chair.</h2>
+      <p id="bumpBody">Stop logging — two phones on one robot means neither set of data is
+        trustworthy. Everything you already saved is safe and has been sent.</p>
+      <div style="display:flex;gap:10px;margin-top:4px">
+        <div class="obtn" id="btnTakeBack">IT'S STILL MY CHAIR</div>
+        <div class="obtn ghost" id="btnPickSeat">PICK A DIFFERENT STATION</div>
+      </div>
+    </div>
+    <div class="col" style="gap:8px">
+      <div class="caption plain">WHAT YOU LOGGED TODAY</div>
+      <div class="list" id="bumpList"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════ LIVE MATCH ══════════════════ -->
+<div class="screen hide" id="s-live">
+  <div class="hdr tinted">
+    <span class="k" id="lvSeat">RED 2</span>
+    <span class="m" id="lvMeta">QUAL — · —</span>
+    <span class="sp"></span>
+    <span class="m" id="lvLink">STATION LINKED</span>
+    <span class="dot" id="lvDot"></span>
+  </div>
+  <div class="body three">
+
+    <div class="col">
+      <div class="caption">LEFT THUMB · RATE</div>
+      <div class="ladder" id="ladder"></div>
+      <div class="pair">
+        <div class="ubtn" id="btnFeeding"><span class="a">FEEDING</span><span class="b">HOLD</span></div>
+        <div class="ubtn" id="btnDefending"><span class="a">DEFENDING</span><span class="b">HOLD</span></div>
+      </div>
+    </div>
+
+    <div class="centre">
+      <div class="teamline">
+        <div class="teamno" id="lvTeam">—</div>
+        <div class="teammeta">
+          <div id="lvTeamName">—</div>
+          <div id="lvMatchOf">—</div>
+        </div>
+      </div>
+      <div class="clockline">
+        <div class="clockbig" id="lvClock">0:00</div>
+        <div class="shotstate" id="lvShotState">NOT STARTED</div>
+      </div>
+      <div class="strip" id="lvStrip"></div>
+      <div class="stats">
+        <div class="s"><div class="n" id="lvBalls">0</div><div class="l">BALLS SO FAR</div></div>
+        <div class="div"></div>
+        <div class="s"><div class="n red" id="lvClimb">—</div><div class="l">CLIMB SET</div></div>
+        <div class="div"></div>
+        <div class="s"><div class="n" id="lvRuns">0</div><div class="l">RUNS LOGGED</div></div>
+      </div>
+      <div class="runbar" id="lvRunbar"></div>
+    </div>
+
+    <div class="col">
+      <div class="caption r">RIGHT THUMB · SHOOTING</div>
+      <div class="holdpad" id="holdpad">
+        <div class="meter" id="holdMeter"></div>
+        <div class="meterline" id="holdLine"></div>
+        <div class="txt">
+          <div class="lb" id="holdLabel">HOLD WHILE SHOOTING</div>
+          <div class="big" id="holdRate">3.5</div>
+          <div class="un">BALLS PER SECOND</div>
+        </div>
+      </div>
+      <div class="pair">
+        <div class="ubtn" id="btnUndo"><span class="a">UNDO</span><span class="b">LAST RUN</span></div>
+        <div class="ubtn" id="btnClimb"><span class="a">CLIMB</span><span class="b" id="climbSub">NOT SET</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════ AFTER THE BUZZER ════════════════ -->
+<div class="screen hide" id="s-after">
+  <div class="hdr">
+    <span class="k" id="afTitle">MATCH DONE</span>
+    <span class="m" id="afMeta">—</span>
+    <span class="sp"></span>
+    <span class="m" id="afNext">NEXT: —</span>
+  </div>
+  <div class="body split-300">
+    <div class="col" style="gap:10px">
+      <div class="caption plain">HOW WAS THEIR DRIVING</div>
+      <div class="steps" id="driveSteps"></div>
+      <div class="caption plain" style="margin-top:2px">DID THEY GET IN THE WAY</div>
+      <div class="steps" id="defSteps"></div>
+    </div>
+
+    <div class="col" style="gap:10px">
+      <div class="caption plain">ANYTHING GO WRONG</div>
+      <div class="wrongs" id="wrongs"></div>
+      <div class="notebox">
+        <span class="lb">note</span>
+        <textarea id="afNote" rows="2" placeholder="dead 20s in shift 2, came back fine"></textarea>
+      </div>
+    </div>
+
+    <div class="col" style="gap:8px">
+      <div class="summary">
+        <div class="caption plain">THIS MATCH</div>
+        <div class="big"><span class="n" id="afBalls">0</span><span class="u">balls, roughly</span></div>
+        <div class="srow"><span>climb</span><b id="afClimb">—</b></div>
+        <div class="srow"><span>auto climb</span><span class="w" id="afAuto">no</span></div>
+        <div class="srow"><span>runs logged</span><span class="w" id="afRuns">0</span></div>
+      </div>
+      <div class="cta" id="btnSend"><span class="a">SEND IT IN</span><span class="b" id="sendSub">both thumbs free</span></div>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="/js/hud.js"></script>
+</body>
+</html>
