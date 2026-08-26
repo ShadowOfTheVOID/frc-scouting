@@ -105,7 +105,11 @@
       <div class="pill">the screen wakes itself when the match starts</div>
     </div>
     <div class="col" style="gap:8px">
-      <div class="caption plain">WHAT YOU LOGGED TODAY</div>
+      <div class="caption plain">WHERE DO THEY START</div>
+      <div class="picks" id="sbStart"></div>
+      <div class="caption plain" style="margin-top:6px">FUEL LOADED BEFORE THE BUZZER</div>
+      <div class="picks" id="sbPreload"></div>
+      <div class="caption plain" style="margin-top:6px">WHAT YOU LOGGED TODAY</div>
       <div class="list" id="sbList"></div>
       <div class="pair" style="gap:6px">
         <div class="cta flat" style="min-height:56px;flex:1" id="btnFixPast"><span class="a">FIX A PAST MATCH</span></div>
@@ -250,6 +254,14 @@
     <div class="col" style="gap:10px">
       <div class="caption plain">ANYTHING GO WRONG</div>
       <div class="wrongs" id="wrongs"></div>
+      <div id="afDefWrap" class="hide">
+        <div class="caption plain" style="margin-top:8px">WHO WERE THEY BLOCKING</div>
+        <div class="picks" id="afDefTarget"></div>
+      </div>
+      <div id="afStartWrap">
+        <div class="caption plain" style="margin-top:8px">WHERE DID THEY START</div>
+        <div class="picks" id="afStart"></div>
+      </div>
       <div class="notebox">
         <span class="lb">note</span>
         <textarea id="afNote" rows="2" placeholder="dead 20s in shift 2, came back fine"></textarea>

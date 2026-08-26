@@ -40,6 +40,9 @@ def main():
     ap.add_argument("--event", default="2026demo")
     ap.add_argument("--teams", type=int, default=31)   # 30 demo teams + ours
     ap.add_argument("--matches", type=int, default=40)
+    ap.add_argument("--via-nexus", action="store_true",
+                    help="push the schedule through the Nexus ingest path instead of writing "
+                         "TBA-shaped rows directly, which is what a real event does")
     args = ap.parse_args()
 
     rng = random.Random(2026)
@@ -65,6 +68,10 @@ def main():
             "reliab": rng.uniform(0.85, 1.0),
             "stock": rng.random() < 0.35,
         }
+    # A robot starts where its auto is written for, so give each team a
+    # preference rather than rolling uniformly every match.
+    STARTS = {n: rng.choice([(6, 2, 1), (1, 6, 2), (1, 2, 6), (3, 3, 3)]) for n in numbers}
+
     st.put_teams(ek, [{
         "team": n,
         "name": f"Off-Season Demo Team {n}" if DEMO_FIRST <= n <= DEMO_LAST else f"Team {n}",
@@ -74,6 +81,7 @@ def main():
         return "trickle" if r < 2.2 else ("steady" if r < 6.5 else "dumping")
 
     played = 0
+    nexus_matches = []
     for mi in range(1, args.matches + 1):
         picks = rng.sample(numbers, 6)
         red, blue = picks[:3], picks[3:]
@@ -151,10 +159,26 @@ def main():
                     "fouls": {"minor": rng.randint(0, 2), "major": 0},
                 }
 
-        st.put_match(ek, mk, label=label, comp_level="qm", match_number=mi, play_order=mi,
-                     red=red, blue=blue,
-                     status="On field" if mi == played + 1 else ("Now queuing" if mi == played + 2 else None),
-                     breakdown=breakdown)
+        status = ("On field" if mi == played + 1
+                  else "Now queuing" if mi == played + 2 else None)
+        if args.via_nexus:
+            # What a real event actually does: Nexus delivers the schedule under
+            # its own labels, TBA delivers results under its own keys, and the
+            # two have to land on ONE row. Writing only TBA-shaped rows is what
+            # hid a bug where they did not, and every fuel number at a live
+            # event was an even three-way split with no scouting in it.
+            nexus_matches.append({
+                "label": label, "status": status,
+                "redTeams": [str(t) for t in red], "blueTeams": [str(t) for t in blue],
+                "times": {"estimatedOnFieldTime": (time.time() + mi * 420) * 1000},
+            })
+            if breakdown:
+                st.put_match(ek, f"{ek}_qm{mi}", comp_level="qm", match_number=mi,
+                             times={"actual": time.time() - (played - mi + 1) * 420},
+                             red=red, blue=blue, breakdown=breakdown)
+        else:
+            st.put_match(ek, mk, label=label, comp_level="qm", match_number=mi, play_order=mi,
+                         red=red, blue=blue, status=status, breakdown=breakdown)
 
         if not is_played:
             continue
@@ -165,6 +189,10 @@ def main():
                 if p["stock"]:
                     ivs = [iv for iv in ivs
                            if rules.hub_active(iv["phase"], alliance, auto_winner) is not False]
+                # A robot that plays defence does it to somebody; the scout is
+                # asked who after the buzzer.
+                defends = rng.random() < 0.18
+                opponent = blue if alliance == "red" else red
                 st.upsert_scout({
                     "eventKey": ek, "matchKey": mk, "team": t,
                     "scoutId": SCOUTS[(idx + (0 if alliance == "red" else 3)) % len(SCOUTS)],
@@ -173,7 +201,19 @@ def main():
                     "payload": {
                         "intervals": ivs,
                         "feedIntervals": [],
-                        "preload": rng.randint(0, 8),
+                        "defenseIntervals": ([{"start": 60.0, "end": 60.0 + rng.uniform(6, 25),
+                                               "phase": "shift2", "intensity": "steady"}]
+                                             if defends else []),
+                        "defenseTarget": rng.choice(opponent) if defends else None,
+                        # A real scout leaves some of these blank, and the
+                        # dashboard has to read that as "nobody said" rather
+                        # than as a zero.
+                        "preload": rng.randint(0, 8) if rng.random() < 0.8 else None,
+                        "startPosition": (rng.choices(["left", "centre", "right"],
+                                                      weights=STARTS[t])[0]
+                                          if rng.random() < 0.85 else None),
+                        "autoFailed": rng.random() < 0.07,
+                        "fouls": rng.random() < 0.1,
                         "autoTower": "None",
                         "endgameTower": (breakdown[alliance]["endgameTower"][idx] if breakdown else "None"),
                         "driverRating": rng.randint(2, 5),
@@ -184,6 +224,13 @@ def main():
                         "note": rng.choice(NOTES) if rng.random() < 0.18 else "",
                     },
                 })
+
+    if args.via_nexus:
+        import hub as hub_mod
+        h = hub_mod.Hub(st)
+        h.apply_nexus_event({"eventKey": ek, "dataAsOfTime": time.time(),
+                             "matches": nexus_matches})
+        print(f"  schedule ingested through the Nexus path ({len(nexus_matches)} matches)")
 
     # ---- pit map: the real example response from frc.nexus/api/v1/docs, with the
     # fixture's placeholder team numbers remapped onto this event's teams.

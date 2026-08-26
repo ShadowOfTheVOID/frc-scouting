@@ -4,7 +4,7 @@
 import * as db from './db.js';
 import * as net from './net.js';
 import * as fs from './fullscreen.js';
-import { loadRules, phases, phaseAt, hubActive, matchSeconds, intensityBuckets } from './game2026.js';
+import { loadRules, phases, phaseAt, hubActive, matchSeconds, intensityBuckets, rules as gameRules } from './game2026.js';
 
 const $ = (s) => document.querySelector(s);
 const SCREENS = ['seat', 'standby', 'offline', 'live', 'after', 'bumped'];
@@ -18,12 +18,20 @@ const LADDER = [
 const DRIVE = ['rough', 'okay', 'solid', 'great', 'best'];
 const DEFENSE = ['not at all', 'a little', 'some', 'a lot'];
 const WRONGS = [
-  { k: 'died',    a: 'STOPPED', b: 'MOVING' },
-  { k: 'tipped',  a: 'TIPPED',  b: '' },
-  { k: 'noShow',  a: 'NO-SHOW', b: '' },
-  { k: 'fouls',   a: 'LOTS OF', b: 'FOULS' },
+  { k: 'died',      a: 'STOPPED', b: 'MOVING' },
+  { k: 'tipped',    a: 'TIPPED',  b: '' },
+  { k: 'noShow',    a: 'NO-SHOW', b: '' },
+  { k: 'fouls',     a: 'LOTS OF', b: 'FOULS' },
+  // Distinct from STOPPED MOVING (the whole match) and NO-SHOW (never turned
+  // up): the robot was there and auto did nothing.
+  { k: 'autoFailed', a: 'AUTO',   b: 'DID NOTHING' },
 ];
 const CLIMBS = ['None', 'Level1', 'Level2', 'Level3'];
+const START_ZONES = [
+  { id: 'left', label: 'LEFT' },
+  { id: 'centre', label: 'CENTRE' },
+  { id: 'right', label: 'RIGHT' },
+];
 
 const seat = {
   scout: localStorage.getItem('scoutName') || '',
@@ -89,7 +97,14 @@ const clock = {
 };
 
 // ---------------------------------------------------------------- helpers
-const fmt = (t) => { const s = Math.max(0, Math.floor(t)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+// m:ss during a match; h:mm:ss once the standby countdown is looking at a match
+// several slots away, where "195:55" reads as nonsense.
+const fmt = (t) => {
+  const s = Math.max(0, Math.floor(t));
+  const mm = Math.floor(s / 60) % 60;
+  if (s >= 3600) return `${Math.floor(s / 3600)}:${String(mm).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
 const rateOf = (id) => (intensityBuckets().find((b) => b.id === id) || { prior: 3.5 }).prior;
 function buzz(ms = 12) { if (navigator.vibrate) { try { navigator.vibrate(ms); } catch {} } }
 
@@ -152,10 +167,18 @@ function newEntry(match, team) {
     matchLabel: match ? match.label : 'Manual entry',
     team, alliance: seat.alliance, station: seat.station, scoutId: seat.scout,
     payload: {
-      intervals: [], feedIntervals: [], defenseIntervals: [], preload: 0,
+      intervals: [], feedIntervals: [], defenseIntervals: [], preload: null,
       autoTower: 'None', endgameTower: 'None',
       driverRating: 0, defenseRating: 0,
       died: false, tipped: false, noShow: false, fouls: false, note: '',
+      // Pre-match facts, entered on standby while the robot lines up. null
+      // means "nobody said", which is not the same as zero - preload used to
+      // default to 0 and every team on the dashboard read "average preload 0".
+      startPosition: null, autoFailed: false,
+      // Which robot they were blocking. Defence was already recorded as
+      // intervals but never against whom, so "they shut our shooter down" could
+      // not be looked up. Asked once, after the buzzer, only if defence happened.
+      defenseTarget: null,
       // whose timeline these intervals are on. The server may only re-anchor
       // to TBA's actual_time when the phone was on the shared clock.
       clockShared: false, clockBy: null,
@@ -386,6 +409,15 @@ function renderAfter() {
   buildSteps('#driveSteps', DRIVE, 'driverRating');
   buildSteps('#defSteps', DEFENSE, 'defenseRating');
 
+  // Only ask who they were blocking if they actually blocked someone.
+  const defended = (entry.payload.defenseIntervals || []).length > 0;
+  $('#afDefWrap').classList.toggle('hide', !defended);
+  if (defended) {
+    buildPicks('#afDefTarget', opponentLineup().map((t) => ({ id: t, label: String(t) })),
+               'defenseTarget', { onSet: renderAfter });
+  }
+  buildPicks('#afStart', START_ZONES, 'startPosition', { onSet: renderAfter });
+
   const w = $('#wrongs');
   if (!w.children.length) {
     for (const it of WRONGS) {
@@ -397,6 +429,38 @@ function renderAfter() {
     }
   }
   for (const d of w.children) d.classList.toggle('on', !!entry.payload[d.dataset.k]);
+}
+
+/**
+ * A row of one-tap choices bound to a payload field.
+ *
+ * Rebuilt on every render rather than diffed - a handful of nodes, and it keeps
+ * the selected state honest when the entry is swapped out underneath it.
+ */
+function buildPicks(sel, options, key, { toggle = true, onSet } = {}) {
+  const el = $(sel);
+  if (!el) return;
+  el.innerHTML = '';
+  for (const opt of options) {
+    const d = document.createElement('div');
+    d.className = 'pick' + (entry && entry.payload[key] === opt.id ? ' on' : '');
+    d.innerHTML = opt.sub ? `${opt.label}<span class="sub">${opt.sub}</span>` : opt.label;
+    d.onclick = () => {
+      if (!entry) return;
+      entry.payload[key] = (toggle && entry.payload[key] === opt.id) ? null : opt.id;
+      buzz();
+      autosave();
+      if (onSet) onSet();
+    };
+    el.appendChild(d);
+  }
+}
+
+/** The three robots on the other alliance, for "who were they blocking". */
+function opponentLineup() {
+  if (!currentMatch || !seat.alliance) return [];
+  const other = seat.alliance === 'red' ? 'blue' : 'red';
+  return (currentMatch[other] || []).filter(Boolean);
 }
 
 function buildSteps(sel, labels, key) {
@@ -469,6 +533,12 @@ function renderStandby() {
     const secs = Math.max(0, (eta - Date.now()) / 1000);
     $('#sbCountdown').textContent = fmt(secs);
   } else $('#sbCountdown').textContent = '--:--';
+
+  buildPicks('#sbStart', START_ZONES, 'startPosition', { onSet: renderStandby });
+  buildPicks('#sbPreload',
+             [...Array((gameRules().preloadMax || 8) + 1).keys()]
+               .map((n) => ({ id: n, label: String(n) })),
+             'preload', { onSet: renderStandby });
 
   $('#sbList').innerHTML = history.length ? history.map((h) => `
     <div class="lrow"><span class="code">${shortCode(h.matchLabel)}</span>
@@ -650,9 +720,19 @@ async function main() {
     }
   });
 
+  // Undo the most recent run of ANY kind. It used to pop the shooting list
+  // only, so a mis-held FEEDING or DEFENDING pad could not be taken back at all.
   $('#btnUndo').onclick = () => {
-    if (!entry || !entry.payload.intervals.length) { buzz(30); return; }
-    entry.payload.intervals.pop(); buzz(20); renderLive(); autosave();
+    if (!entry) return;
+    const lists = [entry.payload.intervals, entry.payload.feedIntervals,
+                   entry.payload.defenseIntervals].filter((l) => l && l.length);
+    if (!lists.length) { buzz(30); return; }
+    let newest = lists[0];
+    for (const l of lists) {
+      if (l[l.length - 1].end > newest[newest.length - 1].end) newest = l;
+    }
+    newest.pop();
+    buzz(20); renderLive(); autosave();
   };
   $('#btnClimb').onclick = () => {
     const ph = phaseAt(clock.elapsed());

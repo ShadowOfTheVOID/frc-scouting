@@ -181,6 +181,10 @@ selection.
 Set the passcode on the settings page. Leave it blank and anyone can edit. Changing it signs
 everyone out, which is handy right before alliance selection.
 
+The passcode also gates the **per-scout** panel on the HEALTH tab. Without it, a dashboard in the
+stands shows how good the *data* is and never how good a *person* is — see
+[Judging the data, not the scouts](#judging-the-data-not-the-scouts).
+
 During alliance selection the board crosses teams off by itself as they are picked, so the next
 available name is always at the top.
 

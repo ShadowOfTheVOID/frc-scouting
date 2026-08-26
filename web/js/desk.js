@@ -19,7 +19,7 @@ const WEIGHTS2 = { climb: 15, reliability: 30, stockpile: 20, fuel: 15, defense:
 let PICK_MODE = 'first';
 const activeWeights = () => (PICK_MODE === 'first' ? WEIGHTS : WEIGHTS2);
 
-const RANK_COLS = '56px minmax(120px,1fr) 84px 74px 52px 44px 64px';
+const RANK_COLS = '56px minmax(120px,1fr) 84px 74px 52px 44px 86px';
 const ALL_COLS  = '62px 56px minmax(160px,1fr) 84px 74px 62px 60px 62px 62px 56px 52px 64px';
 
 // ------------------------------------------------------------------ bits
@@ -35,6 +35,24 @@ function trustCell(v) {
   const pct = Math.round((v ?? 0) * 100);
   return `<span class="trust"><i class="${pct < 65 ? 'low' : ''}" style="width:${pct}%"></i></span>`;
 }
+
+/**
+ * How much to trust THIS ROBOT'S numbers — a property of the data, not of a
+ * person. Grows with matches seen and shrinks as the band widens relative to
+ * the mean. This replaced a per-scout trust bar that named individuals on a
+ * screen the whole room can see.
+ */
+function confidence(t) {
+  const n = t.estimated.matches || 0;
+  if (!n) return 0;
+  const rel = t.estimated.avgFuel > 0 ? t.estimated.band / t.estimated.avgFuel : 1;
+  return Math.max(0, Math.min(1, Math.min(1, n / 8) * (1 - Math.min(1, rel))));
+}
+function confidenceCell(t) {
+  const pct = Math.round(confidence(t) * 100);
+  return `<span class="trust" title="${t.estimated.matches} matches, ±${t.estimated.band} fuel">`
+       + `<i class="${pct < 50 ? 'low' : ''}" style="width:${pct}%"></i></span>`;
+}
 function tile(k, v, c, alert) {
   return `<div class="tile${alert ? ' alert' : ''}"><div class="k">${k}</div>
     <div class="v">${v}</div><div class="c${alert === 'warn' ? ' warn' : ''}">${c}</div></div>`;
@@ -44,6 +62,30 @@ const shortCode = (label) => {
   return m ? `${m[1].toUpperCase()}${m[2]}` : (label || '—');
 };
 
+/** Robots that took the field in a played match with no scout entry for them. */
+function unwatchedRobots() {
+  if (!ANALYTICS || !STATE) return [];
+  const out = new Set();
+  const scoutedFor = new Map();
+  for (const t of Object.values(ANALYTICS.teams)) {
+    if (t.matchesScouted) scoutedFor.set(t.team, t.matchesScouted);
+  }
+  for (const m of STATE.matches || []) {
+    if (!m.breakdown) continue;
+    for (const t of [...(m.red || []), ...(m.blue || [])]) {
+      if (!scoutedFor.has(t)) out.add(t);
+    }
+  }
+  return [...out];
+}
+
+/** "9982 x3 · 9975 x1", or an em dash. */
+function teamCounts(map) {
+  const rows = Object.entries(map || {}).sort((a, b) => b[1] - a[1]);
+  if (!rows.length) return '—';
+  return rows.slice(0, 3).map(([t, n]) => `${t}${n > 1 ? ` \u00d7${n}` : ''}`).join(' · ');
+}
+
 function recordLine(e) {
   const r = e.record;
   if (!r) return '';
@@ -52,14 +94,6 @@ function recordLine(e) {
 function matchLabel(matchKey) {
   const m = ((STATE && STATE.matches) || []).find((x) => x.matchKey === matchKey);
   return (m && m.label) || matchKey;
-}
-
-function scoutTrust(team) {
-  if (!ANALYTICS) return 1;
-  // a team is only as trustworthy as the scouts who watched it
-  const s = ANALYTICS.scouts || [];
-  if (!s.length) return 1;
-  return s.reduce((a, x) => a + x.reliability, 0) / s.length;
 }
 
 // ═════════════════════════════════════════════════════════════════ LIVE
@@ -85,22 +119,25 @@ function renderLive() {
   $('#onfield').innerHTML = rows.filter(Boolean).join('') ||
     '<div class="empty">No schedule yet — set an event key and API keys on the hub.</div>';
 
-  // heads up: a station that has gone quiet is the failure that ruins a dataset
-  const dark = ANALYTICS ? (ANALYTICS.scouts || []).filter((s) => s.missedMatches > 0) : [];
-  if (dark.length) {
+  // Heads up: a station that has gone quiet is the failure that ruins a dataset.
+  // Named by ROBOT, not by scout — the lead acts on "9982 went unwatched" just
+  // as well, and the CREW tab already says whose phone is dark.
+  const unwatched = unwatchedRobots();
+  if (unwatched.length) {
     $('#headsup').classList.remove('hide');
     $('#headsupBody').textContent =
-      `${dark.map((d) => d.scoutId).join(', ')} ${dark.length === 1 ? 'has' : 'have'} missed matches — those robots are unscouted.`;
+      `${unwatched.slice(0, 6).join(', ')} ${unwatched.length === 1 ? 'has' : 'have'} `
+      + `gone unscouted in a played match — check the stations on the CREW tab.`;
   } else $('#headsup').classList.add('hide');
 
   const cov = ANALYTICS ? ANALYTICS.coverage : { robotsScouted: 0, pct: 0 };
-  const scouts = ANALYTICS ? ANALYTICS.scouts.length : 0;
+  const seated = CREW.filter((c) => c.scoutId && c.connected).length;
   const flags = (STATE && STATE.flags || []).length;
-  const th = rpThresholds((STATE && STATE.event && STATE.event.level) || 'regional');
   $('#tiles').innerHTML =
     tile('SCOUTED', cov.robotsScouted, `${cov.pct}% coverage`) +
     tile('MATCHES', `${played}<small>/${matches.length || 0}</small>`, 'played') +
-    tile('SCOUTS', scouts, dark.length ? `${dark.length} station dark` : 'all reporting', dark.length ? 'warn' : '') +
+    tile('STATIONS', `${seated}<small>/6</small>`,
+         seated < 6 ? `${6 - seated} not reporting` : 'all reporting', seated < 6 ? 'warn' : '') +
     tile('FLAGGED', flags, 'need reconcile', flags ? true : '');
 
   const teams = ANALYTICS ? Object.values(ANALYTICS.teams).filter((t) => t.matchesScouted) : [];
@@ -108,7 +145,7 @@ function renderLive() {
   $('#rankHead').style.gridTemplateColumns = RANK_COLS;
   $('#rankHead').innerHTML =
     `<span>TEAM</span><span>NAME</span><span class="num">FUEL/MATCH</span><span class="num">CLIMB</span>
-     <span class="num">AUTO</span><span class="num">RP</span><span class="num">TRUST</span>`;
+     <span class="num">AUTO</span><span class="num">RP</span><span class="num">CONFIDENCE</span>`;
   $('#rankBody').innerHTML = teams.slice(0, 12).map((t) => `
     <div class="r" style="grid-template-columns:${RANK_COLS}">
       <span class="tno">${t.team}</span>
@@ -117,7 +154,7 @@ function renderLive() {
       <span class="num">${climbCell(t)}</span>
       <span class="num">${t.exact.autoClimbs || 0}</span>
       <span class="num">${t.exact.avgRP ?? '—'}</span>
-      <span class="num">${trustCell(scoutTrust(t.team))}</span>
+      <span class="num">${confidenceCell(t)}</span>
     </div>`).join('') || '<div class="empty">No scouted teams yet.</div>';
 
   renderPickMini();
@@ -481,22 +518,17 @@ function renderHealth() {
   if (!ANALYTICS) return;
   const c = ANALYTICS.coverage;
   const flags = (STATE && STATE.flags) || [];
+  const rep = ANALYTICS.scoreReport || null;
   $('#healthTiles').innerHTML =
     tile('COVERAGE', `${c.pct}%`, `${c.robotsScouted} of ${c.robotsExpected} robots`) +
-    tile('SCOUTS', ANALYTICS.scouts.length, 'reporting') +
+    tile('MEDIAN ERROR', rep && rep.medianPct != null ? `${rep.medianPct}%` : '—',
+         rep && rep.compared ? `over ${rep.compared} alliance-matches` : 'no results yet',
+         rep && rep.medianPct > 25 ? 'warn' : '') +
     tile('FLAGGED', flags.length, 'need reconcile', flags.length ? true : '') +
     tile('CALIBRATED', (CONFIG && CONFIG.multipliersFittedFrom) || 0, 'windows fitted');
 
-  $('#scoutHead').style.gridTemplateColumns = SCOUT_COLS;
-  $('#scoutHead').innerHTML = `<span>SCOUT</span><span class="num">MATCHES</span>
-    <span class="num">MISSED</span><span class="num">TRUST</span>`;
-  $('#scoutBody').innerHTML = ANALYTICS.scouts.map((s) => `
-    <div class="r" style="grid-template-columns:${SCOUT_COLS}">
-      <span>${esc(s.scoutId)}</span>
-      <span class="num">${s.matches}</span>
-      <span class="num">${s.missedMatches}</span>
-      <span class="num">${trustCell(s.reliability)}</span>
-    </div>`).join('') || '<div class="empty">No scout data yet.</div>';
+  renderScoreReport(rep);
+  renderScoutPanel();
 
   $('#flags').innerHTML = flags.length ? flags.map((f) => `
     <div class="callout"><div class="h">${esc(shortCode(f.match_key))} · ${esc(f.kind)}</div>
@@ -510,6 +542,94 @@ function renderHealth() {
       (CONFIG && CONFIG.multipliersFittedFrom)
         ? `fitted from ${CONFIG.multipliersFittedFrom} official windows`
         : 'still on shipped priors — fits itself after ~30 matches'}</div>`;
+}
+
+/**
+ * SCOUTS vs TBA — the honest accuracy readout.
+ *
+ * Compares the RAW scout estimate (duration x intensity, active windows only,
+ * computed server-side without ever looking at TBA) against the official
+ * result. The solved fuel would be useless here: the solver distributes TBA's
+ * totals, so adding it back up reproduces TBA exactly no matter how wrong the
+ * scouts were.
+ */
+const REP_COLS = '92px 56px 110px 110px 82px';
+function renderScoreReport(rep) {
+  if (!rep || !rep.rows || !rep.rows.length) {
+    $('#repHead').innerHTML = '';
+    $('#repHead').style.gridTemplateColumns = '1fr';
+    $('#repBody').innerHTML = '<div class="empty">Nothing to compare until a match has an official result.</div>';
+    $('#repSummary').innerHTML = '<div class="hint">No played matches yet.</div>';
+    return;
+  }
+  $('#repCap').textContent =
+    `raw scout estimate vs the official result · ${rep.compared} fully-watched alliance-matches`;
+  $('#repHead').style.gridTemplateColumns = REP_COLS;
+  $('#repHead').innerHTML = `<span>MATCH</span><span>SIDE</span>
+    <span class="num">OFFICIAL</span><span class="num">SCOUTS SAID</span><span class="num">OFF BY</span>`;
+  $('#repBody').innerHTML = rep.rows.slice(0, 40).map((r) => {
+    const d = r.deltaPct;
+    const col = d == null ? 'var(--t5)'
+      : Math.abs(d) <= 15 ? 'var(--green-soft)'
+      : Math.abs(d) <= 30 ? 'var(--amber)' : 'var(--red-alert)';
+    const partial = r.robotsScouted < 3
+      ? `<span class="hint" style="display:block">${r.robotsScouted} of 3 watched</span>` : '';
+    return `<div class="r" style="grid-template-columns:${REP_COLS}">
+      <span class="tno" style="font-size:13px">${esc(shortCode(r.label))}</span>
+      <span style="color:${r.alliance === 'red' ? 'var(--red-label)' : 'var(--blue-label)'};
+        font:800 10.5px Barlow,sans-serif;letter-spacing:.1em">${r.alliance.toUpperCase()}</span>
+      <span class="num">${r.officialFuel} <span class="band">fuel</span>${partial}</span>
+      <span class="num">${Math.round(r.scoutFuel)} <span class="band">fuel</span></span>
+      <span class="num" style="color:${col}">${d == null ? '—' : (d > 0 ? '+' : '') + Math.round(d) + '%'}</span>
+    </div>`;
+  }).join('');
+
+  const bias = rep.biasPct;
+  $('#repSummary').innerHTML = `
+    <div class="kv"><span>median error</span><b>${rep.medianPct ?? '—'}%</b></div>
+    <div class="kv"><span>worst 10%</span><b>${rep.p90Pct ?? '—'}%</b></div>
+    <div class="kv"><span>running</span><b>${bias == null ? '—'
+      : bias > 0 ? `${bias}% hot` : `${Math.abs(bias)}% cold`}</b></div>
+    <div class="kv"><span>picked the winner</span><b>${
+      rep.calledPct == null ? '—' : `${rep.calledIt} of ${rep.decided}`}</b></div>
+    <div class="hint" style="margin-top:6px">${bias == null ? ''
+      : Math.abs(bias) > 20
+        ? `Scouts are calling shooting ${bias > 0 ? 'heavier' : 'lighter'} than it scores.
+           Worth a word about the rate ladder — the solver corrects for it, but the
+           single-match numbers get noisier.`
+        : 'Within the range the solver was tuned for.'}</div>
+    <div class="hint" style="margin-top:6px">Compares the raw scout estimate against TBA.
+      It never uses the solved numbers, which are derived from TBA and would always agree.</div>`;
+}
+
+/**
+ * Scout quality data is lead-only.
+ *
+ * The hub omits it unless the request carries the strategy passcode or comes
+ * from the hub machine itself, so on a dashboard in the stands `scouts` is
+ * simply absent and this panel says so rather than rendering an empty table.
+ */
+function renderScoutPanel() {
+  const scouts = ANALYTICS && ANALYTICS.scouts;
+  if (!scouts) {
+    $('#scoutHead').innerHTML = '';
+    $('#scoutHead').style.gridTemplateColumns = '1fr';
+    $('#scoutBody').innerHTML = `<div class="hint" style="padding:12px 16px">
+      Per-scout data is only shown on the hub machine, or after unlocking with the
+      strategy passcode on the PICKLIST tab. It is coaching material for the lead,
+      not a scoreboard for the room.</div>`;
+    return;
+  }
+  $('#scoutHead').style.gridTemplateColumns = SCOUT_COLS;
+  $('#scoutHead').innerHTML = `<span>SCOUT</span><span class="num">MATCHES</span>
+    <span class="num">MISSED</span><span class="num">RECONCILES</span>`;
+  $('#scoutBody').innerHTML = scouts.map((s) => `
+    <div class="r" style="grid-template-columns:${SCOUT_COLS}">
+      <span>${esc(s.scoutId)}</span>
+      <span class="num">${s.matches}</span>
+      <span class="num">${s.missedMatches}</span>
+      <span class="num">${trustCell(s.reliability)}</span>
+    </div>`).join('') || '<div class="empty">No scout data yet.</div>';
 }
 
 // ════════════════════════════════════════════════════════════════ CREW
@@ -672,6 +792,8 @@ function allianceCard(m, side) {
     <div class="eyebrow" style="color:${side === 'red' ? 'var(--red-label)' : 'var(--blue-label)'}">
       ${label} · ${esc((m && m.label) || '')}</div>
     ${verdictBanner(m, side)}
+    ${autoClashNote(teams)}
+    ${defenseNote(m, side, teams)}
     <div class="tiles" style="grid-template-columns:repeat(3,1fr)">
       ${tile('PROJECTED FUEL', Math.round(fuel), `±${band} · Energized at ${th.energized}`,
              fuel >= th.energized ? '' : 'warn')}
@@ -685,6 +807,36 @@ function allianceCard(m, side) {
       ${rows || '<div class="empty">No lineup yet.</div>'}
     </div></div>`;
 }
+/** Two robots that habitually start in the same zone will meet there. */
+function autoClashNote(teams) {
+  const byZone = {};
+  for (const t of teams) {
+    if (!t || !t.observed.startZone) continue;
+    (byZone[t.observed.startZone] ||= []).push(t.team);
+  }
+  const clash = Object.entries(byZone).filter(([, ts]) => ts.length > 1);
+  if (!clash.length) return '';
+  return clash.map(([zone, ts]) => `<div class="callout" style="margin:0">
+    <div class="h">AUTO — ${esc(zone.toUpperCase())}</div>
+    <div class="b">${ts.join(' and ')} both usually start ${esc(zone)}. Worth asking before the
+      match rather than watching it happen.</div></div>`).join('');
+}
+
+/** Has anyone on the other alliance made a habit of defending these robots? */
+function defenseNote(m, side, teams) {
+  const opp = (m && m[side === 'red' ? 'blue' : 'red']) || [];
+  const hits = [];
+  for (const t of teams) {
+    if (!t) continue;
+    for (const [who, n] of Object.entries(t.observed.defendedBy || {})) {
+      if (opp.includes(Number(who))) hits.push(`${who} has defended ${t.team} ${n}\u00d7`);
+    }
+  }
+  if (!hits.length) return '';
+  return `<div class="callout" style="margin:0"><div class="h">EXPECT DEFENCE</div>
+    <div class="b">${hits.slice(0, 4).map(esc).join(' · ')}.</div></div>`;
+}
+
 function renderMatchPreview() {
   const ms = (STATE && STATE.matches) || [];
   const m = ms.find((x) => x.status === 'On field')
@@ -730,8 +882,16 @@ function renderTeamDetail() {
         <div class="kv"><span>wasted fuel into a dead hub</span><b>${o.wastedFuelPct == null ? '—' : Math.round(o.wastedFuelPct) + '%'}</b></div>
         <div class="kv"><span>feeds a partner</span><b>${Math.round(o.feedRate)}%${o.feedSecs ? ` · ${o.feedSecs}s/match` : ''}</b></div>
         <div class="kv"><span>defence</span><b>${o.defenseSecs ? `${o.defenseSecs}s/match` : 'none seen'}</b></div>
+        <div class="kv"><span>defends</span><b>${teamCounts(o.defenseAgainst)}</b></div>
+        <div class="kv"><span>defended by</span><b>${teamCounts(o.defendedBy)}</b></div>
+        <div class="kv"><span>starts</span><b>${o.startZone
+          ? `${o.startZone.toUpperCase()} · ${Math.round(o.startZonePct)}%` : '—'}</b></div>
+        <div class="kv"><span>auto did nothing</span><b>${o.autoFailRate
+          ? Math.round(o.autoFailRate) + '%' : 'never seen'}</b></div>
+        <div class="kv"><span>lots of fouls</span><b>${o.foulRate
+          ? Math.round(o.foulRate) + '%' : 'never seen'}</b></div>
         <div class="kv"><span>driver</span><b>${o.driver ?? '—'} / 5</b></div>
-        <div class="kv"><span>average preload</span><b>${o.avgPreload ?? '—'}</b></div>
+        <div class="kv"><span>average preload</span><b>${o.avgPreload ?? 'not asked'}</b></div>
       </div></div>
     <div class="tbl"><div class="cap"><span class="t">WHAT SCOUTS WROTE</span>
       <span class="n">${t.notes.length ? `${t.notes.length} note${t.notes.length > 1 ? 's' : ''}` : 'nothing typed'}</span></div>
@@ -782,14 +942,15 @@ function renderSeats() {
     </div>`).join('') || '<div class="empty">No upcoming matches.</div>';
   $('#seatSub').textContent = `${Object.keys(seats).length} of 6 stations claimed`;
 
-  const rc = '1fr 90px 90px 90px';
+  // Who is sitting where and how much they have logged - no quality score.
+  const rc = '1fr 120px';
+  const roster = CREW.filter((c) => c.scoutId);
   $('#rosterHead').style.gridTemplateColumns = rc;
-  $('#rosterHead').innerHTML = '<span>NAME</span><span class="num">MATCHES</span><span class="num">MISSED</span><span class="num">TRUST</span>';
-  $('#rosterBody').innerHTML = (ANALYTICS ? ANALYTICS.scouts : []).map((s) => `
-    <div class="r" style="grid-template-columns:${rc}"><span>${esc(s.scoutId)}</span>
-      <span class="num">${s.matches}</span><span class="num">${s.missedMatches}</span>
-      <span class="num">${trustCell(s.reliability)}</span></div>`).join('')
-    || '<div class="empty">Nobody has scouted yet.</div>';
+  $('#rosterHead').innerHTML = '<span>NAME</span><span class="num">STATION</span>';
+  $('#rosterBody').innerHTML = roster.map((c) => `
+    <div class="r" style="grid-template-columns:${rc}"><span>${esc(String(c.scoutId).toUpperCase())}</span>
+      <span class="num">${esc(c.seat.replace(/(\d)/, ' $1').toUpperCase())}</span></div>`).join('')
+    || '<div class="empty">Nobody seated yet.</div>';
 
   const c = ANALYTICS ? ANALYTICS.coverage : { pct: 0, robotsScouted: 0, robotsExpected: 0 };
   $('#seatCoverage').innerHTML =
