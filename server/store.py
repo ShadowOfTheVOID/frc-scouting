@@ -86,6 +86,38 @@ class Store:
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
             (key, json.dumps(value), time.time()))
 
+    def mutate(self, key, fn, default=None):
+        """Read-modify-write one kv row atomically. Returns what `fn` returned.
+
+        Six phones claim their chairs and tap the match pad within the same
+        second, and every one of those is a read-modify-write on a single kv
+        row. Plain get/set across a thread-per-request server loses writes:
+        measured, six simultaneous seat claims recorded four of six chairs every
+        time, and six taps handed back different "shared" clock origins in half
+        of all runs - which is precisely the thing the solver's accuracy rests
+        on. BEGIN IMMEDIATE takes the write lock before the read, so the
+        read-modify-write is serialised; busy_timeout covers the wait.
+
+        `fn` receives the current value and returns `(new_value, result)`.
+        Returning `(None, result)` for an unchanged value skips the write.
+        """
+        c = self.conn()
+        c.execute("BEGIN IMMEDIATE")
+        try:
+            r = c.execute("SELECT value FROM kv WHERE key=?", (key,)).fetchone()
+            cur = json.loads(r["value"]) if r else (default() if callable(default) else default)
+            new, result = fn(cur)
+            if new is not None:
+                c.execute(
+                    "INSERT INTO kv(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) "
+                    "DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                    (key, json.dumps(new), time.time()))
+            c.execute("COMMIT")
+            return result
+        except Exception:
+            c.execute("ROLLBACK")
+            raise
+
     # -------------------------------------------------------------- event
     def put_event(self, key, name=None, level=None, data=None):
         self.conn().execute(
@@ -116,10 +148,25 @@ class Store:
     # ------------------------------------------------------------ matches
     def put_match(self, event_key, match_key, **f):
         now = time.time()
+        # `times` is merged rather than replaced. Nexus supplies
+        # estimatedOnFieldTime/estimatedQueueTime (milliseconds) and TBA supplies
+        # actual/scheduled/predicted (seconds) for the SAME row, and each poller
+        # would otherwise erase the other's keys every few seconds - taking
+        # TBA's actual_time, which is what re-anchors the scouts' clock, with it.
+        times = f.get("times")
+        if times is not None:
+            prev = self.conn().execute(
+                "SELECT times FROM matches WHERE event_key=? AND match_key=?",
+                (event_key, match_key)).fetchone()
+            old_times = json.loads(prev["times"] or "null") if prev else None
+            if isinstance(old_times, dict) and isinstance(times, dict):
+                merged = dict(old_times)
+                merged.update({k: v for k, v in times.items() if v is not None})
+                times = merged
         cols = dict(label=f.get("label"), comp_level=f.get("comp_level"),
                     match_number=f.get("match_number"), play_order=f.get("play_order"),
                     red=_j(f.get("red")), blue=_j(f.get("blue")), status=f.get("status"),
-                    times=_j(f.get("times")), breakdown=_j(f.get("breakdown")))
+                    times=_j(times), breakdown=_j(f.get("breakdown")))
         sets = ",".join(f"{k}=COALESCE(excluded.{k},matches.{k})" for k in cols)
         self.conn().execute(
             f"INSERT INTO matches(event_key,match_key,{','.join(cols)},updated_at) "
@@ -222,6 +269,54 @@ class Store:
             q += " AND team=?"; a.append(int(team))
         return [{"photoId": r["photo_id"], "team": r["team"]}
                 for r in self.conn().execute(q + " ORDER BY updated_at DESC", a).fetchall()]
+
+    # ------------------------------------------------------- key migration
+    def remap_match_key(self, event_key, old_key, new_key):
+        """Fold a match row, and everything pointing at it, onto another key.
+
+        Older databases carry two rows for one real match: a Nexus-derived
+        `..._qualification1` and TBA's `..._qm1`. Scouts logged against the
+        first, the solver only ever looked at the second, so the fuel numbers
+        were an even three-way split of the official total with no scouting in
+        them at all. This merges the pair. Idempotent, and a no-op when there is
+        nothing under `old_key`.
+        """
+        if old_key == new_key:
+            return False
+        c = self.conn()
+        old = c.execute("SELECT * FROM matches WHERE event_key=? AND match_key=?",
+                        (event_key, old_key)).fetchone()
+        if not old:
+            return False
+
+        # The row itself: COALESCE keeps whatever the canonical row already
+        # knows and fills its gaps from the legacy one (status and the Nexus
+        # timings, typically). put_match handles the times merge.
+        self.put_match(event_key, new_key, label=old["label"], comp_level=old["comp_level"],
+                       match_number=old["match_number"], play_order=old["play_order"],
+                       red=json.loads(old["red"] or "null"),
+                       blue=json.loads(old["blue"] or "null"),
+                       status=old["status"], times=json.loads(old["times"] or "null"),
+                       breakdown=json.loads(old["breakdown"] or "null"))
+        c.execute("DELETE FROM matches WHERE event_key=? AND match_key=?", (event_key, old_key))
+
+        # Scout entries go through the normal last-write-wins rule rather than a
+        # blind UPDATE, so a row already sitting on the canonical key is only
+        # replaced when the legacy one is genuinely newer.
+        for r in c.execute("SELECT * FROM scout_entries WHERE match_key=?", (old_key,)).fetchall():
+            self.upsert_scout({
+                "eventKey": r["event_key"], "matchKey": new_key, "team": r["team"],
+                "scoutId": r["scout_id"], "deviceId": r["device_id"], "alliance": r["alliance"],
+                "station": r["station"], "payload": json.loads(r["payload"]),
+                "updatedAt": r["updated_at"],
+            })
+        c.execute("DELETE FROM scout_entries WHERE match_key=?", (old_key,))
+
+        # Solved rows are derived and will be recomputed by reconcile(); flags
+        # are advisory. Both are safe to overwrite.
+        c.execute("UPDATE OR REPLACE solved SET match_key=? WHERE match_key=?", (new_key, old_key))
+        c.execute("UPDATE OR REPLACE flags SET match_key=? WHERE match_key=?", (new_key, old_key))
+        return True
 
     # ------------------------------------------------------------ backups
     def snapshot(self, keep=12):

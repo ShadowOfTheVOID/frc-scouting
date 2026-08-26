@@ -20,6 +20,7 @@ import os
 import posixpath
 import platform
 import queue
+import re
 import socket
 import sys
 import threading
@@ -166,17 +167,18 @@ class Hub:
         go and talk to, so it is kept per-device rather than per-scout."""
         if not who or not who.get("deviceId"):
             return
-        devs = self.store.get("devices") or {}
-        d = devs.get(who["deviceId"], {})
-        d.update({"deviceId": who["deviceId"], "at": time.time(), "what": what})
-        for k in ("scoutId", "seat"):
-            if who.get(k):
-                d[k] = who[k]
-        devs[who["deviceId"]] = d
-        # forget phones that have been gone for a whole day
-        cutoff = time.time() - 12 * 3600
-        devs = {k: v for k, v in devs.items() if v.get("at", 0) > cutoff}
-        self.store.set("devices", devs)
+        def apply(devs):
+            devs = dict(devs or {})
+            d = dict(devs.get(who["deviceId"], {}))
+            d.update({"deviceId": who["deviceId"], "at": time.time(), "what": what})
+            for k in ("scoutId", "seat"):
+                if who.get(k):
+                    d[k] = who[k]
+            devs[who["deviceId"]] = d
+            # forget phones that have been gone for a whole day
+            cutoff = time.time() - 12 * 3600
+            return {k: v for k, v in devs.items() if v.get("at", 0) > cutoff}, None
+        self.store.mutate("devices", apply, {})
 
     def crew(self):
         """One row per station: who is on it, are they live, are they behind."""
@@ -240,10 +242,11 @@ class Hub:
             label = m.get("label")
             if not label:
                 continue
+            red = [_int(t) for t in (m.get("redTeams") or [])]
+            blue = [_int(t) for t in (m.get("blueTeams") or [])]
             self.store.put_match(
-                ek, _nexus_match_key(ek, label), label=label, play_order=i,
-                red=[_int(t) for t in (m.get("redTeams") or [])],
-                blue=[_int(t) for t in (m.get("blueTeams") or [])],
+                ek, resolve_match_key(self.store, ek, label, red, blue),
+                label=label, play_order=i, red=red, blue=blue,
                 status=m.get("status"), times=m.get("times"))
         self.store.set("nexusLive", {
             "nowQueuing": payload.get("nowQueuing"),
@@ -413,7 +416,7 @@ class Hub:
             return
         self.status["frcEvents"] = time.time()
         have = {m["matchKey"] for m in self.store.matches(ek) if not m.get("breakdown")}
-        early = dict(self.event_data("earlyScores", ek, {}))
+        early = dict(self.event_data("earlyScores", ek, None) or {})
         added = []
         for row in (payload.get("MatchScores") or []):
             num = row.get("matchNumber")
@@ -465,9 +468,12 @@ class Hub:
 
     def issue_token(self):
         tok = secrets.token_urlsafe(18)
-        toks = self.store.get("unlockTokens") or {}
-        toks[tok] = time.time() + 16 * 3600       # lasts the competition day
-        self.store.set("unlockTokens", {k: v for k, v in toks.items() if v > time.time()})
+
+        def apply(toks):
+            toks = dict(toks or {})
+            toks[tok] = time.time() + 16 * 3600    # lasts the competition day
+            return {k: v for k, v in toks.items() if v > time.time()}, None
+        self.store.mutate("unlockTokens", apply, {})
         return tok
 
     def token_ok(self, tok):
@@ -496,19 +502,22 @@ class Hub:
         this - it is a queueing tool driven by volunteers, not an FMS feed, so
         'On field' precedes the real start by an unknown amount.
         """
-        clocks = self.store.get("matchClocks") or {}
-        existing = clocks.get(match_key)
-        if existing:
-            return existing          # first tap wins; never restart under anyone
-        rec = {"matchKey": match_key, "startedAt": time.time(), "by": scout_id}
-        clocks[match_key] = rec
-        # keep this small; only the last handful of matches can still be live
-        if len(clocks) > 12:
-            for k in sorted(clocks, key=lambda k: clocks[k]["startedAt"])[:-12]:
-                del clocks[k]
-        self.store.set("matchClocks", clocks)
-        self.note("info", f"match clock started for {match_key} by {scout_id}")
-        self.broadcast("matchStart", rec)
+        def apply(clocks):
+            clocks = dict(clocks or {})
+            existing = clocks.get(match_key)
+            if existing:
+                return None, (existing, False)   # first tap wins; never restart under anyone
+            rec = {"matchKey": match_key, "startedAt": time.time(), "by": scout_id}
+            clocks[match_key] = rec
+            # keep this small; only the last handful of matches can still be live
+            if len(clocks) > 12:
+                for k in sorted(clocks, key=lambda k: clocks[k]["startedAt"])[:-12]:
+                    del clocks[k]
+            return clocks, (rec, True)
+        rec, started = self.store.mutate("matchClocks", apply, {})
+        if started:
+            self.note("info", f"match clock started for {match_key} by {scout_id}")
+            self.broadcast("matchStart", rec)
         return rec
 
     def match_clock(self, match_key):
@@ -524,19 +533,20 @@ class Hub:
         Not enforced - a scout who really is in that chair must always win.
         The point is that the phone can SHOW the clash before it costs a match.
         """
-        seats = self.store.get("seats") or {}
         key = f"{alliance}{station}"
-        prev = seats.get(key)
-        seats[key] = {"scoutId": scout_id, "deviceId": device_id, "at": time.time()}
 
-        # one device sits in exactly one seat
-        vacated = []
-        for k, v in list(seats.items()):
-            if k != key and v.get("deviceId") == device_id:
-                vacated.append(k)
-                del seats[k]
-
-        self.store.set("seats", seats)
+        def apply(seats):
+            seats = dict(seats or {})
+            prev = seats.get(key)
+            seats[key] = {"scoutId": scout_id, "deviceId": device_id, "at": time.time()}
+            # one device sits in exactly one seat
+            vacated = []
+            for k, v in list(seats.items()):
+                if k != key and v.get("deviceId") == device_id:
+                    vacated.append(k)
+                    del seats[k]
+            return seats, (seats, prev, vacated)
+        seats, prev, vacated = self.store.mutate("seats", apply, {})
 
         # A phone that has just been displaced must be told, or two scouts keep
         # logging the same robot and neither knows.
@@ -544,10 +554,9 @@ class Hub:
         if prev and prev.get("deviceId") and prev["deviceId"] != device_id:
             displaced = prev["deviceId"]
 
-        log = self.store.get("seatLog") or []
-        log.append({"at": time.time(), "seat": key, "scoutId": scout_id,
-                    "from": (prev or {}).get("scoutId"), "vacated": vacated})
-        self.store.set("seatLog", log[-60:])
+        entry = {"at": time.time(), "seat": key, "scoutId": scout_id,
+                 "from": (prev or {}).get("scoutId"), "vacated": vacated}
+        self.store.mutate("seatLog", lambda log: ((list(log or []) + [entry])[-60:], None), [])
         self.note("info", f"{scout_id} took {key}"
                           + (f" from {prev['scoutId']}" if prev and prev.get("scoutId") else ""))
 
@@ -556,12 +565,13 @@ class Hub:
         return seats
 
     def seats(self):
-        seats = self.store.get("seats") or {}
         cutoff = time.time() - 3 * 3600
-        live = {k: v for k, v in seats.items() if v.get("at", 0) > cutoff}
-        if live != seats:
-            self.store.set("seats", live)
-        return live
+
+        def apply(seats):
+            seats = seats or {}
+            live = {k: v for k, v in seats.items() if v.get("at", 0) > cutoff}
+            return (live if live != seats else None), live
+        return self.store.mutate("seats", apply, {})
 
     # ---------------------------------------------------------- solving
     CLOCK_FIX_LIMIT = 180          # seconds; beyond this it is not a late tap
@@ -612,9 +622,14 @@ class Hub:
         mult = self.store.get("multipliers") or dict(rules.BUCKET_PRIORS)
         offset = self.clock_offset(m)
         entries = self.store.scout_entries(ek, match_key=match_key)
+        # A mid-match HAND OVER leaves two rows for one (match, team). Take the
+        # newest rather than whichever the query happened to return first - the
+        # outgoing scout's row is a partial match by definition.
         by_team = {}
         for e in entries:
-            by_team.setdefault(e["team"], e)
+            cur = by_team.get(e["team"])
+            if cur is None or (e.get("updatedAt") or 0) > (cur.get("updatedAt") or 0):
+                by_team[e["team"]] = e
 
         out_rows = []
         for alliance in ("red", "blue"):
@@ -652,10 +667,9 @@ class Hub:
                                       "teams": sorted(r["team"] for r in out_rows)})
         if offset:
             shared = sum(1 for e in entries if (e.get("payload") or {}).get("clockShared"))
-            fixes = self.store.get("clockFixes") or {}
-            fixes[match_key] = {"offset": round(offset, 2), "corrected": shared,
-                                "of": len(entries)}
-            self.store.set("clockFixes", fixes)
+            fix = {"offset": round(offset, 2), "corrected": shared, "of": len(entries)}
+            self.store.mutate("clockFixes",
+                              lambda f: ({**(f or {}), match_key: fix}, None), {})
             if shared < len(entries):
                 self.store.flag(ek, match_key, "clock-partial",
                                 f"{len(entries) - shared} scout(s) were on their own clock "
@@ -733,6 +747,7 @@ class Hub:
         ek = self.event_key()
         if not ek:
             return
+        self.migrate_match_keys(ek)
         done = {r["matchKey"] for r in self.store.solved(ek)}
         todo = [m["matchKey"] for m in self.store.matches(ek)
                 if m.get("breakdown") and m["matchKey"] not in done]
@@ -745,6 +760,31 @@ class Hub:
             self.note("info", f"solved {len(todo)} match(es) on startup")
             self.recalibrate()
         return len(todo)
+
+    def migrate_match_keys(self, ek):
+        """Fold legacy Nexus-keyed rows onto the canonical TBA key.
+
+        A database written before resolve_match_key existed has two rows per
+        match and its scouting attached to the wrong one. Runs from reconcile(),
+        before the server starts serving, so the first dashboard load is already
+        correct. Idempotent.
+        """
+        moved = []
+        for m in self.store.matches(ek):
+            want = resolve_match_key(self.store, ek, m.get("label"), m.get("red"), m.get("blue"))
+            if want != m["matchKey"]:
+                if self.store.remap_match_key(ek, m["matchKey"], want):
+                    moved.append((m["matchKey"], want))
+        if moved:
+            # anything derived from the old key is now stale
+            self.store.set("clockFixes", {})
+            clocks = self.store.get("matchClocks") or {}
+            for old, new in moved:
+                if old in clocks:
+                    clocks[new] = {**clocks.pop(old), "matchKey": new}
+            self.store.set("matchClocks", clocks)
+            self.note("info", f"merged {len(moved)} duplicate match row(s) onto their official keys")
+        return len(moved)
 
     def run_snapshots(self):
         """Copy the database aside every few minutes.
@@ -804,8 +844,6 @@ def _extract_photos(store, rec):
     Photos travel over the network only - they would blow up any other transport
     and they do not belong in the row we merge on every sync.
     """
-    import base64
-    import hashlib
     payload = rec.get("payload") or {}
     photos = payload.get("photos") or []
     kept = []
@@ -838,33 +876,53 @@ def _csv_table(h, ek, table):
     if table == "teams":
         summary = analytics.event_summary(h.store, ek)
         header = ["team", "name", "rank", "record", "rankingPoints", "opr", "epa",
-                  "matchesScouted", "matchesWithOfficial", "avgFuel", "fuelBand",
+                  "matchesScouted", "matchesWithOfficial", "scoutVsOfficialPct",
+                  "avgFuel", "fuelBand",
                   "fuelConsistency", "bestClimb", "climbL3Pct", "climbL2Pct", "climbL1Pct",
                   "autoClimbPct", "avgTowerPoints", "avgRP", "stockpilePct", "wastedFuelPct",
-                  "feedPct", "feedSecs", "defenseSecs", "driver", "defense",
-                  "diedPct", "tippedPct", "noShowPct"]
+                  "feedPct", "feedSecs", "defenseSecs", "defenseAgainst", "defendedBy",
+                  "startZone", "startZonePct", "autoFailPct", "foulPct", "avgPreload",
+                  "driver", "defense", "diedPct", "tippedPct", "noShowPct"]
+        # How far the raw scout estimate ran from the official total on the
+        # matches this team played - the same check the HEALTH tab shows, so it
+        # survives into a spreadsheet.
+        off_by = {}
+        for r in (summary.get("scoreReport") or {}).get("rows") or []:
+            if r.get("deltaPct") is None or r.get("robotsScouted") != 3:
+                continue
+            m = h.store.match(ek, r["matchKey"]) or {}
+            for team in (m.get(r["alliance"]) or []):
+                off_by.setdefault(team, []).append(r["deltaPct"])
+
         rows = []
         for t in sorted(summary["teams"].values(), key=lambda x: x["team"]):
             e, es, o, ep = t["exact"], t["estimated"], t["observed"], t["epa"]
             rec = e.get("record") or {}
+            deltas = off_by.get(t["team"]) or []
             rows.append([
                 t["team"], t.get("name"), e.get("rank"),
                 f"{rec['wins']}-{rec['losses']}-{rec['ties']}" if rec else None,
                 e.get("rankingPoints"), e.get("opr"), ep.get("epa"),
                 t["matchesScouted"], e["matchesWithOfficial"],
+                round(sum(deltas) / len(deltas), 1) if deltas else None,
                 es["avgFuel"], es["band"], es["consistency"], e["bestClimb"],
                 round(e["climbRate"].get("Level3", 0), 1), round(e["climbRate"].get("Level2", 0), 1),
                 round(e["climbRate"].get("Level1", 0), 1), e["autoClimbRate"],
                 e["avgTowerPoints"], e["avgRP"], o["stockpileRate"], o["wastedFuelPct"],
-                o["feedRate"], o["feedSecs"], o["defenseSecs"], o["driver"], o["defense"],
+                o["feedRate"], o["feedSecs"], o["defenseSecs"],
+                _counts(o.get("defenseAgainst")), _counts(o.get("defendedBy")),
+                o.get("startZone"), o.get("startZonePct"),
+                o.get("autoFailRate"), o.get("foulRate"), o.get("avgPreload"),
+                o["driver"], o["defense"],
                 o["diedRate"], o["tippedRate"], o["noShowRate"],
             ])
         return header, rows
 
     if table == "scout":
         header = ["matchKey", "team", "alliance", "station", "scoutId", "runs", "activeSecs",
-                  "feedSecs", "defenseSecs", "preload", "autoTower", "endgameTower",
-                  "driverRating", "defenseRating", "died", "tipped", "noShow", "note"]
+                  "feedSecs", "defenseSecs", "defenseTarget", "preload", "startPosition",
+                  "autoTower", "endgameTower", "driverRating", "defenseRating",
+                  "died", "tipped", "noShow", "autoFailed", "fouls", "note"]
         rows = []
         for e in sorted(h.store.scout_entries(ek), key=lambda x: (x["matchKey"], x["team"])):
             p = e.get("payload") or {}
@@ -872,9 +930,11 @@ def _csv_table(h, ek, table):
                 e["matchKey"], e["team"], e.get("alliance"), e.get("station"), e.get("scoutId"),
                 len(p.get("intervals") or []), _secs(p.get("intervals")),
                 _secs(p.get("feedIntervals")), _secs(p.get("defenseIntervals")),
-                p.get("preload"), p.get("autoTower"), p.get("endgameTower"),
+                p.get("defenseTarget"), p.get("preload"), p.get("startPosition"),
+                p.get("autoTower"), p.get("endgameTower"),
                 p.get("driverRating"), p.get("defenseRating"),
                 bool(p.get("died")), bool(p.get("tipped")), bool(p.get("noShow")),
+                bool(p.get("autoFailed")), bool(p.get("fouls")),
                 (p.get("note") or "").strip(),
             ])
         return header, rows
@@ -892,6 +952,12 @@ def _csv_table(h, ek, table):
         return header, rows
 
     raise KeyError(table)
+
+
+def _counts(m):
+    """{9982: 3, 9975: 1} -> "9982 x3 · 9975" for a spreadsheet cell."""
+    rows = sorted((m or {}).items(), key=lambda kv: -kv[1])
+    return " · ".join(f"{t} x{n}" if n > 1 else str(t) for t, n in rows) or None
 
 
 def _secs(intervals):
@@ -952,8 +1018,40 @@ def _tba_label(m):
     return f"{ {'QM':'Qualification','QF':'Quarterfinal','SF':'Semifinal','F':'Final','EF':'Eighthfinal'}.get(cl, cl) } {m.get('match_number')}"
 
 
-def _nexus_match_key(event_key, label):
+# Nexus labels a qual match "Qualification 12"; TBA keys the same match
+# "2026casf_qm12". Deriving a key from the label alone therefore produced a
+# SECOND row for every match, and the two halves of the app each saw only one of
+# them: the phone takes its matchKey from the row with a `status` (Nexus), while
+# the solver only walks rows with a `breakdown` (TBA). Scout intervals never
+# reached the solver, so every alliance total got split evenly across three
+# robots and the dashboard showed confident numbers containing no scouting.
+_QUAL_LABEL = re.compile(r"^\s*(?:qualification|qual|q)\s*(\d+)\s*$", re.I)
+
+
+def _slug_match_key(event_key, label):
     return f"{event_key}_{label.lower().replace(' ', '')}"
+
+
+def resolve_match_key(store, event_key, label, red=None, blue=None):
+    """The one key both TBA and Nexus should agree on for this match.
+
+    Quals - which is everything scouts log - map straight onto TBA's `qmN`.
+    Playoff labels carry no TBA equivalent ("Match 3" tells us nothing about
+    `sf1m1`), so those fall back to matching an already-known row by its exact
+    lineup, and finally to the old slug.
+    """
+    m = _QUAL_LABEL.match(str(label or ""))
+    if m:
+        return f"{event_key}_qm{int(m.group(1))}"
+
+    if red and blue:
+        want = (sorted(_int(t) for t in red), sorted(_int(t) for t in blue))
+        for row in store.matches(event_key):
+            if row.get("compLevel") == "qm" or not (row.get("red") and row.get("blue")):
+                continue
+            if (sorted(row["red"]), sorted(row["blue"])) == want:
+                return row["matchKey"]
+    return _slug_match_key(event_key, label)
 
 
 # --------------------------------------------------------------- HTTP
@@ -1012,19 +1110,17 @@ class Handler(BaseHTTPRequestHandler):
         host = (self.client_address or ("",))[0]
         return host in ("127.0.0.1", "::1", "::ffff:127.0.0.1", "localhost")
 
-    def _authed(self):
-        """Write endpoints are open until a hub token is set, then required.
-
-        Off by default because a hotspot you control is already a closed network
-        and a locked-out scout on Saturday is worse than an open one.
-        """
-        want = Handler.hub.cfg("hubToken")
-        if not want:
-            return True
-        return self.headers.get("X-Scout-Token") == want
-
     def _unlocked(self):
         return Handler.hub.token_ok(self.headers.get("X-Strategy-Token"))
+
+    def _unlocked_strict(self):
+        """Like _unlocked, but an unset passcode does not mean "everyone".
+
+        _unlocked is deliberately open when no code is configured - a read-only
+        picklist should never be gated by accident. Scout quality data is the
+        opposite: absent a passcode it stays on the hub machine only.
+        """
+        return Handler.hub.pin_set() and self._unlocked()
 
     def _body(self):
         n = int(self.headers.get("Content-Length") or 0)
@@ -1133,7 +1229,14 @@ class Handler(BaseHTTPRequestHandler):
             ek = (q.get("event") or [h.event_key()])[0]
             if not ek:
                 return self._json({"error": "no event selected"}, 400)
-            return self._json(analytics.event_summary(h.store, ek))
+            # Per-scout quality scores name people and grade them, and this
+            # endpoint is open to everything on the venue wifi - a scoreboard of
+            # who is worst at their job on the big screen costs morale and buys
+            # nothing, because nothing downweights a low score anyway. The lead
+            # gets it (strategy passcode, or sitting at the hub); the room does
+            # not.
+            return self._json(analytics.event_summary(
+                h.store, ek, include_scouts=self._is_local() or self._unlocked_strict()))
         if p.startswith("/api/photo/"):
             pid = p.rsplit("/", 1)[-1]
             mime, data = h.store.photo(pid)
@@ -1199,10 +1302,8 @@ class Handler(BaseHTTPRequestHandler):
                     "error": "Hub settings can only be changed on the hub machine. "
                              "Open http://localhost:%d/ there." % self.server.server_address[1],
                 }, 403)
-            if not self._authed():
-                return self._json({"error": "bad or missing X-Scout-Token"}, 403)
             for k in ("eventKey", "tbaKey", "nexusKey", "nexusToken", "eventLevel", "ourTeam",
-                      "hubToken", "frcEventsUser", "frcEventsToken"):
+                      "frcEventsUser", "frcEventsToken"):
                 if k in body:
                     h.store.set(k, body[k])
             if "strategyPin" in body:
@@ -1228,11 +1329,15 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/picklist":
             if not self._unlocked():
                 return self._json({"error": "picklist is read-only without the passcode"}, 403)
-            cur = h.picklist()
-            for k in ("weights", "weights2", "dnp", "order", "order2"):
-                if k in body:
-                    cur[k] = body[k]
-            h.store.set("picklist", cur)
+            base = {"weights": {}, "weights2": {}, "dnp": [], "order": [], "order2": []}
+
+            def apply(cur):
+                cur = {**base, **(cur or {})}
+                for k in ("weights", "weights2", "dnp", "order", "order2"):
+                    if k in body:
+                        cur[k] = body[k]
+                return cur, cur
+            cur = h.store.mutate("picklist", apply, {})
             h.broadcast("picklist", {"updatedAt": time.time()})
             return self._json({"ok": True, "picklist": cur})
 
@@ -1245,15 +1350,21 @@ class Handler(BaseHTTPRequestHandler):
 
         if p == "/api/unseat":
             # the lead can free a station from the dashboard when someone walks off
-            seats = h.store.get("seats") or {}
-            seats.pop(body.get("seat"), None)
-            h.store.set("seats", seats)
+            def apply(seats):
+                seats = dict(seats or {})
+                seats.pop(body.get("seat"), None)
+                return seats, seats
+            seats = h.store.mutate("seats", apply, {})
             h.broadcast("seats", seats)
             return self._json({"ok": True, "seats": seats})
 
         if p == "/api/sync":
-            if not self._authed():
-                return self._json({"error": "bad or missing X-Scout-Token"}, 403)
+            # No token gate here on purpose. It is the endpoint every phone hits
+            # at the buzzer; a hotspot you control is already a closed network,
+            # and a scout locked out on Saturday morning is a far worse outcome
+            # than an open one. (There WAS a `hubToken` check, but no client ever
+            # sent the header and no page could set the value, so turning it on
+            # simply bricked every phone.)
             applied, rejected = 0, 0
             touched = set()
             for rec in body.get("scout") or []:
@@ -1305,9 +1416,10 @@ class Handler(BaseHTTPRequestHandler):
                     m = body.get("match") or {}
                     ek = body.get("eventKey") or h.event_key()
                     if ek and m.get("label"):
-                        h.store.put_match(ek, _nexus_match_key(ek, m["label"]), label=m["label"],
-                                          red=[_int(t) for t in (m.get("redTeams") or [])],
-                                          blue=[_int(t) for t in (m.get("blueTeams") or [])],
+                        red = [_int(t) for t in (m.get("redTeams") or [])]
+                        blue = [_int(t) for t in (m.get("blueTeams") or [])]
+                        h.store.put_match(ek, resolve_match_key(h.store, ek, m["label"], red, blue),
+                                          label=m["label"], red=red, blue=blue,
                                           status=m.get("status"), times=m.get("times"))
                         h.broadcast("matchStatus", {"match": m, "eventKey": ek})
                 else:
@@ -1317,8 +1429,6 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if p == "/api/import":
-            if not self._authed():
-                return self._json({"error": "bad or missing X-Scout-Token"}, 403)
             if body.get("kind") != "frc-rebuilt-scouting-export":
                 return self._json({"error": "not a scouting export file"}, 400)
             applied = rejected = 0

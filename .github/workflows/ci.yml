@@ -28,6 +28,35 @@ jobs:
       - name: HTTP surface
         run: python3 server/tests_api.py
 
+      # The schedule arrives from Nexus at a real event, under Nexus's own
+      # labels, while results arrive from TBA under TBA's keys. They have to
+      # land on one row. Seeding only TBA-shaped rows is what let a bug ship
+      # where they did not, and every fuel number at a live event became an
+      # even three-way split containing no scouting at all.
+      - name: Nexus and TBA agree on one row per match
+        run: |
+          python3 server/seed_demo.py --db data/ci-nexus.db --event 2026demo --via-nexus
+          python3 - <<'PY'
+          import sys
+          sys.path.insert(0, "server")
+          from store import Store
+          import analytics, hub
+          st = Store("data/ci-nexus.db")
+          hub.Hub(st).reconcile()
+          ms = st.matches("2026demo")
+          assert len(ms) == 40, f"{len(ms)} match rows, expected 40 - keys did not merge"
+          assert all(m["matchKey"].split("_")[1].startswith("qm") for m in ms),               f"non-canonical keys: {[m['matchKey'] for m in ms][:4]}"
+          a = analytics.event_summary(st, "2026demo")
+          fuel = [t["estimated"]["avgFuel"] for t in a["teams"].values()
+                  if t["estimated"]["matches"]]
+          # An even split gives every robot on an alliance the same number; real
+          # allocation does not. This is the assertion that would have failed.
+          assert len(set(fuel)) > len(fuel) // 2, "fuel looks evenly split, not allocated"
+          rep = a["scoreReport"]
+          assert rep["compared"] > 10 and rep["medianPct"] < 30, rep
+          print(f"ok: {len(ms)} rows, scouts within {rep['medianPct']}% of TBA")
+          PY
+
       - name: Demo event builds and serves with no keys and no internet
         run: |
           python3 server/seed_demo.py --db data/ci.db --event 2026demo

@@ -19,6 +19,7 @@ import urllib.request
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 
+import analytics  # noqa: E402
 import hub  # noqa: E402
 from store import Store  # noqa: E402
 
@@ -325,6 +326,250 @@ def test_config_scope(L):
     return ok
 
 
+def test_scout_data_is_lead_only(L):
+    """Per-scout quality scores must not reach a dashboard in the stands.
+
+    They name individuals and grade them, /api/analytics is open to anything on
+    the venue wifi, and nothing downweights a low score anyway - so it was a
+    personal scoreboard with no analytical payoff. The lead still gets it, from
+    the hub machine or with the strategy passcode.
+    """
+    ok = True
+    real_is_local = hub.Handler._is_local
+    try:
+        # Pretend every request comes from a phone in the stands.
+        hub.Handler._is_local = lambda self: False
+
+        L.req("/api/config", {"strategyPin": ""})
+        code, a = L.req("/api/analytics")
+        ok &= check("with no passcode set, scout data stays on the hub machine",
+                    code == 200 and "scouts" not in a)
+
+        L.req("/api/config", {"strategyPin": "4821"})
+        code, a = L.req("/api/analytics")
+        ok &= check("a remote dashboard never sees per-scout scores",
+                    code == 200 and "scouts" not in a)
+        ok &= check("but it still gets everything about the robots",
+                    "teams" in a and "coverage" in a and "scoreReport" in a)
+
+        _, r = L.req("/api/unlock", {"pin": "4821"})
+        code, a = L.req("/api/analytics", headers={"X-Strategy-Token": r["token"]})
+        ok &= check("the passcode unlocks it for the lead",
+                    code == 200 and isinstance(a.get("scouts"), list))
+
+        hub.Handler._is_local = lambda self: True
+        code, a = L.req("/api/analytics")
+        ok &= check("and the hub machine itself always has it",
+                    code == 200 and isinstance(a.get("scouts"), list))
+    finally:
+        hub.Handler._is_local = real_is_local
+        L.req("/api/config", {"strategyPin": ""})
+    return ok
+
+
+def test_score_report(L):
+    """The report must not be the solver marking its own homework.
+
+    solve_match distributes TBA's official window totals, so summing solved fuel
+    per alliance reproduces TBA exactly however wrong the scouts were. The
+    report has to use the raw interval estimate instead, and this pins that:
+    it is asserted to disagree with TBA on data that was deliberately inflated.
+    """
+    ok = True
+    ek = "2026report"
+    L.store.set("eventKey", ek)
+    L.store.put_event(ek)
+    L.store.put_match(ek, f"{ek}_qm1", label="Qualification 1", comp_level="qm", match_number=1,
+                      red=[501, 502, 503], blue=[601, 602, 603],
+                      breakdown={"autoWinner": "blue",
+                                 "red": {"windows": {"shift1": 100}, "totalPoints": 100,
+                                         "endgameTower": ["None"] * 3, "autoTower": ["None"] * 3},
+                                 "blue": {"windows": {"auto": 100}, "totalPoints": 100,
+                                          "endgameTower": ["None"] * 3, "autoTower": ["None"] * 3}})
+    # Red's three scouts claim 30s of DUMPING each in shift1. At the shipped
+    # prior of 11 fuel/sec that is ~990 fuel against an official 100.
+    for i, team in enumerate((501, 502, 503)):
+        L.store.upsert_scout({
+            "eventKey": ek, "matchKey": f"{ek}_qm1", "team": team, "scoutId": f"S{i}",
+            "alliance": "red", "station": i + 1, "updatedAt": time.time(),
+            "payload": {"intervals": [{"start": 31, "end": 61, "phase": "shift1",
+                                       "intensity": "dumping"}]}})
+    L.hub.solve_match(f"{ek}_qm1")
+
+    solved = sum(r["fuel"] for r in L.store.solved(ek) if r["team"] in (501, 502, 503))
+    ok &= check("solved fuel always reproduces TBA exactly (so it cannot grade anything)",
+                solved == 100, f"({solved} vs official 100)")
+
+    rep = analytics.score_report(L.store, ek)
+    red = [r for r in rep["rows"] if r["alliance"] == "red"][0]
+    ok &= check("the report uses the raw estimate and sees the overclaim",
+                red["deltaPct"] > 200, f"(off by {red['deltaPct']}%)")
+    ok &= check("the official side is reported untouched", red["officialFuel"] == 100)
+    ok &= check("an unwatched alliance is not counted in the rollup",
+                rep["compared"] == 1, f"({rep['compared']} compared)")
+
+    L.store.set("eventKey", EK)
+    return ok
+
+
+def test_concurrent_writes(L):
+    """Six phones do everything at once, because they do.
+
+    seats/matchClocks/devices all live in single kv rows, and a plain
+    get-then-set across a thread-per-request server drops writes: before
+    Store.mutate this recorded four of six chairs every single run, and handed
+    the six phones different "shared" clock origins about half the time.
+    """
+    ok = True
+    ek = "2026race"
+    L.store.set("eventKey", ek)
+    L.store.put_event(ek)
+    for k in list(L.hub.seats()):
+        L.req("/api/unseat", {"seat": k})
+
+    seats = [("red", 1), ("red", 2), ("red", 3), ("blue", 1), ("blue", 2), ("blue", 3)]
+    bar = threading.Barrier(len(seats))
+    results = []
+
+    def claim(i, al, n):
+        bar.wait()
+        results.append(L.req("/api/seat", {"alliance": al, "station": n,
+                                           "scoutId": f"S{i}", "deviceId": f"d{i}"}))
+    ts = [threading.Thread(target=claim, args=(i, al, n)) for i, (al, n) in enumerate(seats)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    ok &= check("six simultaneous claims record six chairs",
+                len(L.hub.seats()) == 6, f"({len(L.hub.seats())} of 6)")
+
+    clocks = []
+    bar2 = threading.Barrier(6)
+
+    def tap(i):
+        bar2.wait()
+        _, r = L.req("/api/matchstart", {"matchKey": f"{ek}_qm1", "scoutId": f"S{i}"})
+        clocks.append(r["clock"]["startedAt"])
+    ts = [threading.Thread(target=tap, args=(i,)) for i in range(6)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    ok &= check("six simultaneous taps share one clock origin",
+                len(set(clocks)) == 1, f"({len(set(clocks))} distinct)")
+
+    L.store.set("eventKey", EK)
+    return ok
+
+
+def test_nexus_tba_one_row(L):
+    """The failure that made the whole app produce fiction at a real event.
+
+    Nexus labels a qual "Qualification N"; TBA keys it "..._qmN". Keyed
+    separately, the phone logged against one row and the solver read the other,
+    so every alliance total was split evenly across three robots and none of the
+    scouting reached the numbers.
+    """
+    ok = True
+    ek = "2026nexus"
+    L.store.set("eventKey", ek)
+    L.store.put_event(ek)
+    L.hub.apply_nexus_event({"eventKey": ek, "dataAsOfTime": time.time(), "matches": [
+        {"label": "Qualification 1", "status": "On field",
+         "redTeams": ["101", "102", "103"], "blueTeams": ["201", "202", "203"],
+         "times": {"estimatedOnFieldTime": 1e12}}]})
+
+    rows = L.store.matches(ek)
+    ok &= check("a nexus label resolves to TBA's key",
+                len(rows) == 1 and rows[0]["matchKey"] == f"{ek}_qm1",
+                f"({[r['matchKey'] for r in rows]})")
+
+    # The phone reads its matchKey out of /api/state, so log against whatever
+    # the hub just handed back - that is the whole point of the bug.
+    phone_key = rows[0]["matchKey"]
+    L.req("/api/sync", {"scout": [{
+        "eventKey": ek, "matchKey": phone_key, "team": 101, "scoutId": "AK",
+        "alliance": "red", "station": 1, "updatedAt": time.time(),
+        "payload": {"intervals": [{"start": 31, "end": 45, "phase": "shift1",
+                                   "intensity": "dumping"}]}}]})
+
+    L.store.put_match(ek, f"{ek}_qm1", comp_level="qm", match_number=1,
+                      times={"actual": time.time()},
+                      red=[101, 102, 103], blue=[201, 202, 203],
+                      breakdown={"autoWinner": "blue",
+                                 "red": {"windows": {"shift1": 120}, "totalPoints": 200,
+                                         "endgameTower": ["None"] * 3,
+                                         "autoTower": ["None"] * 3},
+                                 "blue": {"windows": {"auto": 40}, "totalPoints": 150,
+                                          "endgameTower": ["None"] * 3,
+                                          "autoTower": ["None"] * 3}})
+    ok &= check("tba does not add a second row for the same match",
+                len(L.store.matches(ek)) == 1)
+
+    m = L.store.match(ek, f"{ek}_qm1")
+    ok &= check("nexus and tba timings coexist on one row",
+                bool(m["times"].get("estimatedOnFieldTime") and m["times"].get("actual")),
+                f"({sorted(m['times'])})")
+    ok &= check("nexus status survives a tba write", m["status"] == "On field")
+
+    L.hub.solve_match(f"{ek}_qm1")
+    fuel = {r["team"]: r["fuel"] for r in L.store.solved(ek)}
+    # The give-away symptom was 40/40/40 - an even split of 120 across three
+    # robots, which is what the solver falls back to when it sees no intervals.
+    ok &= check("fuel follows the scout, not an even three-way split",
+                fuel.get(101) == 120 and fuel.get(102) == 0 and fuel.get(103) == 0,
+                f"({[fuel.get(t) for t in (101, 102, 103)]})")
+
+    an = analytics.event_summary(L.store, ek)
+    ok &= check("the exact block sees the official result",
+                an["teams"][101]["exact"]["matchesWithOfficial"] == 1)
+    return ok
+
+
+def test_legacy_keys_migrate(L):
+    """A database written before the fix still has two rows. Merge them."""
+    ok = True
+    ek = "2026legacy"
+    L.store.set("eventKey", ek)
+    L.store.put_event(ek)
+    L.store.put_match(ek, f"{ek}_qualification1", label="Qualification 1", play_order=0,
+                      red=[301, 302, 303], blue=[401, 402, 403], status="On field")
+    L.store.put_match(ek, f"{ek}_qm1", label="Qualification 1", comp_level="qm",
+                      match_number=1, red=[301, 302, 303], blue=[401, 402, 403],
+                      breakdown={"autoWinner": "blue",
+                                 "red": {"windows": {"shift1": 90}, "totalPoints": 100,
+                                         "endgameTower": ["None"] * 3,
+                                         "autoTower": ["None"] * 3}})
+    L.store.upsert_scout({"eventKey": ek, "matchKey": f"{ek}_qualification1", "team": 301,
+                          "scoutId": "AK", "alliance": "red", "station": 1,
+                          "updatedAt": time.time(),
+                          "payload": {"intervals": [{"start": 31, "end": 50, "phase": "shift1",
+                                                     "intensity": "steady"}]}})
+    L.store.set("matchClocks", {f"{ek}_qualification1": {
+        "matchKey": f"{ek}_qualification1", "startedAt": time.time(), "by": "AK"}})
+
+    L.hub.reconcile()
+    rows = L.store.matches(ek)
+    ok &= check("the duplicate row is folded away",
+                len(rows) == 1 and rows[0]["matchKey"] == f"{ek}_qm1")
+    ok &= check("the scout entry comes with it",
+                [e["matchKey"] for e in L.store.scout_entries(ek)] == [f"{ek}_qm1"])
+    ok &= check("the match clock is re-pointed",
+                list(L.store.get("matchClocks")) == [f"{ek}_qm1"])
+    fuel = {r["team"]: r["fuel"] for r in L.store.solved(ek)}
+    ok &= check("and the numbers are rebuilt from real scouting",
+                fuel.get(301) == 90 and fuel.get(302) == 0,
+                f"({[fuel.get(t) for t in (301, 302, 303)]})")
+
+    before = [m["matchKey"] for m in L.store.matches(ek)]
+    L.hub.migrate_match_keys(ek)
+    ok &= check("migrating twice changes nothing",
+                [m["matchKey"] for m in L.store.matches(ek)] == before)
+
+    L.store.set("eventKey", EK)     # hand the shared harness back its event
+    return ok
+
+
 def main():
     L = Live()
     try:
@@ -332,7 +577,10 @@ def main():
         passed = True
         for fn in (test_sync_and_last_write_wins, test_solving_ran, test_analytics_null_safe,
                    test_picklist_lock, test_export_import_idempotent, test_csv_export,
-                   test_seats, test_match_clock, test_reconcile, test_config_scope):
+                   test_seats, test_match_clock, test_reconcile, test_config_scope,
+                   test_nexus_tba_one_row, test_legacy_keys_migrate,
+                   test_concurrent_writes, test_score_report,
+                   test_scout_data_is_lead_only):
             print(f"\n{fn.__name__.replace('test_', '').replace('_', ' ')}")
             passed &= fn(L)
         print()

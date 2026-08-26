@@ -293,6 +293,21 @@ body{
 .wrong.on{background:linear-gradient(180deg,#e11d2b,#a8121d);border-color:#ff5c66;color:#fff;
   box-shadow:0 0 34px rgba(225,29,43,.4)}
 
+/* A row of small choices — start zone, who they were blocking, preload.
+   Same visual language as .wrong, laid out inline instead of on a 2x2 grid. */
+.picks{display:flex;gap:8px;flex-wrap:wrap}
+.pick{
+  border-radius:12px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.09);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
+  padding:8px 12px;min-width:62px;min-height:44px;flex:1;
+  font:800 12px/1.2 Barlow,sans-serif;letter-spacing:.06em;color:var(--t3);
+  touch-action:manipulation;
+}
+.pick .sub{font:600 9.5px Barlow,sans-serif;letter-spacing:.08em;color:var(--muted);margin-top:2px}
+.pick.on{background:linear-gradient(180deg,#e11d2b,#a8121d);border-color:#ff5c66;color:#fff;
+  box-shadow:0 0 26px rgba(225,29,43,.34)}
+.pick.on .sub{color:rgba(255,255,255,.85)}
+
 .notebox{border-radius:14px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.09);
   padding:12px 14px;display:flex;gap:8px;align-items:flex-start;min-height:64px}
 .notebox .lb{font:700 11px Barlow,sans-serif;letter-spacing:.1em;color:var(--muted);padding-top:2px}

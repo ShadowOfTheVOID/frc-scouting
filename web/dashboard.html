@@ -147,15 +147,25 @@
       <div class="tiles" id="healthTiles"></div>
       <div class="tbl">
         <div class="cap">
-          <span class="t">SCOUT RELIABILITY</span>
-          <span class="n">how well each scout's runs reconcile with official window totals</span>
+          <span class="t">SCOUTS vs TBA</span>
+          <span class="n" id="repCap">what our scouting said a match was worth, against the official result</span>
+        </div>
+        <div class="hd" id="repHead"></div>
+        <div id="repBody"></div>
+      </div>
+      <div class="tbl" style="margin-top:12px">
+        <div class="cap">
+          <span class="t">PER-SCOUT</span>
+          <span class="n">lead only — not shown on a dashboard in the stands</span>
         </div>
         <div class="hd" id="scoutHead"></div>
         <div id="scoutBody"></div>
       </div>
     </div>
     <div class="pane">
-      <div class="eyebrow red">NEED RECONCILE</div>
+      <div class="eyebrow">ACCURACY</div>
+      <div id="repSummary"></div>
+      <div class="eyebrow red" style="margin-top:6px">NEED RECONCILE</div>
       <div class="list" id="flags"></div>
       <div class="eyebrow" style="margin-top:6px">CALIBRATION</div>
       <div id="calib"></div>
