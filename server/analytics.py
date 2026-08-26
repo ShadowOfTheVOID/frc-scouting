@@ -107,8 +107,13 @@ def _team_summary(team, meta, entries, solved, by_match, ranking=None, epa=None)
     fuels = [s["fuel"] for s in solved if not s.get("provisional")]
     bands = [s["band"] for s in solved if not s.get("provisional")]
     avg_fuel = _mean(fuels)
-    # combine per-match band with match-to-match spread
-    band = math.sqrt(_mean([b * b for b in bands]) + _stdev(fuels) ** 2) / math.sqrt(max(1, len(fuels)))
+    # Two different spreads, and using the wrong one gives a confidently wrong
+    # answer.  `spread` is how much a single match varies - solver band plus
+    # match-to-match variation - and is what a head-to-head projection needs.
+    # `band` divides that by sqrt(n): how well we know the team's AVERAGE, which
+    # is what "averages 84 +/- 7 fuel" means.
+    spread = math.sqrt(_mean([b * b for b in bands]) + _stdev(fuels) ** 2)
+    band = spread / math.sqrt(max(1, len(fuels)))
 
     # ---------------------------------- OBSERVED (categorical, scout-reliable)
     wasted = []
@@ -199,6 +204,7 @@ def _team_summary(team, meta, entries, solved, by_match, ranking=None, epa=None)
         "estimated": {
             "avgFuel": round(avg_fuel, 1),
             "band": round(band, 1),
+            "matchBand": round(spread, 1),
             "matches": len(fuels),
             "consistency": round(_stdev(fuels), 1),
             "cycleRate": round(avg_fuel / _mean(active_secs), 2) if _mean(active_secs) > 0 else None,

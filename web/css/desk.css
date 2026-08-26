@@ -43,6 +43,10 @@ a:hover{color:var(--red-label)}
   font:700 11px Barlow,sans-serif;letter-spacing:.1em;color:var(--t3);cursor:pointer;
 }
 .seg button.on{background:var(--red);font-weight:800;color:#fff}
+/* Same control, sized to sit inside a table caption. No mock covers a segmented
+   control in that position; the type scale matches the caption it sits in. */
+.seg.small{padding:2px}
+.seg.small button{padding:5px 10px;font-size:9.5px}
 
 /* the 1px gaps are the grid background showing through */
 .cols{display:grid;gap:1px;background:var(--line)}

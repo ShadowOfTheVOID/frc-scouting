@@ -8,6 +8,7 @@ same on macOS (testing) and Windows (competition).
 """
 import argparse
 import base64
+import csv
 import gzip as _gzip
 import hashlib
 import hmac
@@ -470,7 +471,10 @@ class Hub:
         return bool(exp and exp > time.time())
 
     def picklist(self):
-        return self.store.get("picklist") or {"weights": {}, "dnp": [], "order": []}
+        # Two lists, because alliance selection asks two different questions:
+        # the best robot left, and the best complement to the one we have.
+        base = {"weights": {}, "weights2": {}, "dnp": [], "order": [], "order2": []}
+        return {**base, **(self.store.get("picklist") or {})}
 
     # ------------------------------------------------------- match clock
     def start_match(self, match_key, scout_id, client_now=None):
@@ -790,6 +794,79 @@ def _extract_photos(store, rec):
     rec["payload"] = payload
 
 
+def _csv_table(h, ek, table):
+    """Flatten one table for a spreadsheet.
+
+    A strategy lead lives in a spreadsheet, and at an event the practical way to
+    hand numbers to an alliance partner is a file they can open. The JSON export
+    stays the one that round-trips through /api/import; this one is for humans,
+    so it flattens the nested blocks into columns and keeps the estimated fuel
+    band in its own column rather than baking a plus-minus into a string.
+    """
+    if table == "teams":
+        summary = analytics.event_summary(h.store, ek)
+        header = ["team", "name", "rank", "record", "rankingPoints", "opr", "epa",
+                  "matchesScouted", "matchesWithOfficial", "avgFuel", "fuelBand",
+                  "fuelConsistency", "bestClimb", "climbL3Pct", "climbL2Pct", "climbL1Pct",
+                  "autoClimbPct", "avgTowerPoints", "avgRP", "stockpilePct", "wastedFuelPct",
+                  "feedPct", "feedSecs", "defenseSecs", "driver", "defense",
+                  "diedPct", "tippedPct", "noShowPct"]
+        rows = []
+        for t in sorted(summary["teams"].values(), key=lambda x: x["team"]):
+            e, es, o, ep = t["exact"], t["estimated"], t["observed"], t["epa"]
+            rec = e.get("record") or {}
+            rows.append([
+                t["team"], t.get("name"), e.get("rank"),
+                f"{rec['wins']}-{rec['losses']}-{rec['ties']}" if rec else None,
+                e.get("rankingPoints"), e.get("opr"), ep.get("epa"),
+                t["matchesScouted"], e["matchesWithOfficial"],
+                es["avgFuel"], es["band"], es["consistency"], e["bestClimb"],
+                round(e["climbRate"].get("Level3", 0), 1), round(e["climbRate"].get("Level2", 0), 1),
+                round(e["climbRate"].get("Level1", 0), 1), e["autoClimbRate"],
+                e["avgTowerPoints"], e["avgRP"], o["stockpileRate"], o["wastedFuelPct"],
+                o["feedRate"], o["feedSecs"], o["defenseSecs"], o["driver"], o["defense"],
+                o["diedRate"], o["tippedRate"], o["noShowRate"],
+            ])
+        return header, rows
+
+    if table == "scout":
+        header = ["matchKey", "team", "alliance", "station", "scoutId", "runs", "activeSecs",
+                  "feedSecs", "defenseSecs", "preload", "autoTower", "endgameTower",
+                  "driverRating", "defenseRating", "died", "tipped", "noShow", "note"]
+        rows = []
+        for e in sorted(h.store.scout_entries(ek), key=lambda x: (x["matchKey"], x["team"])):
+            p = e.get("payload") or {}
+            rows.append([
+                e["matchKey"], e["team"], e.get("alliance"), e.get("station"), e.get("scoutId"),
+                len(p.get("intervals") or []), _secs(p.get("intervals")),
+                _secs(p.get("feedIntervals")), _secs(p.get("defenseIntervals")),
+                p.get("preload"), p.get("autoTower"), p.get("endgameTower"),
+                p.get("driverRating"), p.get("defenseRating"),
+                bool(p.get("died")), bool(p.get("tipped")), bool(p.get("noShow")),
+                (p.get("note") or "").strip(),
+            ])
+        return header, rows
+
+    if table == "pit":
+        header = ["team", "scoutId", "drivetrain", "shooter", "maxClimb", "stockpile",
+                  "groundPickup", "weight", "autos", "notes", "photos"]
+        rows = []
+        for e in sorted(h.store.pit_entries(ek), key=lambda x: x["team"]):
+            p = e.get("payload") or {}
+            rows.append([e["team"], e.get("scoutId"), p.get("drivetrain"), p.get("shooter"),
+                         p.get("maxClimb"), p.get("stockpile"), p.get("groundPickup"),
+                         p.get("weight"), p.get("autos"), p.get("notes"),
+                         len(p.get("photos") or [])])
+        return header, rows
+
+    raise KeyError(table)
+
+
+def _secs(intervals):
+    return round(sum(max(0.0, float(iv.get("end", iv["start"])) - float(iv["start"]))
+                     for iv in (intervals or [])), 1)
+
+
 def _poll_all(h):
     """Kick every source off the request thread. A poll must never block a save."""
     for fn in (h.poll_nexus, h.poll_tba, h.poll_frc_events, h.poll_statbotics):
@@ -867,6 +944,25 @@ class Handler(BaseHTTPRequestHandler):
             body, enc = _gz(body), "gzip"
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        if enc:
+            self.send_header("Content-Encoding", enc)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _csv(self, filename, header, rows):
+        buf = io.StringIO()
+        w = csv.writer(buf, lineterminator="\n")
+        w.writerow(header)
+        w.writerows(rows)
+        body = buf.getvalue().encode("utf-8-sig")   # BOM: Excel opens it as UTF-8
+        enc = None
+        if len(body) > 1024 and "gzip" in (self.headers.get("Accept-Encoding") or ""):
+            body, enc = _gz(body), "gzip"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/csv; charset=utf-8")
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         if enc:
             self.send_header("Content-Encoding", enc)
         self.send_header("Content-Length", str(len(body)))
@@ -1042,6 +1138,18 @@ class Handler(BaseHTTPRequestHandler):
                 "scout": h.store.scout_entries(ek),
                 "pit": h.store.pit_entries(ek),
             })
+        if p == "/api/export.csv":
+            ek = (q.get("event") or [h.event_key()])[0]
+            table = (q.get("table") or ["teams"])[0]
+            if not ek:
+                return self._json({"error": "no event selected"}, 400)
+            try:
+                header, rows = _csv_table(h, ek, table)
+            except KeyError:
+                return self._json({"error": "table must be teams, scout or pit"}, 400)
+            return self._csv(f"{ek}-{table}.csv", header, rows)
+        if p == "/picklist/print":
+            return self._file("picklist_print.html")
         if p == "/api/discover":
             return self._json({"urls": discover.urls(self.server.server_address[1])})
         return self._file(p)
@@ -1089,7 +1197,7 @@ class Handler(BaseHTTPRequestHandler):
             if not self._unlocked():
                 return self._json({"error": "picklist is read-only without the passcode"}, 403)
             cur = h.picklist()
-            for k in ("weights", "dnp", "order"):
+            for k in ("weights", "weights2", "dnp", "order", "order2"):
                 if k in body:
                     cur[k] = body[k]
             h.store.set("picklist", cur)
