@@ -813,8 +813,13 @@ function renderServer() {
     tile('MEMORY', DIAG.memoryMB ? `${DIAG.memoryMB}` : '—', 'MB resident') +
     tile('WRITES / MIN', DIAG.writesPerMin, 'rows accepted') +
     tile('DEVICES', DIAG.sseClients, 'streaming now');
-  const bad = DIAG.services.filter((s) => s.status !== 'RUNNING').length;
-  $('#srvHealth').textContent = bad ? `${bad} not running` : 'all services healthy';
+  // A service with no API key is a choice, not a fault - counting those as
+  // "not running" turns an unconfigured hub into an alarming one.
+  const retrying = DIAG.services.filter((s) => s.status === 'RETRYING').length;
+  const idle = DIAG.services.filter((s) => s.status === 'IDLE').length;
+  $('#srvHealth').textContent = retrying
+    ? `${retrying} retrying`
+    : idle ? `${idle} idle · no key` : 'all services healthy';
   const sc = '1fr 110px';
   $('#srvHead').style.gridTemplateColumns = sc;
   $('#srvHead').innerHTML = '<span>SERVICE</span><span class="num">STATUS</span>';
