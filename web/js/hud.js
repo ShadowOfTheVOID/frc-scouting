@@ -610,6 +610,10 @@ async function main() {
     hintEl: $('#fsHint'),
   });
 
+  // iPhone only, and only before anything has been entered — see fullscreen.js
+  // for why the timing of this one matters more than it looks.
+  fs.offerHomeScreen({ el: $('#a2hs') });
+
   // Right pad records shooting; the two left utility buttons record their own runs.
   holdRecorder($('#holdpad'), () => entry.payload.intervals, paintHold);
   holdRecorder($('#btnFeeding'), () => entry.payload.feedIntervals,

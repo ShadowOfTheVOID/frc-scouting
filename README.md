@@ -104,11 +104,18 @@ Practice with a fake event before you are standing in a venue. See
 5. **Open http://localhost:8080/join on the laptop screen.** It shows a big QR code.
 6. **Each scout points their normal camera at the QR** and taps the link that pops up. Not a
    scanner app — the camera app they already have.
-7. **Each scout picks the station matching the sign above their chair.** RED 2 means tap RED 2.
+7. **iPhones: add it to the home screen now, before anything else.** The phone asks them to
+   do this itself, but say it out loud too — Share button → **Add to Home Screen** → **Add**,
+   then open it from the new icon. Android phones have nothing to do here; the page goes
+   full-screen on the first tap by itself.
+
+   > **Why the order matters.** iPhone keeps the Safari tab and the home-screen app in two
+   > separate storage boxes. A scout who logs a match in the tab and *then* installs leaves that
+   > match stranded in a tab nobody opens again — it never reaches the hub. Installing first
+   > costs fifteen seconds and makes this impossible.
+
+8. **Each scout picks the station matching the sign above their chair.** RED 2 means tap RED 2.
    There is no field map on purpose, so there is nothing to mirror or get backwards.
-8. **Each scout adds it to their home screen** so it opens full-screen like an app:
-   - iPhone: Share button → **Add to Home Screen**
-   - Android: Chrome menu (⋮) → **Add to home screen**
 
 That is it. From here on they tap the icon.
 
