@@ -3,7 +3,7 @@
 
 import * as db from './db.js';
 import * as net from './net.js';
-import { loadRules, rpThresholds } from './game2026.js';
+import { loadRules, rpThresholds, rules as gameRules } from './game2026.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -11,10 +11,16 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<
 
 let STATE = null, ANALYTICS = null, CONFIG = null, ourTeam = null;
 const DNP = new Set(JSON.parse(localStorage.getItem('dnp') || '[]'));
+// Two boards. A first pick is the best robot left; a second pick is the best
+// complement to the two we already have, which is a different question and so
+// a different weighting - defence and feeding matter far more down there.
 const WEIGHTS = { climb: 30, reliability: 25, stockpile: 15, fuel: 20, defense: 10 };
+const WEIGHTS2 = { climb: 15, reliability: 30, stockpile: 20, fuel: 15, defense: 35 };
+let PICK_MODE = 'first';
+const activeWeights = () => (PICK_MODE === 'first' ? WEIGHTS : WEIGHTS2);
 
 const RANK_COLS = '56px minmax(120px,1fr) 84px 74px 52px 44px 64px';
-const ALL_COLS  = '56px minmax(160px,1fr) 84px 74px 60px 62px 62px 56px 52px 64px';
+const ALL_COLS  = '62px 56px minmax(160px,1fr) 84px 74px 62px 60px 62px 62px 56px 52px 64px';
 
 // ------------------------------------------------------------------ bits
 function climbCell(t) {
@@ -37,6 +43,16 @@ const shortCode = (label) => {
   const m = String(label || '').match(/(\w)\w*\s*(\d+)/);
   return m ? `${m[1].toUpperCase()}${m[2]}` : (label || '—');
 };
+
+function recordLine(e) {
+  const r = e.record;
+  if (!r) return '';
+  return ` · ${r.wins}-${r.losses}-${r.ties}${r.official ? '' : ' (scouted matches only)'}`;
+}
+function matchLabel(matchKey) {
+  const m = ((STATE && STATE.matches) || []).find((x) => x.matchKey === matchKey);
+  return (m && m.label) || matchKey;
+}
 
 function scoutTrust(team) {
   if (!ANALYTICS) return 1;
@@ -105,17 +121,73 @@ function renderLive() {
     </div>`).join('') || '<div class="empty">No scouted teams yet.</div>';
 
   renderPickMini();
+  renderRpOutlook();
+}
+
+/**
+ * Where our own team stands on ranking points and what is still on the table.
+ *
+ * RP is the thing quals are actually scored on, and it is the one number the
+ * dashboard could answer forward rather than backward: matches left times the
+ * most we can still earn. Bounds only - it says what is reachable, never what
+ * is likely, because who we are paired with decides most of it.
+ */
+function renderRpOutlook() {
+  const host = $('#rpOutlook');
+  if (!host) return;
+  const t = ourTeam && ANALYTICS && ANALYTICS.teams[ourTeam];
+  if (!t) {
+    host.innerHTML = '<div class="hint">Set OUR TEAM on the hub settings page.</div>';
+    return;
+  }
+  const ms = (STATE && STATE.matches) || [];
+  const mine = ms.filter((m) => [...(m.red || []), ...(m.blue || [])].includes(ourTeam));
+  const left = mine.filter((m) => !m.breakdown);
+  const rp = t.exact.rankingPoints;
+  const played = mine.length - left.length;
+  const r = (gameRules().rankingPoints) || {};
+  // win + every bonus RP the game offers, which is the ceiling for one match
+  const perMatch = (r.win || 3) + 3;
+  // TBA's first sort order is the ranking score - average RP per match - so the
+  // total is that times however many we have actually played.
+  const n = matchesFromRecord(t.exact.record) || played;
+  const have = rp != null ? rp * n : null;
+  const best = (rp != null && n + left.length)
+    ? ((have + left.length * perMatch) / (n + left.length)).toFixed(2) : null;
+
+  host.innerHTML = `
+    <div class="kv"><span>rank</span><b>${t.exact.rank ?? '—'}</b></div>
+    <div class="kv"><span>record</span><b>${recordText(t.exact.record)}</b></div>
+    <div class="kv"><span>RP per match</span><b>${rp ?? '—'}</b></div>
+    <div class="kv"><span>matches left</span><b>${left.length}</b></div>
+    ${best && left.length ? `
+      <div class="kv"><span>best case average</span><b>${best}</b></div>` : ''}
+    <div class="hint" style="margin-top:6px">${left.length
+      ? `Winning out with every bonus is worth ${perMatch} RP a match. What we actually
+         get depends on who we are paired with, so this is a ceiling, not a forecast.`
+      : 'Quals are done.'}</div>
+    ${left.length ? `<div class="hint" style="margin-top:6px">Next: ${
+      left.slice(0, 3).map((m) => esc(shortCode(m.label))).join(' · ')}</div>` : ''}`;
+}
+function matchesFromRecord(rec) {
+  return rec ? (rec.wins || 0) + (rec.losses || 0) + (rec.ties || 0) : 0;
+}
+function recordText(rec) {
+  return rec ? `${rec.wins}-${rec.losses}-${rec.ties}` : '—';
 }
 
 // ════════════════════════════════════════════════════════════════ TEAMS
 let sortKey = 'fuel', sortDir = -1;
 const ALL_HEAD = [
-  ['team', 'TEAM', 0], ['name', 'NAME', 0], ['fuel', 'FUEL/MATCH', 1], ['climb', 'CLIMB', 1],
-  ['tower', 'TOWER', 1], ['stock', 'STOCK', 1], ['waste', 'WASTED', 1],
-  ['died', 'DIED', 1], ['drv', 'DRIVER', 1], ['n', 'MATCHES', 1],
+  ['rank', 'RANK', 2], ['team', 'TEAM', 0], ['name', 'NAME', 0], ['fuel', 'FUEL/MATCH', 1],
+  ['climb', 'CLIMB', 1], ['epa', 'EPA', 1], ['tower', 'TOWER', 1], ['stock', 'STOCK', 1],
+  ['waste', 'WASTED', 1], ['died', 'DIED', 1], ['drv', 'DRIVER', 1], ['n', 'MATCHES', 1],
 ];
 function sortVal(t, k) {
   switch (k) {
+    // rank 1 is best, so invert it; unranked teams sort to the bottom either way
+    case 'rank': return t.exact.rank == null ? -9999 : -t.exact.rank;
+    case 'epa': return t.epa.epa ?? -1;
     case 'team': return t.team; case 'name': return 0;
     case 'fuel': return t.estimated.avgFuel;
     case 'climb': return { Level3: 3, Level2: 2, Level1: 1, None: 0 }[t.exact.bestClimb] || 0;
@@ -134,13 +206,15 @@ function renderTeams() {
   rows.sort((a, b) => (sortVal(a, sortKey) - sortVal(b, sortKey)) * sortDir);
   $('#allHead').style.gridTemplateColumns = ALL_COLS;
   $('#allHead').innerHTML = ALL_HEAD.map(([k, l, n]) =>
-    `<span data-k="${k}" class="${n ? 'num' : ''}">${l}${sortKey === k ? (sortDir < 0 ? ' ▾' : ' ▴') : ''}</span>`).join('');
+    `<span data-k="${k}" class="${n === 2 ? 'rk' : (n ? 'num' : '')}">${l}${sortKey === k ? (sortDir < 0 ? ' ▾' : ' ▴') : ''}</span>`).join('');
   $('#allBody').innerHTML = rows.map((t) => `
     <div class="r" style="grid-template-columns:${ALL_COLS}${t.team === ourTeam ? ';box-shadow:inset 0 0 0 1px var(--red-ring)' : ''}">
+      <span class="rk">${t.exact.rank ?? '—'}</span>
       <span class="tno">${t.team}</span>
       <span class="nm">${esc(t.name || '')}</span>
       <span class="num">${t.estimated.avgFuel} <span class="band">±${t.estimated.band}</span></span>
       <span class="num">${climbCell(t)}</span>
+      <span class="num">${t.epa.epa ?? '—'}</span>
       <span class="num">${t.exact.avgTowerPoints}</span>
       <span class="num">${Math.round(t.observed.stockpileRate)}%</span>
       <span class="num">${t.observed.wastedFuelPct == null ? '—' : Math.round(t.observed.wastedFuelPct) + '%'}</span>
@@ -168,6 +242,7 @@ function renderTeams() {
 
 // ═════════════════════════════════════════════════════════════ PICKLIST
 function score(t) {
+  const W = activeWeights();
   const e = t.exact, o = t.observed, s = t.estimated;
   const climb = ({ Level3: 1, Level2: 0.65, Level1: 0.3, None: 0 })[e.bestClimb] || 0;
   const l3 = (e.climbRate.Level3 || 0) / 100;
@@ -175,18 +250,50 @@ function score(t) {
   const stock = (o.stockpileRate || 0) / 100;
   const def = (o.defense || 0) / 5;
   const maxFuel = Math.max(1, ...Object.values(ANALYTICS.teams).map((x) => x.estimated.avgFuel));
-  return WEIGHTS.climb * (climb * .6 + l3 * .4) + WEIGHTS.reliability * rel +
-         WEIGHTS.stockpile * stock + WEIGHTS.fuel * (s.avgFuel / maxFuel) + WEIGHTS.defense * def;
+  return W.climb * (climb * .6 + l3 * .4) + W.reliability * rel +
+         W.stockpile * stock + W.fuel * (s.avgFuel / maxFuel) + W.defense * def;
 }
 function takenTeams() {
   const out = new Set();
   for (const a of (STATE && STATE.alliances) || []) for (const t of a || []) if (t) out.add(Number(t));
   return out;
 }
-function ranked() {
+
+// The computed score is where a picklist starts, never where it ends. ORDER is
+// the lead's hand-ordering; it wins outright, and `was` carries the computed
+// rank alongside so the board shows what has drifted since they moved things.
+let ORDER = [], ORDER2 = [];
+const activeOrder = () => (PICK_MODE === 'first' ? ORDER : ORDER2);
+function setActiveOrder(v) { if (PICK_MODE === 'first') ORDER = v; else ORDER2 = v; }
+
+function computedRank() {
   if (!ANALYTICS) return [];
   return Object.values(ANALYTICS.teams).filter((t) => t.matchesScouted)
-    .map((t) => ({ t, s: score(t) })).sort((a, b) => b.s - a.s);
+    .map((t) => ({ t, s: score(t) })).sort((a, b) => b.s - a.s)
+    .map((r, i) => ({ ...r, was: i + 1 }));
+}
+function ranked() {
+  const base = computedRank();
+  const order = activeOrder();
+  if (!order.length) return base;
+  const left = new Map(base.map((r) => [r.t.team, r]));   // still in score order
+  const out = [];
+  for (const n of order) {
+    const r = left.get(n);
+    if (r) { out.push(r); left.delete(n); }
+  }
+  return out.concat([...left.values()]);                  // newly scouted teams fall in below
+}
+function moveInOrder(team, before) {
+  // First edit freezes the current board, so a drag moves one team and leaves
+  // everyone else exactly where the lead was looking at them.
+  let order = activeOrder();
+  if (!order.length) order = ranked().map((r) => r.t.team);
+  order = order.filter((n) => n !== team);
+  const at = before == null ? order.length : order.indexOf(before);
+  order.splice(at < 0 ? order.length : at, 0, team);
+  setActiveOrder(order);
+  savePicklist();
 }
 function renderPickMini() {
   const taken = takenTeams();
@@ -195,7 +302,8 @@ function renderPickMini() {
       <span class="i">${i + 1}</span><span class="n">${t.team}</span>
       <span class="nm">${esc(t.name || '')}</span><span class="s">${Math.round(s)}</span>
     </div>`).join('') || '<div class="empty">Nothing to rank yet.</div>';
-  $('#pkHint').textContent = taken.size ? `${taken.size} taken` : 'drag to reorder';
+  $('#pkHint').textContent = PICK_MODE === 'second' ? 'second pick'
+    : (taken.size ? `${taken.size} taken` : 'drag to reorder');
 }
 // Everyone can read the board; the passcode only unlocks *changing* it.
 let CAN_EDIT = true;
@@ -245,8 +353,11 @@ async function loadPicklistState() {
   try {
     const pl = await net.api('/api/picklist');
     if (pl.weights && Object.keys(pl.weights).length) Object.assign(WEIGHTS, pl.weights);
+    if (pl.weights2 && Object.keys(pl.weights2).length) Object.assign(WEIGHTS2, pl.weights2);
     DNP.clear();
     for (const n of pl.dnp || []) DNP.add(Number(n));
+    ORDER = (pl.order || []).map(Number);
+    ORDER2 = (pl.order2 || []).map(Number);
     CAN_EDIT = pl.canEdit !== false;
     PIN_SET = !!pl.locked;
     renderWeights();
@@ -259,24 +370,77 @@ async function savePicklist() {
   if (!CAN_EDIT) return;
   try {
     await net.api('/api/picklist', { method: 'POST',
-      body: JSON.stringify({ weights: WEIGHTS, dnp: [...DNP] }) });
+      body: JSON.stringify({ weights: WEIGHTS, weights2: WEIGHTS2, dnp: [...DNP],
+                             order: ORDER, order2: ORDER2 }) });
   } catch { /* stays local until the hub is back */ }
+}
+
+function driftCell(was, i) {
+  // Only meaningful once the board is hand-ordered; before that `was` is `i+1`.
+  // Moving one team shifts everyone it passed by a place, and marking all of
+  // them buries the move that was actually made - so only call out real gaps.
+  if (was == null || Math.abs(was - (i + 1)) < 2) return '';
+  return ` · <span class="hint">computed ${was}</span>`;
+}
+
+let dragTeam = null;
+function wireDrag() {
+  for (const row of $$('#pkFull .pk[data-team]')) {
+    row.ondragstart = (ev) => {
+      dragTeam = Number(row.dataset.team);
+      ev.dataTransfer.effectAllowed = 'move';
+      // Firefox will not start a drag without payload on the transfer
+      ev.dataTransfer.setData('text/plain', row.dataset.team);
+    };
+    row.ondragover = (ev) => { ev.preventDefault(); ev.dataTransfer.dropEffect = 'move'; };
+    row.ondrop = (ev) => {
+      ev.preventDefault();
+      const onto = Number(row.dataset.team);
+      if (!dragTeam || dragTeam === onto) return;
+      moveInOrder(dragTeam, onto);
+      dragTeam = null;
+      renderPicklist(); renderPickMini();
+    };
+    row.ondragend = () => { dragTeam = null; };
+  }
+}
+
+function wirePickMode() {
+  for (const b of $$('#pkMode button')) {
+    b.classList.toggle('on', b.dataset.mode === PICK_MODE);
+    b.onclick = () => {
+      PICK_MODE = b.dataset.mode;
+      renderPicklist(); renderPickMini(); renderWeights();
+    };
+  }
+  const head = $('#weightsHead'), hint = $('#weightsHint');
+  if (head) head.textContent = `WEIGHTS · ${PICK_MODE === 'first' ? 'FIRST' : 'SECOND'} PICK`;
+  if (hint) {
+    hint.textContent = PICK_MODE === 'first'
+      ? 'Exact fields carry the ranking. Fuel is estimated, so it only breaks ties.'
+      : 'A second pick complements the alliance rather than repeating it — defence, '
+        + 'feeding and not breaking down carry more here than raw fuel.';
+  }
 }
 
 function renderPicklist() {
   renderEditBar();
+  wirePickMode();
   const taken = takenTeams();
   $('#pkStatus').textContent = taken.size
     ? `${taken.size} team${taken.size > 1 ? 's' : ''} already taken — crossed off live`
-    : 'alliance selection not started';
-  $('#pkFull').innerHTML = ranked().map(({ t, s }, i) => `
+    : (activeOrder().length ? 'hand-ordered — new data no longer reorders the board'
+                            : 'alliance selection not started');
+  $('#pkFull').innerHTML = ranked().map(({ t, s, was }, i) => `
     <div class="pk ${i === 0 ? 'top' : ''} ${taken.has(t.team) ? 'taken' : ''} ${DNP.has(t.team) ? 'dnp' : ''}"
-         style="margin:0;border-bottom:1px solid var(--row)">
+         style="margin:0;border-bottom:1px solid var(--row)"
+         data-team="${t.team}"${CAN_EDIT ? ' draggable="true"' : ''}>
       <span class="i">${i + 1}</span><span class="n">${t.team}</span>
-      <span class="nm">${esc(t.name || '')} — ${climbCell(t)} · ${t.estimated.avgFuel}±${t.estimated.band} fuel · stock ${Math.round(t.observed.stockpileRate)}%</span>
+      <span class="nm">${esc(t.name || '')} — ${climbCell(t)} · ${t.estimated.avgFuel}±${t.estimated.band} fuel · stock ${Math.round(t.observed.stockpileRate)}%${driftCell(was, i)}</span>
       <span class="s">${Math.round(s)}</span>
       ${CAN_EDIT ? `<button class="x" data-dnp="${t.team}">${DNP.has(t.team) ? 'UN-DNP' : 'DNP'}</button>` : ''}
     </div>`).join('') || '<div class="empty">Nothing to rank yet.</div>';
+  if (CAN_EDIT) wireDrag();
   for (const b of $$('[data-dnp]')) b.onclick = () => {
     const n = Number(b.dataset.dnp);
     DNP.has(n) ? DNP.delete(n) : DNP.add(n);
@@ -287,14 +451,24 @@ function renderPicklist() {
   $('#dnpList').innerHTML = [...DNP].length
     ? [...DNP].map((n) => `<div class="kv"><span>${n}</span><b>do not pick</b></div>`).join('')
     : '<div class="hint">nobody flagged</div>';
+  const reset = $('#pkReset');
+  if (reset) {
+    reset.classList.toggle('hide', !(CAN_EDIT && activeOrder().length));
+    reset.onclick = () => {
+      setActiveOrder([]);
+      savePicklist();
+      renderPicklist(); renderPickMini();
+    };
+  }
 }
 function renderWeights() {
-  $('#weights').innerHTML = Object.entries(WEIGHTS).map(([k, v]) => `
+  const W = activeWeights();
+  $('#weights').innerHTML = Object.entries(W).map(([k, v]) => `
     <div class="wt"><div class="lb"><span>${k.toUpperCase()}</span><span id="w-${k}">${v}</span></div>
     <input type="range" min="0" max="50" value="${v}" data-w="${k}"${CAN_EDIT ? '' : ' disabled'}></div>`).join('')
     + (CAN_EDIT ? '' : '<div class="hint">Unlock editing on the draft board to change these.</div>');
   for (const el of $$('[data-w]')) el.oninput = () => {
-    WEIGHTS[el.dataset.w] = Number(el.value);
+    activeWeights()[el.dataset.w] = Number(el.value);
     $(`#w-${el.dataset.w}`).textContent = el.value;
     savePicklist();
     renderPicklist(); renderPickMini();
@@ -424,13 +598,66 @@ function renderCrew() {
 }
 
 // ═══════════════════════════════════════════════════════ MATCH PREVIEW
-function allianceCard(m, side) {
+// Standard normal CDF (Abramowitz & Stegun 7.1.26). No library on this page.
+function normCdf(z) {
+  const s = z < 0 ? -1 : 1;
+  const x = Math.abs(z) / Math.SQRT2;
+  const t = 1 / (1 + 0.3275911 * x);
+  const y = 1 - ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t
+    - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+  return 0.5 * (1 + s * y);
+}
+
+/** Projected points for one alliance, with the spread of a single match. */
+function project(m, side) {
   const lineup = (m && m[side]) || [];
-  const label = side === 'red' ? 'RED' : 'BLUE';
   const teams = lineup.map((t) => (ANALYTICS && ANALYTICS.teams[t]) || null);
   const fuel = teams.reduce((a, t) => a + (t ? t.estimated.avgFuel : 0), 0);
-  const band = Math.round(Math.sqrt(teams.reduce((a, t) => a + (t ? t.estimated.band ** 2 : 0), 0)));
+  // matchBand, not band: band is how well we know a team's average, this is how
+  // much one match swings. Independent robots, so the variances add.
+  const spread = Math.sqrt(teams.reduce((a, t) => a + (t ? (t.estimated.matchBand || 0) ** 2 : 0), 0));
+  const band = Math.sqrt(teams.reduce((a, t) => a + (t ? t.estimated.band ** 2 : 0), 0));
   const tower = teams.reduce((a, t) => a + (t ? t.exact.avgTowerPoints : 0), 0);
+  const fp = gameRules().fuelPoints;
+  const scouted = teams.filter(Boolean).length;
+  return { teams, lineup, fuel, band, spread, tower, points: fuel * fp + tower, scouted };
+}
+
+/**
+ * P(red wins), from the two projections and their single-match spreads.
+ *
+ * Only the fuel side carries a spread - climb is exact per match but its
+ * match-to-match variation is not modelled, and neither are fouls - so this is
+ * a lean, not a forecast. It is shown with the margin it came from for exactly
+ * that reason.
+ */
+function winProbability(m) {
+  const r = project(m, 'red'), b = project(m, 'blue');
+  if (!r.scouted || !b.scouted) return null;
+  const sd = Math.sqrt(r.spread ** 2 + b.spread ** 2);
+  if (!(sd > 0)) return null;
+  return { red: normCdf((r.points - b.points) / sd), margin: r.points - b.points, sd, r, b };
+}
+
+function verdictBanner(m, side) {
+  const w = winProbability(m);
+  if (!w) return `<div class="callout" style="margin:0"><div class="h">NOT ENOUGH DATA</div>
+    <div class="b">Some robots on this match have not been scouted yet.</div></div>`;
+  const pct = Math.round((side === 'red' ? w.red : 1 - w.red) * 100);
+  const lead = side === 'red' ? w.margin : -w.margin;
+  const strong = pct >= 50;
+  return `<div class="callout" style="margin:0;border-color:${strong ? 'var(--green-border)' : 'var(--line)'};
+      background:${strong ? 'rgba(52,168,106,.07)' : 'transparent'}">
+    <div class="h" style="color:${strong ? 'var(--green-soft)' : 'var(--t4)'}">${pct}% TO WIN</div>
+    <div class="b">${lead >= 0 ? '+' : '−'}${Math.abs(Math.round(lead))} projected points,
+      margin of error ±${Math.round(w.sd)}. Fuel is estimated; fouls are not modelled.</div></div>`;
+}
+
+function allianceCard(m, side) {
+  const pr = project(m, side);
+  const { lineup, teams, fuel, tower } = pr;
+  const band = Math.round(pr.band);
+  const label = side === 'red' ? 'RED' : 'BLUE';
   const th = rpThresholds((STATE && STATE.event && STATE.event.level) || 'regional');
   const rows = lineup.map((t) => {
     const d = teams[lineup.indexOf(t)];
@@ -444,6 +671,7 @@ function allianceCard(m, side) {
   return `<div style="display:flex;flex-direction:column;gap:14px">
     <div class="eyebrow" style="color:${side === 'red' ? 'var(--red-label)' : 'var(--blue-label)'}">
       ${label} · ${esc((m && m.label) || '')}</div>
+    ${verdictBanner(m, side)}
     <div class="tiles" style="grid-template-columns:repeat(3,1fr)">
       ${tile('PROJECTED FUEL', Math.round(fuel), `±${band} · Energized at ${th.energized}`,
              fuel >= th.energized ? '' : 'warn')}
@@ -481,9 +709,9 @@ function renderTeamDetail() {
     <div style="display:flex;align-items:flex-end;gap:14px">
       <div style="font:700 54px/.9 'Barlow Condensed',sans-serif">${t.team}</div>
       <div style="padding-bottom:6px"><div style="font:600 14px Barlow,sans-serif;color:var(--t1)">${esc(t.name || '')}</div>
-        <div class="hint">${t.matchesScouted} matches scouted · ${e.matchesWithOfficial} with official results</div></div>
+        <div class="hint">${t.matchesScouted} matches scouted · ${e.matchesWithOfficial} with official results${recordLine(e)}</div></div>
     </div>
-    <div class="tiles">
+    <div class="tiles" style="grid-template-columns:repeat(3,1fr)">
       ${tile('FUEL / MATCH', es.avgFuel, `± ${es.band} · estimated`)}
       ${tile('BEST CLIMB', e.bestClimb === 'None' ? '—' : e.bestClimb.replace('Level', 'L'),
              `${Math.round(e.climbRate[e.bestClimb] || 0)}% of matches · exact`)}
@@ -491,6 +719,9 @@ function renderTeamDetail() {
       ${tile('RELIABILITY', `${Math.round(100 - o.diedRate - o.noShowRate)}%`,
              `died ${Math.round(o.diedRate)}% · no-show ${Math.round(o.noShowRate)}%`,
              (o.diedRate + o.noShowRate) > 20 ? 'warn' : '')}
+      ${tile('EPA', t.epa.epa ?? '—', t.epa.epa == null ? 'statbotics unavailable'
+             : `auto ${t.epa.auto ?? '—'} · teleop ${t.epa.teleop ?? '—'} · statbotics`)}
+      ${tile('OPR', e.opr ?? '—', e.rank ? `rank ${e.rank} · exact` : 'no rankings yet')}
     </div>
     <div class="tbl"><div class="cap"><span class="t">WHAT SCOUTS SAW</span>
       <span class="n">yes/no observations — the reliable kind</span></div>
@@ -501,6 +732,16 @@ function renderTeamDetail() {
         <div class="kv"><span>defence</span><b>${o.defenseSecs ? `${o.defenseSecs}s/match` : 'none seen'}</b></div>
         <div class="kv"><span>driver</span><b>${o.driver ?? '—'} / 5</b></div>
         <div class="kv"><span>average preload</span><b>${o.avgPreload ?? '—'}</b></div>
+      </div></div>
+    <div class="tbl"><div class="cap"><span class="t">WHAT SCOUTS WROTE</span>
+      <span class="n">${t.notes.length ? `${t.notes.length} note${t.notes.length > 1 ? 's' : ''}` : 'nothing typed'}</span></div>
+      <div style="padding:6px 16px 12px">
+        ${t.notes.length ? t.notes.map((nt) => `
+          <div class="kv" style="align-items:flex-start">
+            <span style="flex:1">${esc(nt.note)}</span>
+            <b style="white-space:nowrap">${esc(shortCode(matchLabel(nt.matchKey)))} · ${esc(nt.scoutId || '?')}</b>
+          </div>`).join('')
+          : '<div class="hint">Scouts can type a note on the after-the-buzzer screen.</div>'}
       </div></div>`;
   const p = (pit && pit.payload) || null;
   $('#tdSide').innerHTML = `<div class="eyebrow">FROM THE PIT</div>` + (p ? `
@@ -572,8 +813,13 @@ function renderServer() {
     tile('MEMORY', DIAG.memoryMB ? `${DIAG.memoryMB}` : '—', 'MB resident') +
     tile('WRITES / MIN', DIAG.writesPerMin, 'rows accepted') +
     tile('DEVICES', DIAG.sseClients, 'streaming now');
-  const bad = DIAG.services.filter((s) => s.status !== 'RUNNING').length;
-  $('#srvHealth').textContent = bad ? `${bad} not running` : 'all services healthy';
+  // A service with no API key is a choice, not a fault - counting those as
+  // "not running" turns an unconfigured hub into an alarming one.
+  const retrying = DIAG.services.filter((s) => s.status === 'RETRYING').length;
+  const idle = DIAG.services.filter((s) => s.status === 'IDLE').length;
+  $('#srvHealth').textContent = retrying
+    ? `${retrying} retrying`
+    : idle ? `${idle} idle · no key` : 'all services healthy';
   const sc = '1fr 110px';
   $('#srvHead').style.gridTemplateColumns = sc;
   $('#srvHead').innerHTML = '<span>SERVICE</span><span class="num">STATUS</span>';
@@ -593,8 +839,18 @@ function renderServer() {
   $('#srvData').innerHTML =
     `<div class="kv"><span>python</span><b>${esc(DIAG.python)}</b></div>
      <div class="kv"><span>stations claimed</span><b>${Object.keys(DIAG.seats || {}).length} / 6</b></div>
-     <div style="margin-top:10px"><a href="/api/export" download="scouting-export.json"
-        style="font:800 11px Barlow,sans-serif;letter-spacing:.1em">DOWNLOAD FULL EXPORT</a></div>`;
+     <div style="margin-top:10px;display:flex;flex-direction:column;gap:7px;
+                 font:800 11px Barlow,sans-serif;letter-spacing:.1em">
+       <a href="/api/export" download="scouting-export.json">DOWNLOAD FULL EXPORT · JSON</a>
+       <a href="/api/export.csv?table=teams">TEAM SUMMARY · CSV</a>
+       <a href="/api/export.csv?table=scout">EVERY SCOUT ENTRY · CSV</a>
+       <a href="/api/export.csv?table=pit">PIT SCOUTING · CSV</a>
+       <a href="/picklist/print" target="_blank">PRINTABLE PICKLIST</a>
+       <a href="/picklist/print?list=second" target="_blank">PRINTABLE SECOND-PICK LIST</a>
+     </div>
+     <div class="hint" style="margin-top:8px">JSON is the one that imports back in.
+       CSV is for a spreadsheet, and the printed picklist is the paper fallback for
+       alliance selection.</div>`;
 }
 
 // ══════════════════════════════════════════════════════════════ refresh

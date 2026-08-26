@@ -77,8 +77,11 @@ runs without any, just with less live data.
 |---|---|---|
 | **The Blue Alliance** | official match results, per-robot climb | [thebluealliance.com/account](https://www.thebluealliance.com/account) |
 | **Nexus** | live queueing, match timing, pit map, alliance selection | [frc.nexus/api](https://frc.nexus/api) |
-| **FRC Events** | fastest official live scores | [frc-events.firstinspires.org](https://frc-events.firstinspires.org/services/API) |
+| **FRC Events** | the official result a few minutes before TBA posts it | [frc-events.firstinspires.org](https://frc-events.firstinspires.org/services/API) |
 | Statbotics | EPA next to your own numbers | nothing to do — no key needed |
+
+The fuel numbers always come from The Blue Alliance, whichever other keys you set. FRC Events
+only gets you the result sooner.
 
 Also set the **event key** (like `2026casf` — the code on frc.events or The Blue Alliance) and
 **our team** (6059). Click **SAVE & REFRESH**.
@@ -181,6 +184,16 @@ everyone out, which is handy right before alliance selection.
 During alliance selection the board crosses teams off by itself as they are picked, so the next
 available name is always at the top.
 
+There are two boards. **FIRST PICK** ranks the best robot left; **SECOND PICK** ranks the best
+*complement* to the two you already have, which is a different question — defence, feeding and
+not breaking down count for more down there. Each has its own weights and its own order.
+
+Drag a row to move a team by hand. The first time you do, the board freezes as you see it, so
+new match data stops reordering it under you; **RESET TO COMPUTED** hands it back to the score.
+
+**Print it before alliance selection.** The SERVER tab has PRINTABLE PICKLIST (and one for the
+second-pick board). One laptop is one laptop, and this is the ten minutes where it cannot fail.
+
 ---
 
 ## When something goes wrong
@@ -192,10 +205,21 @@ available name is always at the top.
 | Scouts see an old event's teams | event key not changed | http://localhost:8080/ on the laptop, set the new event key |
 | Fuel numbers look wrong for one team | a scout was on their own clock, or missed matches | Check the **HEALTH** tab — flagged matches and scout reliability are listed |
 | Nothing at all loads | the black window got closed | Double-click the launcher again |
+| The database is damaged, or a whole day looks wrong | anything from a bad shutdown to a full disk | Stop the server. Copy the newest file out of `data/snapshots/` over `data/scouting.db`, delete `data/scouting.db-wal` and `-shm` if they are there, and start it again. The hub writes a snapshot every ten minutes and keeps the last twelve |
 | The QR code will not scan | screen too dim, or too far | Turn brightness up; hold the phone about a foot away |
 
 If a phone is truly stuck, the scout can keep scouting anyway — everything saves locally — and
 you can collect it later with **SAVE A BACKUP FILE** on their offline screen.
+
+## Getting the numbers out
+
+The **SERVER** tab on the dashboard has all of it:
+
+- **JSON export** — the whole event. This is the one that imports back in, and the one to send
+  another laptop.
+- **CSV** — team summary, every scout entry, or pit scouting. For a spreadsheet, or for handing
+  numbers to an alliance partner.
+- **Printable picklist** — see above.
 
 ---
 
@@ -227,6 +251,7 @@ server/                       the hub — Python, no dependencies to install
 web/                          what phones and laptops actually open
 design/                       the UI specification the screens were built to
 data/                         your event database — never share this, it holds your keys
+data/snapshots/               automatic backups, newest is the one to restore from
 docs/how-it-works.md          why the tricky parts work the way they do
 ```
 
@@ -238,11 +263,15 @@ docs/how-it-works.md          why the tricky parts work the way they do
 how per-robot fuel counts are worked out when nobody can count that fast, why the match clock
 matters less than you would think, and how accurate any of it actually is.
 
-Run the maths tests with:
+Run the tests with:
 
 ```
-python3 server/tests_solver.py
+python3 server/tests_solver.py    # the accuracy claims above, on 20k simulated matches
+python3 server/tests_api.py       # the server: syncing, the passcode, export and import
 ```
+
+Both are plain Python with nothing to install, and both run on every push
+(`.github/workflows/ci.yml`).
 
 ## License
 

@@ -43,6 +43,10 @@ a:hover{color:var(--red-label)}
   font:700 11px Barlow,sans-serif;letter-spacing:.1em;color:var(--t3);cursor:pointer;
 }
 .seg button.on{background:var(--red);font-weight:800;color:#fff}
+/* Same control, sized to sit inside a table caption. No mock covers a segmented
+   control in that position; the type scale matches the caption it sits in. */
+.seg.small{padding:2px}
+.seg.small button{padding:5px 10px;font-size:9.5px}
 
 /* the 1px gaps are the grid background showing through */
 .cols{display:grid;gap:1px;background:var(--line)}
@@ -102,6 +106,10 @@ a:hover{color:var(--red-label)}
 .tbl .r:nth-child(even){background:var(--raised)}
 .tbl .r:last-child{border-bottom:none}
 .tbl .num{text-align:right}
+/* RANK sits immediately left of the team number and the grid has no gap, so the
+   column carries its own trailing space. 14px keeps it inside the row's 16px
+   padding rhythm. No mock covers this column. */
+.tbl .rk{text-align:right;padding-right:14px;color:var(--t4)}
 .tbl .tno{font:700 18px 'Barlow Condensed',sans-serif}
 .tbl .nm{color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tbl .band{color:var(--t6);font-size:11.5px}

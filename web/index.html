@@ -65,6 +65,13 @@
         <div class="f"><label>NEXUS WEBHOOK TOKEN</label>
           <input id="nexusToken" placeholder="Nexus-Token" autocomplete="off">
           <div class="h">Only if you registered a push webhook.</div></div>
+        <div class="f"><label>FRC EVENTS USERNAME</label>
+          <input id="frcEventsUser" placeholder="your frc-events username" autocomplete="off">
+          <div class="h">Posts the official result a few minutes before TBA does. It does not
+            feed the fuel solver — TBA stays the only source for that.
+            frc-events.firstinspires.org</div></div>
+        <div class="f"><label>FRC EVENTS TOKEN</label>
+          <input id="frcEventsToken" placeholder="authorization token" autocomplete="off"></div>
         <div class="f"><label>STRATEGY PASSCODE</label>
           <input id="strategyPin" placeholder="leave blank for no lock" autocomplete="off">
           <div class="h">Gates the picklist. Shared, not personal — the hub stores only a hash
@@ -85,6 +92,7 @@ try {
   $('#eventKey').value = c.eventKey || '';
   $('#eventLevel').value = c.eventLevel || 'regional';
   const bits = [c.keys.tba ? 'TBA SET' : 'NO TBA KEY', c.keys.nexus ? 'NEXUS SET' : 'NO NEXUS KEY'];
+  if (c.keys.frcEvents) bits.push('FRC EVENTS SET');
   bits.push(c.multipliersFittedFrom ? `CALIBRATED · ${c.multipliersFittedFrom} WINDOWS` : 'PRIORS ONLY');
   bits.push(c.picklistLocked ? 'PICKLIST LOCKED' : 'PICKLIST OPEN');
   $('#sub').textContent = bits.join(' · ');
@@ -93,14 +101,17 @@ try {
 $('#save').onclick = async () => {
   const body = { eventKey: $('#eventKey').value.trim(), eventLevel: $('#eventLevel').value,
                  ourTeam: $('#ourTeam').value.trim() };
-  for (const k of ['tbaKey','nexusKey','nexusToken']) { const v = $('#'+k).value.trim(); if (v) body[k] = v; }
+  for (const k of ['tbaKey','nexusKey','nexusToken','frcEventsUser','frcEventsToken']) {
+    const v = $('#'+k).value.trim(); if (v) body[k] = v;
+  }
   const pin = $('#strategyPin').value;
   if (pin !== '') body.strategyPin = pin.trim();
   $('#status').textContent = 'saving…';
   try {
     await net.api('/api/config', { method:'POST', body: JSON.stringify(body) });
     $('#status').textContent = 'Saved. Fetching event data…';
-    for (const k of ['tbaKey','nexusKey','nexusToken','strategyPin']) $('#'+k).value = '';
+    for (const k of ['tbaKey','nexusKey','nexusToken','frcEventsUser','frcEventsToken','strategyPin'])
+      $('#'+k).value = '';
   } catch (e) { $('#status').textContent = 'Failed: ' + e.message; }
 };
 </script>

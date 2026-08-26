@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Picklist · print · REBUILT</title>
+<!--
+  A print artifact, not a screen: no mock in design/ covers it, so it does not
+  follow the dark palette. Alliance selection is the one moment the hub cannot
+  fail, and it runs on one laptop. This is the paper fallback - the board as the
+  lead last saw it, the exact fields behind each rank, and who is flagged.
+-->
+<style>
+  :root{color-scheme:light}
+  *{box-sizing:border-box}
+  body{margin:0;padding:18px 22px;background:#fff;color:#111;
+    font:13px/1.4 Barlow,system-ui,sans-serif;font-variant-numeric:tabular-nums}
+  h1{margin:0;font:800 20px Barlow,system-ui,sans-serif;letter-spacing:.02em}
+  .sub{margin:2px 0 14px;font:500 12px Barlow,system-ui,sans-serif;color:#555}
+  .bar{display:flex;align-items:baseline;justify-content:space-between;gap:16px}
+  .print{padding:8px 14px;border:1px solid #999;border-radius:6px;background:#fff;
+    font:700 11px Barlow,system-ui,sans-serif;letter-spacing:.1em;cursor:pointer}
+  table{width:100%;border-collapse:collapse}
+  th{text-align:left;font:800 9.5px Barlow,system-ui,sans-serif;letter-spacing:.12em;
+    color:#555;border-bottom:1.5px solid #111;padding:5px 6px}
+  td{padding:4px 6px;border-bottom:1px solid #ddd}
+  td.n,th.n{text-align:right}
+  tr.dnp td{color:#999;text-decoration:line-through}
+  tr.taken td{color:#aaa}
+  .rk{font:800 13px Barlow,system-ui,sans-serif;width:26px}
+  .tno{font:800 14px Barlow,system-ui,sans-serif;width:52px}
+  .nm{color:#444}
+  .foot{margin-top:14px;font:500 11px Barlow,system-ui,sans-serif;color:#666}
+  .flag{margin-top:12px;font:600 11.5px Barlow,system-ui,sans-serif}
+  .flag b{font-weight:800}
+  @media print{
+    body{padding:0}
+    .print{display:none}
+    tr{page-break-inside:avoid}
+    thead{display:table-header-group}
+  }
+</style>
+</head>
+<body>
+<div class="bar">
+  <div>
+    <h1 id="title">PICKLIST</h1>
+    <div class="sub" id="sub">loading…</div>
+  </div>
+  <button class="print" onclick="window.print()">PRINT</button>
+</div>
+
+<table>
+  <thead><tr>
+    <th class="n">#</th><th>TEAM</th><th>NAME</th>
+    <th class="n">CLIMB</th><th class="n">RANK</th><th class="n">OPR</th><th class="n">EPA</th>
+    <th class="n">FUEL</th><th class="n">STOCK</th><th class="n">DIED</th><th class="n">SCORE</th>
+  </tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+
+<div class="flag" id="dnp"></div>
+<div class="foot" id="foot"></div>
+
+<script type="module">
+import * as net from '/js/net.js';
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+
+// Same score as the dashboard's draft board, from the same saved weights, so
+// the sheet and the screen cannot disagree.
+const DEFAULT_W = { climb: 30, reliability: 25, stockpile: 15, fuel: 20, defense: 10 };
+const DEFAULT_W2 = { climb: 15, reliability: 30, stockpile: 20, fuel: 15, defense: 35 };
+// ?list=second prints the complement board instead of the best-robot one.
+const SECOND = new URLSearchParams(location.search).get('list') === 'second';
+
+function score(t, weights, maxFuel) {
+  const e = t.exact, o = t.observed, s = t.estimated;
+  const climb = ({ Level3: 1, Level2: 0.65, Level1: 0.3, None: 0 })[e.bestClimb] || 0;
+  const l3 = (e.climbRate.Level3 || 0) / 100;
+  const rel = 1 - Math.min(1, (o.diedRate + o.noShowRate) / 100);
+  return weights.climb * (climb * .6 + l3 * .4) + weights.reliability * rel +
+         weights.stockpile * ((o.stockpileRate || 0) / 100) +
+         weights.fuel * (s.avgFuel / maxFuel) + weights.defense * ((o.defense || 0) / 5);
+}
+
+await net.start();
+const [cfg, state, an, pl] = await Promise.all([
+  net.api('/api/config'), net.api('/api/state'), net.api('/api/analytics'), net.api('/api/picklist'),
+]);
+
+const weights = SECOND
+  ? Object.assign({}, DEFAULT_W2, pl.weights2 || {})
+  : Object.assign({}, DEFAULT_W, pl.weights || {});
+const dnp = new Set((pl.dnp || []).map(Number));
+const taken = new Set();
+for (const a of state.alliances || []) for (const t of a || []) if (t) taken.add(Number(t));
+
+const teams = Object.values(an.teams).filter((t) => t.matchesScouted);
+const maxFuel = Math.max(1, ...teams.map((t) => t.estimated.avgFuel));
+let ranked = teams.map((t) => ({ t, s: score(t, weights, maxFuel) })).sort((a, b) => b.s - a.s);
+
+const order = ((SECOND ? pl.order2 : pl.order) || []).map(Number);
+if (order.length) {
+  const left = new Map(ranked.map((r) => [r.t.team, r]));
+  const out = [];
+  for (const n of order) { const r = left.get(n); if (r) { out.push(r); left.delete(n); } }
+  ranked = out.concat([...left.values()]);
+}
+
+$('#title').textContent =
+  `${SECOND ? 'SECOND PICK' : 'PICKLIST'} · ${(cfg.eventKey || '').toUpperCase()}`;
+$('#sub').textContent =
+  `${ranked.length} teams ranked · ${order.length ? 'hand-ordered' : 'computed'} · ` +
+  `printed ${new Date().toLocaleString()}`;
+
+$('#rows').innerHTML = ranked.map(({ t, s }, i) => {
+  const e = t.exact, o = t.observed;
+  const cls = [dnp.has(t.team) ? 'dnp' : '', taken.has(t.team) ? 'taken' : ''].filter(Boolean).join(' ');
+  return `<tr class="${cls}">
+    <td class="n rk">${i + 1}</td>
+    <td class="tno">${t.team}</td>
+    <td class="nm">${esc(t.name || '')}${taken.has(t.team) ? ' — picked' : ''}</td>
+    <td class="n">${e.bestClimb === 'None' ? '—' : e.bestClimb.replace('Level', 'L')}</td>
+    <td class="n">${e.rank ?? '—'}</td>
+    <td class="n">${e.opr ?? '—'}</td>
+    <td class="n">${t.epa.epa ?? '—'}</td>
+    <td class="n">${t.estimated.avgFuel} ±${t.estimated.band}</td>
+    <td class="n">${Math.round(o.stockpileRate)}%</td>
+    <td class="n">${Math.round(o.diedRate)}%</td>
+    <td class="n">${Math.round(s)}</td>
+  </tr>`;
+}).join('');
+
+$('#dnp').innerHTML = dnp.size
+  ? `<b>DO NOT PICK:</b> ${[...dnp].sort((a, b) => a - b).join(' · ')}`
+  : '';
+$('#foot').textContent =
+  `Weights — ${Object.entries(weights).map(([k, v]) => `${k} ${v}`).join(' · ')}. ` +
+  'Fuel is estimated and carries a band; climb, rank and OPR are exact.';
+</script>
+</body>
+</html>

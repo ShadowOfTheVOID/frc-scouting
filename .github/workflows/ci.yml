@@ -1,0 +1,63 @@
+name: tests
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The oldest a scout lead is likely to have from python.org, and current.
+        python: ['3.9', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      # There is nothing to install on purpose: the hub runs on a competition
+      # laptop with a stock Python and no packages, so CI runs it that way too.
+      - name: Solver accuracy gate
+        run: python3 server/tests_solver.py
+
+      - name: HTTP surface
+        run: python3 server/tests_api.py
+
+      - name: Demo event builds and serves with no keys and no internet
+        run: |
+          python3 server/seed_demo.py --db data/ci.db --event 2026demo
+          python3 - <<'PY'
+          import subprocess, sys, time, urllib.request, json
+          p = subprocess.Popen([sys.executable, "server/hub.py",
+                                "--db", "data/ci.db", "--port", "8099", "--no-mdns"])
+          try:
+              for _ in range(40):
+                  try:
+                      cfg = json.load(urllib.request.urlopen("http://127.0.0.1:8099/api/config", timeout=2))
+                      break
+                  except Exception:
+                      time.sleep(0.5)
+              else:
+                  raise SystemExit("hub never came up")
+
+              a = json.load(urllib.request.urlopen("http://127.0.0.1:8099/api/analytics", timeout=10))
+              teams = list(a["teams"].values())
+              assert teams, "no teams in the demo event"
+              # The README promises the numbers crunch offline. They must not be zero.
+              assert any(t["estimated"]["avgFuel"] > 0 for t in teams), "solver produced nothing"
+              assert any(t["exact"]["rank"] for t in teams), "rankings fixture missing"
+              assert any(t["epa"]["epa"] for t in teams), "epa fixture missing"
+              assert cfg["multipliersFittedFrom"] > 0, "calibration never ran"
+
+              csv = urllib.request.urlopen(
+                  "http://127.0.0.1:8099/api/export.csv?table=teams", timeout=10).read()
+              assert csv.count(b"\n") > 2, "csv export is empty"
+              print(f"ok: {len(teams)} teams, fitted from {cfg['multipliersFittedFrom']} windows")
+          finally:
+              p.terminate()
+          PY

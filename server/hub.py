@@ -8,6 +8,7 @@ same on macOS (testing) and Windows (competition).
 """
 import argparse
 import base64
+import csv
 import gzip as _gzip
 import hashlib
 import hmac
@@ -40,6 +41,14 @@ WEB_ROOT = os.path.abspath(WEB_ROOT)
 
 NEXUS_POLL_SECONDS = 20
 TBA_POLL_SECONDS = 45
+# EPA is a season-long fit; it barely moves inside one event, so polling it
+# hard buys nothing and Statbotics is the one source we expect to be down.
+STATBOTICS_POLL_SECONDS = 600
+# Only ever used to fill in matches TBA has not posted yet, so it can be slow.
+FRC_EVENTS_POLL_SECONDS = 60
+# The whole event lives on one laptop that gets carried around a venue all day.
+SNAPSHOT_SECONDS = 600
+SNAPSHOT_KEEP = 12
 
 
 # ------------------------------------------------------------------- hub
@@ -53,7 +62,9 @@ class Hub:
         self.last_nexus_at = 0.0
         self.stop_flag = threading.Event()
         self.port = 8080
-        self.status = {"nexus": None, "tba": None, "statbotics": None, "lastUpdate": None}
+        self.status = {"nexus": None, "tba": None, "statbotics": None,
+                       "frcEvents": None, "lastUpdate": None}
+        self.last_snapshot = None
         self.started_at = time.time()
         self._recal_lock = threading.Lock()
         self._recal_pending = False
@@ -81,7 +92,7 @@ class Hub:
             return {"name": name, "status": "RETRYING" if retrying else ("RUNNING" if ok else "IDLE"),
                     "detail": detail}
 
-        nx, tba = self.nexus(), self.tba()
+        nx, tba, fe = self.nexus(), self.tba(), self.frc_events()
         age = lambda t: f"{int(now - t)}s ago" if t else "never"
         services = [
             svc("http + sse", True, f"{len(self.subs)} client(s) streaming"),
@@ -90,7 +101,19 @@ class Hub:
                 bool(nx.ok) and not self.status["nexus"]),
             svc("tba poll", bool(tba.ok), age(self.status["tba"]) if tba.ok else "no api key",
                 bool(tba.ok) and not self.status["tba"]),
+            svc("frc events", bool(fe.ok), age(self.status["frcEvents"]) if fe.ok else "no api key",
+                bool(fe.ok) and not self.status["frcEvents"]),
+            # Statbotics needs no key, so "IDLE" would be a lie. It is allowed to
+            # be down (sources.Statbotics backs off on its own) and the honest
+            # report is which of those two states we are in.
+            svc("statbotics", True,
+                "unreachable, backing off" if self.statbotics.down_until > now
+                else age(self.status["statbotics"]),
+                not self.status["statbotics"]),
             svc("solver", True, f"multipliers fitted from {self.store.get('multipliersFittedFrom') or 0} windows"),
+            svc("snapshots", True,
+                f"last {age(self.last_snapshot)}, keeping {SNAPSHOT_KEEP}"
+                if self.last_snapshot else f"every {SNAPSHOT_SECONDS // 60}m, none yet"),
         ]
         return {
             "host": socket.gethostname(),
@@ -118,6 +141,9 @@ class Hub:
 
     def nexus(self):
         return sources.Nexus(self.cfg("nexusKey"))
+
+    def frc_events(self):
+        return sources.FRCEvents(self.cfg("frcEventsUser"), self.cfg("frcEventsToken"))
 
     # ------------------------------------------------------------- SSE
     def subscribe(self, who=None):
@@ -252,10 +278,13 @@ class Hub:
                 self.store.set(key, data)
                 self.broadcast(name, data)
 
-    def nexus_data(self, name, ek, default=None):
-        """Per-event Nexus payload. Never falls back to another event's data."""
+    def event_data(self, name, ek, default=None):
+        """Per-event cached payload. Never falls back to another event's data."""
         v = self.store.get(f"{name}:{ek}")
         return default if v is None else v
+
+    # kept as the name the Nexus call sites read better with
+    nexus_data = event_data
 
     def poll_tba(self):
         ek = self.event_key()
@@ -292,6 +321,120 @@ class Hub:
         if teams:
             self.store.put_teams(ek, [{"team": _int(t.get("key")), "name": t.get("nickname")}
                                       for t in teams if t.get("key")])
+
+        self.poll_rankings(ek, tba)
+
+    def poll_rankings(self, ek, tba):
+        """Official standings and OPR.
+
+        Both are exact - they come straight off TBA - so they belong next to the
+        climb numbers on the picklist, not next to the estimated fuel. Folded
+        into the TBA poll because it shares the same ETag cache.
+        """
+        merged = {}
+        rankings = tba.event_rankings(ek)
+        for r in ((rankings or {}).get("rankings") or []):
+            team = _int(r.get("team_key"))
+            if team is None:
+                continue
+            rec = r.get("record") or {}
+            merged[team] = {
+                "rank": r.get("rank"),
+                "rankingPoints": _round(r.get("sort_orders", [None])[0]
+                                        if r.get("sort_orders") else None),
+                "wins": rec.get("wins"), "losses": rec.get("losses"), "ties": rec.get("ties"),
+                "played": r.get("matches_played"),
+            }
+        oprs = (tba.event_oprs(ek) or {}).get("oprs") or {}
+        for key, v in oprs.items():
+            team = _int(key)
+            if team is not None:
+                merged.setdefault(team, {})["opr"] = _round(v)
+        if not merged:
+            return
+        cache = f"rankings:{ek}"
+        if self.store.get(cache) != merged:
+            self.store.set(cache, merged)
+            self.broadcast("rankings", {"teams": len(merged)})
+
+    def poll_statbotics(self):
+        """EPA, the one outside number that corroborates our fuel estimate.
+
+        Statbotics needs no key and is allowed to be down - sources.Statbotics
+        backs off on its own - so a failure here must never surface as an error.
+        """
+        ek = self.event_key()
+        if not ek:
+            return
+        rows = self.statbotics.team_events(ek)
+        if rows is None:
+            return
+        self.status["statbotics"] = time.time()
+        out = {}
+        for r in rows:
+            team = _int(r.get("team"))
+            if team is None:
+                continue
+            epa = r.get("epa") or {}
+            bd = (epa.get("breakdown") or {}) if isinstance(epa, dict) else {}
+            out[team] = {
+                "epa": _round(_nested(epa, "total_points", "mean")),
+                "auto": _round(_first(bd.get("auto_points"))),
+                "teleop": _round(_first(bd.get("teleop_points"))),
+                "endgame": _round(_first(bd.get("endgame_points"))),
+                "rank": (r.get("record") or {}).get("season_rank") if isinstance(r.get("record"), dict) else None,
+            }
+        cache = f"epa:{ek}"
+        if self.store.get(cache) != out:
+            self.store.set(cache, out)
+            self.broadcast("epa", {"teams": len(out)})
+
+    def poll_frc_events(self):
+        """Post the official result before TBA has caught up.
+
+        Deliberately limited: this records the alliance totals and marks the
+        match played, and nothing else. It does NOT synthesise a score
+        breakdown. `sources.parse_breakdown_2026` is written against TBA's
+        published schema, the per-window fuel counts are what the solver
+        divides between three robots, and guessing at the equivalent FRC Events
+        field names would put invented numbers into the fuel pipeline. TBA stays
+        the only source the solver trusts - clock_offset() needs its actual_time
+        anyway - so this just closes the few minutes between the buzzer and TBA.
+        """
+        ek = self.event_key()
+        fe = self.frc_events()
+        if not (ek and fe.ok):
+            return
+        season, code = _split_event_key(ek)
+        if not season:
+            return
+        payload = fe.scores(season, code, "qual")
+        if payload is None:
+            return
+        self.status["frcEvents"] = time.time()
+        have = {m["matchKey"] for m in self.store.matches(ek) if not m.get("breakdown")}
+        early = dict(self.event_data("earlyScores", ek, {}))
+        added = []
+        for row in (payload.get("MatchScores") or []):
+            num = row.get("matchNumber")
+            if num is None:
+                continue
+            mk = f"{ek}_qm{num}"
+            if mk not in have or mk in early:
+                continue          # unknown, or TBA already answered it
+            totals = {}
+            for a in (row.get("alliances") or []):
+                side = str(a.get("alliance") or "").lower()
+                if side in ("red", "blue") and a.get("totalPoints") is not None:
+                    totals[side] = a["totalPoints"]
+            if len(totals) != 2:
+                continue
+            early[mk] = {**totals, "at": time.time()}
+            added.append(mk)
+        if added:
+            self.store.set(f"earlyScores:{ek}", early)
+            self.note("info", f"frc events posted {len(added)} result(s) ahead of tba")
+            self.broadcast("earlyScores", {"matches": added})
 
     # ----------------------------------------------------------- picklist
     #
@@ -335,7 +478,10 @@ class Hub:
         return bool(exp and exp > time.time())
 
     def picklist(self):
-        return self.store.get("picklist") or {"weights": {}, "dnp": [], "order": []}
+        # Two lists, because alliance selection asks two different questions:
+        # the best robot left, and the best complement to the one we have.
+        base = {"weights": {}, "weights2": {}, "dnp": [], "order": [], "order2": []}
+        return {**base, **(self.store.get("picklist") or {})}
 
     # ------------------------------------------------------- match clock
     def start_match(self, match_key, scout_id, client_now=None):
@@ -499,6 +645,11 @@ class Hub:
                                 f"{official} fuel officially, no scout intervals")
         if out_rows:
             self.store.put_solved(ek, match_key, out_rows)
+            # The scouts who logged this match can now be told their numbers
+            # reconciled against the official totals. "Touched by a sync" is not
+            # the same thing - solving only happens once TBA has posted.
+            self.broadcast("solved", {"matchKey": match_key,
+                                      "teams": sorted(r["team"] for r in out_rows)})
         if offset:
             shared = sum(1 for e in entries if (e.get("payload") or {}).get("clockShared"))
             fixes = self.store.get("clockFixes") or {}
@@ -570,9 +721,54 @@ class Hub:
                 self.store.set("multipliersFittedFrom", len(rows))
                 self.broadcast("calibration", {"multipliers": fit, "rows": len(rows)})
 
+    def reconcile(self):
+        """Solve any match that has official results but no solved rows yet.
+
+        Normally solving is triggered by the sync that brought the data in, or
+        by TBA posting the breakdown. Neither fires when the hub is restarted
+        onto an existing database - or when a database is built offline, which
+        is exactly what seed_demo.py does - so the fuel numbers would read zero
+        for matches that were already played.
+        """
+        ek = self.event_key()
+        if not ek:
+            return
+        done = {r["matchKey"] for r in self.store.solved(ek)}
+        todo = [m["matchKey"] for m in self.store.matches(ek)
+                if m.get("breakdown") and m["matchKey"] not in done]
+        for mk in todo:
+            try:
+                self.solve_match(mk)
+            except Exception as e:
+                sys.stderr.write(f"[reconcile] {mk}: {e}\n")
+        if todo:
+            self.note("info", f"solved {len(todo)} match(es) on startup")
+            self.recalibrate()
+        return len(todo)
+
+    def run_snapshots(self):
+        """Copy the database aside every few minutes.
+
+        data/ is one file on one laptop that gets carried around a venue all
+        day, and /api/export only helps if somebody remembered to click it. A
+        snapshot is a whole working database: to recover, stop the hub, copy one
+        out of data/snapshots/ over data/scouting.db, and start it again.
+        """
+        while not self.stop_flag.is_set():
+            self.stop_flag.wait(SNAPSHOT_SECONDS)
+            if self.stop_flag.is_set():
+                return
+            try:
+                dest = self.store.snapshot(keep=SNAPSHOT_KEEP)
+                self.last_snapshot = time.time()
+                self.note("info", f"snapshot written to {os.path.basename(dest)}")
+            except Exception as e:
+                self.note("error", f"snapshot failed: {e}")
+                sys.stderr.write(f"[snapshot] {e}\n")
+
     # ---------------------------------------------------------- poller
     def run_poller(self):
-        next_nexus = next_tba = 0.0
+        next_nexus = next_tba = next_stat = next_frc = 0.0
         while not self.stop_flag.is_set():
             now = time.time()
             try:
@@ -582,6 +778,12 @@ class Hub:
                 if now >= next_tba:
                     self.poll_tba()
                     next_tba = now + TBA_POLL_SECONDS
+                if now >= next_frc:
+                    self.poll_frc_events()
+                    next_frc = now + FRC_EVENTS_POLL_SECONDS
+                if now >= next_stat:
+                    self.poll_statbotics()
+                    next_stat = now + STATBOTICS_POLL_SECONDS
                 self.status["lastUpdate"] = time.time()
             except Exception as e:  # a poller crash must never take the server down
                 self.note("error", f"poll failed: {e}")
@@ -622,6 +824,115 @@ def _extract_photos(store, rec):
             kept.append(src)          # already an id
     payload["photos"] = kept
     rec["payload"] = payload
+
+
+def _csv_table(h, ek, table):
+    """Flatten one table for a spreadsheet.
+
+    A strategy lead lives in a spreadsheet, and at an event the practical way to
+    hand numbers to an alliance partner is a file they can open. The JSON export
+    stays the one that round-trips through /api/import; this one is for humans,
+    so it flattens the nested blocks into columns and keeps the estimated fuel
+    band in its own column rather than baking a plus-minus into a string.
+    """
+    if table == "teams":
+        summary = analytics.event_summary(h.store, ek)
+        header = ["team", "name", "rank", "record", "rankingPoints", "opr", "epa",
+                  "matchesScouted", "matchesWithOfficial", "avgFuel", "fuelBand",
+                  "fuelConsistency", "bestClimb", "climbL3Pct", "climbL2Pct", "climbL1Pct",
+                  "autoClimbPct", "avgTowerPoints", "avgRP", "stockpilePct", "wastedFuelPct",
+                  "feedPct", "feedSecs", "defenseSecs", "driver", "defense",
+                  "diedPct", "tippedPct", "noShowPct"]
+        rows = []
+        for t in sorted(summary["teams"].values(), key=lambda x: x["team"]):
+            e, es, o, ep = t["exact"], t["estimated"], t["observed"], t["epa"]
+            rec = e.get("record") or {}
+            rows.append([
+                t["team"], t.get("name"), e.get("rank"),
+                f"{rec['wins']}-{rec['losses']}-{rec['ties']}" if rec else None,
+                e.get("rankingPoints"), e.get("opr"), ep.get("epa"),
+                t["matchesScouted"], e["matchesWithOfficial"],
+                es["avgFuel"], es["band"], es["consistency"], e["bestClimb"],
+                round(e["climbRate"].get("Level3", 0), 1), round(e["climbRate"].get("Level2", 0), 1),
+                round(e["climbRate"].get("Level1", 0), 1), e["autoClimbRate"],
+                e["avgTowerPoints"], e["avgRP"], o["stockpileRate"], o["wastedFuelPct"],
+                o["feedRate"], o["feedSecs"], o["defenseSecs"], o["driver"], o["defense"],
+                o["diedRate"], o["tippedRate"], o["noShowRate"],
+            ])
+        return header, rows
+
+    if table == "scout":
+        header = ["matchKey", "team", "alliance", "station", "scoutId", "runs", "activeSecs",
+                  "feedSecs", "defenseSecs", "preload", "autoTower", "endgameTower",
+                  "driverRating", "defenseRating", "died", "tipped", "noShow", "note"]
+        rows = []
+        for e in sorted(h.store.scout_entries(ek), key=lambda x: (x["matchKey"], x["team"])):
+            p = e.get("payload") or {}
+            rows.append([
+                e["matchKey"], e["team"], e.get("alliance"), e.get("station"), e.get("scoutId"),
+                len(p.get("intervals") or []), _secs(p.get("intervals")),
+                _secs(p.get("feedIntervals")), _secs(p.get("defenseIntervals")),
+                p.get("preload"), p.get("autoTower"), p.get("endgameTower"),
+                p.get("driverRating"), p.get("defenseRating"),
+                bool(p.get("died")), bool(p.get("tipped")), bool(p.get("noShow")),
+                (p.get("note") or "").strip(),
+            ])
+        return header, rows
+
+    if table == "pit":
+        header = ["team", "scoutId", "drivetrain", "shooter", "maxClimb", "stockpile",
+                  "groundPickup", "weight", "autos", "notes", "photos"]
+        rows = []
+        for e in sorted(h.store.pit_entries(ek), key=lambda x: x["team"]):
+            p = e.get("payload") or {}
+            rows.append([e["team"], e.get("scoutId"), p.get("drivetrain"), p.get("shooter"),
+                         p.get("maxClimb"), p.get("stockpile"), p.get("groundPickup"),
+                         p.get("weight"), p.get("autos"), p.get("notes"),
+                         len(p.get("photos") or [])])
+        return header, rows
+
+    raise KeyError(table)
+
+
+def _secs(intervals):
+    return round(sum(max(0.0, float(iv.get("end", iv["start"])) - float(iv["start"]))
+                     for iv in (intervals or [])), 1)
+
+
+def _poll_all(h):
+    """Kick every source off the request thread. A poll must never block a save."""
+    for fn in (h.poll_nexus, h.poll_tba, h.poll_frc_events, h.poll_statbotics):
+        threading.Thread(target=fn, daemon=True).start()
+
+
+def _round(v, places=1):
+    try:
+        return round(float(v), places)
+    except (TypeError, ValueError):
+        return None
+
+
+def _first(v):
+    """Statbotics returns some breakdown values as {'mean': x}, some as a number."""
+    if isinstance(v, dict):
+        return v.get("mean")
+    return v
+
+
+def _nested(d, *path):
+    for k in path:
+        if not isinstance(d, dict):
+            return None
+        d = d.get(k)
+    return d
+
+
+def _split_event_key(ek):
+    """'2026casf' -> ('2026', 'casf').  FRC Events takes the two separately."""
+    ek = str(ek or "")
+    if len(ek) > 4 and ek[:4].isdigit():
+        return ek[:4], ek[4:]
+    return None, None
 
 
 def _int(v):
@@ -665,6 +976,25 @@ class Handler(BaseHTTPRequestHandler):
             body, enc = _gz(body), "gzip"
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        if enc:
+            self.send_header("Content-Encoding", enc)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _csv(self, filename, header, rows):
+        buf = io.StringIO()
+        w = csv.writer(buf, lineterminator="\n")
+        w.writerow(header)
+        w.writerows(rows)
+        body = buf.getvalue().encode("utf-8-sig")   # BOM: Excel opens it as UTF-8
+        enc = None
+        if len(body) > 1024 and "gzip" in (self.headers.get("Accept-Encoding") or ""):
+            body, enc = _gz(body), "gzip"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/csv; charset=utf-8")
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         if enc:
             self.send_header("Content-Encoding", enc)
         self.send_header("Content-Length", str(len(body)))
@@ -761,7 +1091,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({
                 "eventKey": h.event_key(),
                 "eventLevel": (h.store.event(h.event_key()) or {}).get("level", "regional") if h.event_key() else "regional",
-                "keys": {"tba": bool(h.cfg("tbaKey")), "nexus": bool(h.cfg("nexusKey"))},
+                "keys": {"tba": bool(h.cfg("tbaKey")), "nexus": bool(h.cfg("nexusKey")),
+                         "frcEvents": h.frc_events().ok},
                 "picklistLocked": h.pin_set(),
                 "ourTeam": h.cfg("ourTeam"),
                 "status": h.status,
@@ -788,6 +1119,9 @@ class Handler(BaseHTTPRequestHandler):
                 "matchClocks": h.store.get("matchClocks") or {},
                 "clockFixes": h.store.get("clockFixes") or {},
                 "pitEntries": h.store.pit_entries(ek),
+                "rankings": h.event_data("rankings", ek, {}),
+                "epa": h.event_data("epa", ek, {}),
+                "earlyScores": h.event_data("earlyScores", ek, {}),
             })
         if p == "/api/scout":
             ek = (q.get("event") or [h.event_key()])[0]
@@ -836,6 +1170,18 @@ class Handler(BaseHTTPRequestHandler):
                 "scout": h.store.scout_entries(ek),
                 "pit": h.store.pit_entries(ek),
             })
+        if p == "/api/export.csv":
+            ek = (q.get("event") or [h.event_key()])[0]
+            table = (q.get("table") or ["teams"])[0]
+            if not ek:
+                return self._json({"error": "no event selected"}, 400)
+            try:
+                header, rows = _csv_table(h, ek, table)
+            except KeyError:
+                return self._json({"error": "table must be teams, scout or pit"}, 400)
+            return self._csv(f"{ek}-{table}.csv", header, rows)
+        if p == "/picklist/print":
+            return self._file("picklist_print.html")
         if p == "/api/discover":
             return self._json({"urls": discover.urls(self.server.server_address[1])})
         return self._file(p)
@@ -855,15 +1201,15 @@ class Handler(BaseHTTPRequestHandler):
                 }, 403)
             if not self._authed():
                 return self._json({"error": "bad or missing X-Scout-Token"}, 403)
-            for k in ("eventKey", "tbaKey", "nexusKey", "nexusToken", "eventLevel", "ourTeam", "hubToken"):
+            for k in ("eventKey", "tbaKey", "nexusKey", "nexusToken", "eventLevel", "ourTeam",
+                      "hubToken", "frcEventsUser", "frcEventsToken"):
                 if k in body:
                     h.store.set(k, body[k])
             if "strategyPin" in body:
                 h.set_pin(body["strategyPin"])
             if body.get("eventKey"):
                 h.store.put_event(body["eventKey"], level=body.get("eventLevel"))
-            threading.Thread(target=h.poll_nexus, daemon=True).start()
-            threading.Thread(target=h.poll_tba, daemon=True).start()
+            _poll_all(h)
             return self._json({"ok": True})
 
         if p == "/api/matchstart":
@@ -883,7 +1229,7 @@ class Handler(BaseHTTPRequestHandler):
             if not self._unlocked():
                 return self._json({"error": "picklist is read-only without the passcode"}, 403)
             cur = h.picklist()
-            for k in ("weights", "dnp", "order"):
+            for k in ("weights", "weights2", "dnp", "order", "order2"):
                 if k in body:
                     cur[k] = body[k]
             h.store.set("picklist", cur)
@@ -1002,8 +1348,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True, "applied": applied, "rejected": rejected})
 
         if p == "/api/refresh":
-            threading.Thread(target=h.poll_nexus, daemon=True).start()
-            threading.Thread(target=h.poll_tba, daemon=True).start()
+            _poll_all(h)
             return self._json({"ok": True})
 
         if p == "/api/resolve":
@@ -1064,8 +1409,15 @@ def main():
 
     hub.port = args.port
     hub.note("info", f"hub started on port {args.port}")
+    # Catch up on anything solved-but-not-stored before we start serving, so the
+    # first dashboard load shows real numbers rather than zeros.
+    try:
+        hub.reconcile()
+    except Exception as e:
+        sys.stderr.write(f"[reconcile] {e}\n")
     srv = Server(("0.0.0.0", args.port), Handler)
     threading.Thread(target=hub.run_poller, daemon=True, name="poller").start()
+    threading.Thread(target=hub.run_snapshots, daemon=True, name="snapshots").start()
 
     responder = None
     if not args.no_mdns:

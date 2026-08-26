@@ -40,6 +40,20 @@ let rate = 'steady';
 let eventKey = localStorage.getItem('eventKey') || '';
 let wakeLock = null;
 let history = [];
+
+// Matches the hub has reconciled against the official totals. The lead sees
+// scout reliability on the HEALTH tab; the scout never did, and a scout who
+// cannot tell whether their match landed cannot get better at it. Kept as a
+// marker inside the row that already exists rather than as new chrome - a
+// standby screen is not the place to grow a panel.
+const RECONCILED = new Set(JSON.parse(localStorage.getItem('reconciled') || '[]'));
+function markReconciled(matchKey) {
+  if (!matchKey || RECONCILED.has(matchKey)) return;
+  RECONCILED.add(matchKey);
+  // last few matches is all the standby list ever shows
+  localStorage.setItem('reconciled', JSON.stringify([...RECONCILED].slice(-40)));
+  if (screen === 'standby') renderStandby();
+}
 let SEATS = {};
 let MATCH_CLOCKS = {};
 
@@ -459,7 +473,7 @@ function renderStandby() {
   $('#sbList').innerHTML = history.length ? history.map((h) => `
     <div class="lrow"><span class="code">${shortCode(h.matchLabel)}</span>
       <span class="team">${h.team}</span>
-      <span class="desc">${Math.round((h.payload.intervals || []).reduce((s, i) => s + (i.end - i.start) * rateOf(i.intensity), 0))} balls · ${h.payload.endgameTower === 'None' ? 'none' : h.payload.endgameTower.replace('Level', 'L')}</span>
+      <span class="desc">${Math.round((h.payload.intervals || []).reduce((s, i) => s + (i.end - i.start) * rateOf(i.intensity), 0))} balls · ${h.payload.endgameTower === 'None' ? 'none' : h.payload.endgameTower.replace('Level', 'L')}${RECONCILED.has(h.matchKey) ? ' · reconciled' : ''}</span>
       <span class="tag ${h._queued ? 'queued' : 'sent'}">${h._queued ? 'QUEUED' : 'SENT'}</span></div>`).join('')
     : '<div class="lrow"><span class="desc">nothing logged yet</span></div>';
 }
@@ -692,6 +706,7 @@ async function main() {
 
   net.on('nexus', () => net.api('/api/state').then(applyState).catch(() => {}));
   net.on('results', () => net.api('/api/state').then(applyState).catch(() => {}));
+  net.on('solved', ({ matchKey }) => markReconciled(matchKey));
 
   // another scout started this match: adopt their clock and jump into the HUD
   net.on('matchStart', (rec) => {

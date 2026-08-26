@@ -3,6 +3,12 @@
 Deliberately separates EXACT fields (straight from TBA, no estimation) from
 ESTIMATED ones (solver output, always carrying a band).  The picklist leans on
 the exact side; fuel volume only breaks ties.
+
+Four blocks per team: `exact` (TBA), `estimated` (our solver), `observed`
+(scout yes/no answers) and `epa` (Statbotics).  EPA is the only one from
+outside, which is exactly why it earns a place next to a number we produced
+ourselves.  Every block is null-safe: a missing source reads as unknown, never
+as zero.
 """
 import math
 import statistics as st
@@ -20,6 +26,10 @@ def _stdev(xs):
 
 def event_summary(store, event_key):
     matches = store.matches(event_key)
+    # Exact side-tables, both straight from an API. Absent is the normal case
+    # (no key, or Statbotics down) and must read as "unknown", never as zero.
+    rankings = store.get(f"rankings:{event_key}") or {}
+    epa = store.get(f"epa:{event_key}") or {}
     entries = store.scout_entries(event_key)
     solved = store.solved(event_key)
     teams = {t["team"]: t for t in store.teams(event_key)}
@@ -36,7 +46,8 @@ def event_summary(store, event_key):
     out = {}
     for team in sorted(set(list(teams) + list(entries_by_team) + list(solved_by))):
         out[team] = _team_summary(team, teams.get(team, {}), entries_by_team.get(team, []),
-                                  solved_by.get(team, []), by_match)
+                                  solved_by.get(team, []), by_match,
+                                  _lookup(rankings, team), _lookup(epa, team))
 
     return {
         "eventKey": event_key,
@@ -46,7 +57,13 @@ def event_summary(store, event_key):
     }
 
 
-def _team_summary(team, meta, entries, solved, by_match):
+def _lookup(table, team):
+    """kv-store tables round-trip through JSON, so integer keys come back as strings."""
+    return table.get(team) or table.get(str(team)) or {}
+
+
+def _team_summary(team, meta, entries, solved, by_match, ranking=None, epa=None):
+    ranking, epa = ranking or {}, epa or {}
     # ---------------------------------------------- EXACT (from TBA)
     climbs = {"Level1": 0, "Level2": 0, "Level3": 0, "None": 0}
     auto_climbs = 0
@@ -55,16 +72,34 @@ def _team_summary(team, meta, entries, solved, by_match):
     rps = []
     official_matches = 0
 
+    # One match counts once, however many scouts watched the robot. These numbers
+    # come from TBA, not from the scout - and a HAND OVER mid-match leaves two
+    # entries for the same (match, team), which would otherwise double every
+    # climb, tower point and RP for that match.
+    seen_matches = set()
     for e in entries:
         m = by_match.get(e["matchKey"])
         if not m or not m.get("breakdown"):
+            continue
+        if e["matchKey"] in seen_matches:
             continue
         alliance = e.get("alliance")
         info = (m["breakdown"] or {}).get(alliance)
         lineup = m.get(alliance) or []
         if not info or team not in lineup:
             continue
+        seen_matches.add(e["matchKey"])
         official_matches += 1
+        opp = "blue" if alliance == "red" else "red"
+        ours = info.get("totalPoints")
+        theirs = ((m["breakdown"] or {}).get(opp) or {}).get("totalPoints")
+        if ours is not None and theirs is not None:
+            if ours > theirs:
+                wins += 1
+            elif ours < theirs:
+                losses += 1
+            else:
+                ties += 1
         idx = lineup.index(team)
         eg = (info.get("endgameTower") or [None, None, None])[idx] or "None"
         climbs[eg] = climbs.get(eg, 0) + 1
@@ -80,8 +115,13 @@ def _team_summary(team, meta, entries, solved, by_match):
     fuels = [s["fuel"] for s in solved if not s.get("provisional")]
     bands = [s["band"] for s in solved if not s.get("provisional")]
     avg_fuel = _mean(fuels)
-    # combine per-match band with match-to-match spread
-    band = math.sqrt(_mean([b * b for b in bands]) + _stdev(fuels) ** 2) / math.sqrt(max(1, len(fuels)))
+    # Two different spreads, and using the wrong one gives a confidently wrong
+    # answer.  `spread` is how much a single match varies - solver band plus
+    # match-to-match variation - and is what a head-to-head projection needs.
+    # `band` divides that by sqrt(n): how well we know the team's AVERAGE, which
+    # is what "averages 84 +/- 7 fuel" means.
+    spread = math.sqrt(_mean([b * b for b in bands]) + _stdev(fuels) ** 2)
+    band = spread / math.sqrt(max(1, len(fuels)))
 
     # ---------------------------------- OBSERVED (categorical, scout-reliable)
     wasted = []
@@ -94,6 +134,7 @@ def _team_summary(team, meta, entries, solved, by_match):
     feed_secs = []
     defense_secs = []
     preloads = []
+    notes = []
 
     for e in entries:
         p = e.get("payload") or {}
@@ -123,6 +164,9 @@ def _team_summary(team, meta, entries, solved, by_match):
         di = p.get("defenseIntervals") or []
         if di:
             defense_secs.append(sum(max(0.0, float(iv.get("end", iv["start"])) - float(iv["start"])) for iv in di))
+        if (p.get("note") or "").strip():
+            notes.append({"matchKey": e["matchKey"], "scoutId": e.get("scoutId"),
+                          "at": e.get("updatedAt"), "note": p["note"].strip()})
         if p.get("preload") is not None:
             preloads.append(int(p.get("preload") or 0))
         if p.get("defenseRating"):
@@ -148,10 +192,27 @@ def _team_summary(team, meta, entries, solved, by_match):
             "avgTowerPoints": round(_mean(tower_pts), 1),
             "bestClimb": _best_climb(climbs),
             "avgRP": round(_mean(rps), 2) if rps else None,
+            # Official standings win over anything we can derive: they count
+            # every match, not just the ones a scout was sitting for.
+            "rank": ranking.get("rank"),
+            "rankingPoints": ranking.get("rankingPoints"),
+            "opr": ranking.get("opr"),
+            "record": _record(ranking, wins, losses, ties),
+        },
+        # A fourth kind of number, and the only one from outside: an
+        # independent read on the same robot, which is what makes it worth
+        # showing next to a banded estimate we produced ourselves.
+        "epa": {
+            "epa": epa.get("epa"),
+            "auto": epa.get("auto"),
+            "teleop": epa.get("teleop"),
+            "endgame": epa.get("endgame"),
+            "rank": epa.get("rank"),
         },
         "estimated": {
             "avgFuel": round(avg_fuel, 1),
             "band": round(band, 1),
+            "matchBand": round(spread, 1),
             "matches": len(fuels),
             "consistency": round(_stdev(fuels), 1),
             "cycleRate": round(avg_fuel / _mean(active_secs), 2) if _mean(active_secs) > 0 else None,
@@ -169,7 +230,18 @@ def _team_summary(team, meta, entries, solved, by_match):
             "tippedRate": round(tipped / n * 100.0, 1),
             "noShowRate": round(no_show / n * 100.0, 1),
         },
+        "notes": sorted(notes, key=lambda x: -(x.get("at") or 0)),
     }
+
+
+def _record(ranking, wins, losses, ties):
+    """W-L-T, official when we have it, otherwise from the matches we scouted."""
+    if ranking.get("wins") is not None:
+        return {"wins": ranking.get("wins"), "losses": ranking.get("losses"),
+                "ties": ranking.get("ties"), "official": True}
+    if wins or losses or ties:
+        return {"wins": wins, "losses": losses, "ties": ties, "official": False}
+    return None
 
 
 def _best_climb(climbs):

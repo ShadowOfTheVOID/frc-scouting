@@ -91,6 +91,8 @@
         <span class="hint" id="pkHint">drag to reorder</span>
       </div>
       <div class="list" id="pkMini"></div>
+      <div class="eyebrow" style="margin-top:14px">OUR RANKING POINTS</div>
+      <div id="rpOutlook"></div>
     </div>
   </div>
 
@@ -115,17 +117,24 @@
       <div class="tbl">
         <div class="cap">
           <span class="t">DRAFT BOARD</span>
+          <span class="seg small" id="pkMode">
+            <button data-mode="first" class="on">FIRST PICK</button>
+            <button data-mode="second">SECOND PICK</button>
+          </span>
           <span class="n" id="pkStatus">alliance selection not started</span>
         </div>
         <div id="pkFull"></div>
       </div>
     </div>
     <div class="pane">
-      <div class="eyebrow">WEIGHTS</div>
-      <div class="hint">Exact fields carry the ranking. Fuel is estimated, so it only breaks ties.</div>
+      <div class="eyebrow" id="weightsHead">WEIGHTS · FIRST PICK</div>
+      <div class="hint" id="weightsHint">Exact fields carry the ranking. Fuel is estimated, so it only breaks ties.</div>
       <div class="list" id="weights" style="gap:10px"></div>
       <div class="eyebrow" style="margin-top:6px">DO NOT PICK</div>
       <div class="list" id="dnpList"></div>
+      <button id="pkReset" class="hide" style="margin-top:14px;padding:10px;border-radius:8px;
+        background:transparent;border:1px solid var(--btn);color:var(--t4);
+        font:700 10.5px Barlow,sans-serif;letter-spacing:.12em;cursor:pointer">RESET TO COMPUTED</button>
       <button id="pinLock" class="hide" style="margin-top:14px;padding:10px;border-radius:8px;
         background:transparent;border:1px solid var(--btn);color:var(--t4);
         font:700 10.5px Barlow,sans-serif;letter-spacing:.12em;cursor:pointer">STOP EDITING</button>
