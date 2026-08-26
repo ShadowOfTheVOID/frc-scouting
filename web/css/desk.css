@@ -102,6 +102,10 @@ a:hover{color:var(--red-label)}
 .tbl .r:nth-child(even){background:var(--raised)}
 .tbl .r:last-child{border-bottom:none}
 .tbl .num{text-align:right}
+/* RANK sits immediately left of the team number and the grid has no gap, so the
+   column carries its own trailing space. 14px keeps it inside the row's 16px
+   padding rhythm. No mock covers this column. */
+.tbl .rk{text-align:right;padding-right:14px;color:var(--t4)}
 .tbl .tno{font:700 18px 'Barlow Condensed',sans-serif}
 .tbl .nm{color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tbl .band{color:var(--t6);font-size:11.5px}

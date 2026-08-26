@@ -20,6 +20,19 @@ DEMO_FIRST, DEMO_LAST = 9970, 9999      # FIRST Off-Season Demo Teams
 ARCH = {"drum": (9.0, 14.0), "steady": (2.5, 4.5), "trickle": (0.6, 1.6)}
 SCOUTS = ["AK", "BR", "CJ", "DM", "EL", "FT"]
 
+# The one free-text channel a scout has. Kept short and specific, the way a
+# real one is typed with a thumb between matches.
+NOTES = [
+    "shot from the far side all match, never crossed",
+    "intake jammed twice, driver cleared it both times",
+    "held fuel through the dead shift then dumped it",
+    "played defence on 9982 for most of shift 3",
+    "climbed late, nearly missed it",
+    "very fast cycles, best driver we have seen today",
+    "fed their partner instead of shooting",
+    "brownout after the climb",
+]
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -168,7 +181,7 @@ def main():
                         "died": rng.random() > p["reliab"],
                         "tipped": rng.random() < 0.03,
                         "noShow": False,
-                        "note": "",
+                        "note": rng.choice(NOTES) if rng.random() < 0.18 else "",
                     },
                 })
 
@@ -212,7 +225,35 @@ def main():
                            "weight": str(rng.randint(95, 125)),
                            "notes": "", "photos": []}})
 
+    # ---- exact side-tables the hub normally polls for.
+    # Seeded here so the demo event exercises the rankings and EPA columns with
+    # no API keys and no internet, which is the bar the README sets.
+    order = sorted(numbers, key=lambda n: -(profiles[n]["rate"] * profiles[n]["duty"]))
+    st.set(f"rankings:{ek}", {
+        str(n): {
+            "rank": i + 1,
+            "rankingPoints": round(rng.uniform(1.4, 3.6), 2),
+            "wins": w, "losses": max(0, played // 4 - w), "ties": 0,
+            "played": played // 4,
+            "opr": round(profiles[n]["rate"] * profiles[n]["duty"] * 4.0 + rng.uniform(-3, 3), 1),
+        }
+        for i, n in enumerate(order)
+        for w in [rng.randint(0, max(0, played // 4))]
+    })
+    st.set(f"epa:{ek}", {
+        str(n): {
+            # correlated with the true rate, not equal to it - the whole point
+            # of EPA on this screen is that it is an independent read
+            "epa": round(max(0.8, profiles[n]["rate"] * profiles[n]["duty"] * 5.5 + rng.uniform(-6, 6)), 1),
+            "auto": round(rng.uniform(4, 18), 1),
+            "teleop": round(max(0.4, profiles[n]["rate"] * profiles[n]["duty"] * 3.4 + rng.uniform(-4, 4)), 1),
+            "endgame": round(rng.uniform(3, 16), 1),
+            "rank": rng.randint(80, 3400),
+        } for n in numbers
+    })
+
     print(f"seeded {ek}: {len(numbers)} teams, {args.matches} matches ({played} played)")
+    print(f"  rankings + statbotics epa seeded for {len(numbers)} teams (no keys needed)")
     sz = pit_map.get("size", {})
     print(f"  pit map {sz.get('x')}x{sz.get('y')} from the real Nexus example "
           f"({len(pit_map.get('pits', {}))} pits, {len(addrs)} assigned, "

@@ -14,7 +14,7 @@ const DNP = new Set(JSON.parse(localStorage.getItem('dnp') || '[]'));
 const WEIGHTS = { climb: 30, reliability: 25, stockpile: 15, fuel: 20, defense: 10 };
 
 const RANK_COLS = '56px minmax(120px,1fr) 84px 74px 52px 44px 64px';
-const ALL_COLS  = '56px minmax(160px,1fr) 84px 74px 60px 62px 62px 56px 52px 64px';
+const ALL_COLS  = '62px 56px minmax(160px,1fr) 84px 74px 62px 60px 62px 62px 56px 52px 64px';
 
 // ------------------------------------------------------------------ bits
 function climbCell(t) {
@@ -37,6 +37,16 @@ const shortCode = (label) => {
   const m = String(label || '').match(/(\w)\w*\s*(\d+)/);
   return m ? `${m[1].toUpperCase()}${m[2]}` : (label || '—');
 };
+
+function recordLine(e) {
+  const r = e.record;
+  if (!r) return '';
+  return ` · ${r.wins}-${r.losses}-${r.ties}${r.official ? '' : ' (scouted matches only)'}`;
+}
+function matchLabel(matchKey) {
+  const m = ((STATE && STATE.matches) || []).find((x) => x.matchKey === matchKey);
+  return (m && m.label) || matchKey;
+}
 
 function scoutTrust(team) {
   if (!ANALYTICS) return 1;
@@ -110,12 +120,15 @@ function renderLive() {
 // ════════════════════════════════════════════════════════════════ TEAMS
 let sortKey = 'fuel', sortDir = -1;
 const ALL_HEAD = [
-  ['team', 'TEAM', 0], ['name', 'NAME', 0], ['fuel', 'FUEL/MATCH', 1], ['climb', 'CLIMB', 1],
-  ['tower', 'TOWER', 1], ['stock', 'STOCK', 1], ['waste', 'WASTED', 1],
-  ['died', 'DIED', 1], ['drv', 'DRIVER', 1], ['n', 'MATCHES', 1],
+  ['rank', 'RANK', 2], ['team', 'TEAM', 0], ['name', 'NAME', 0], ['fuel', 'FUEL/MATCH', 1],
+  ['climb', 'CLIMB', 1], ['epa', 'EPA', 1], ['tower', 'TOWER', 1], ['stock', 'STOCK', 1],
+  ['waste', 'WASTED', 1], ['died', 'DIED', 1], ['drv', 'DRIVER', 1], ['n', 'MATCHES', 1],
 ];
 function sortVal(t, k) {
   switch (k) {
+    // rank 1 is best, so invert it; unranked teams sort to the bottom either way
+    case 'rank': return t.exact.rank == null ? -9999 : -t.exact.rank;
+    case 'epa': return t.epa.epa ?? -1;
     case 'team': return t.team; case 'name': return 0;
     case 'fuel': return t.estimated.avgFuel;
     case 'climb': return { Level3: 3, Level2: 2, Level1: 1, None: 0 }[t.exact.bestClimb] || 0;
@@ -134,13 +147,15 @@ function renderTeams() {
   rows.sort((a, b) => (sortVal(a, sortKey) - sortVal(b, sortKey)) * sortDir);
   $('#allHead').style.gridTemplateColumns = ALL_COLS;
   $('#allHead').innerHTML = ALL_HEAD.map(([k, l, n]) =>
-    `<span data-k="${k}" class="${n ? 'num' : ''}">${l}${sortKey === k ? (sortDir < 0 ? ' ▾' : ' ▴') : ''}</span>`).join('');
+    `<span data-k="${k}" class="${n === 2 ? 'rk' : (n ? 'num' : '')}">${l}${sortKey === k ? (sortDir < 0 ? ' ▾' : ' ▴') : ''}</span>`).join('');
   $('#allBody').innerHTML = rows.map((t) => `
     <div class="r" style="grid-template-columns:${ALL_COLS}${t.team === ourTeam ? ';box-shadow:inset 0 0 0 1px var(--red-ring)' : ''}">
+      <span class="rk">${t.exact.rank ?? '—'}</span>
       <span class="tno">${t.team}</span>
       <span class="nm">${esc(t.name || '')}</span>
       <span class="num">${t.estimated.avgFuel} <span class="band">±${t.estimated.band}</span></span>
       <span class="num">${climbCell(t)}</span>
+      <span class="num">${t.epa.epa ?? '—'}</span>
       <span class="num">${t.exact.avgTowerPoints}</span>
       <span class="num">${Math.round(t.observed.stockpileRate)}%</span>
       <span class="num">${t.observed.wastedFuelPct == null ? '—' : Math.round(t.observed.wastedFuelPct) + '%'}</span>
@@ -183,10 +198,37 @@ function takenTeams() {
   for (const a of (STATE && STATE.alliances) || []) for (const t of a || []) if (t) out.add(Number(t));
   return out;
 }
-function ranked() {
+
+// The computed score is where a picklist starts, never where it ends. ORDER is
+// the lead's hand-ordering; it wins outright, and `was` carries the computed
+// rank alongside so the board shows what has drifted since they moved things.
+let ORDER = [];
+
+function computedRank() {
   if (!ANALYTICS) return [];
   return Object.values(ANALYTICS.teams).filter((t) => t.matchesScouted)
-    .map((t) => ({ t, s: score(t) })).sort((a, b) => b.s - a.s);
+    .map((t) => ({ t, s: score(t) })).sort((a, b) => b.s - a.s)
+    .map((r, i) => ({ ...r, was: i + 1 }));
+}
+function ranked() {
+  const base = computedRank();
+  if (!ORDER.length) return base;
+  const left = new Map(base.map((r) => [r.t.team, r]));   // still in score order
+  const out = [];
+  for (const n of ORDER) {
+    const r = left.get(n);
+    if (r) { out.push(r); left.delete(n); }
+  }
+  return out.concat([...left.values()]);                  // newly scouted teams fall in below
+}
+function moveInOrder(team, before) {
+  // First edit freezes the current board, so a drag moves one team and leaves
+  // everyone else exactly where the lead was looking at them.
+  if (!ORDER.length) ORDER = ranked().map((r) => r.t.team);
+  ORDER = ORDER.filter((n) => n !== team);
+  const at = before == null ? ORDER.length : ORDER.indexOf(before);
+  ORDER.splice(at < 0 ? ORDER.length : at, 0, team);
+  savePicklist();
 }
 function renderPickMini() {
   const taken = takenTeams();
@@ -247,6 +289,7 @@ async function loadPicklistState() {
     if (pl.weights && Object.keys(pl.weights).length) Object.assign(WEIGHTS, pl.weights);
     DNP.clear();
     for (const n of pl.dnp || []) DNP.add(Number(n));
+    ORDER = (pl.order || []).map(Number);
     CAN_EDIT = pl.canEdit !== false;
     PIN_SET = !!pl.locked;
     renderWeights();
@@ -259,8 +302,38 @@ async function savePicklist() {
   if (!CAN_EDIT) return;
   try {
     await net.api('/api/picklist', { method: 'POST',
-      body: JSON.stringify({ weights: WEIGHTS, dnp: [...DNP] }) });
+      body: JSON.stringify({ weights: WEIGHTS, dnp: [...DNP], order: ORDER }) });
   } catch { /* stays local until the hub is back */ }
+}
+
+function driftCell(was, i) {
+  // Only meaningful once the board is hand-ordered; before that `was` is `i+1`.
+  // Moving one team shifts everyone it passed by a place, and marking all of
+  // them buries the move that was actually made - so only call out real gaps.
+  if (was == null || Math.abs(was - (i + 1)) < 2) return '';
+  return ` · <span class="hint">computed ${was}</span>`;
+}
+
+let dragTeam = null;
+function wireDrag() {
+  for (const row of $$('#pkFull .pk[data-team]')) {
+    row.ondragstart = (ev) => {
+      dragTeam = Number(row.dataset.team);
+      ev.dataTransfer.effectAllowed = 'move';
+      // Firefox will not start a drag without payload on the transfer
+      ev.dataTransfer.setData('text/plain', row.dataset.team);
+    };
+    row.ondragover = (ev) => { ev.preventDefault(); ev.dataTransfer.dropEffect = 'move'; };
+    row.ondrop = (ev) => {
+      ev.preventDefault();
+      const onto = Number(row.dataset.team);
+      if (!dragTeam || dragTeam === onto) return;
+      moveInOrder(dragTeam, onto);
+      dragTeam = null;
+      renderPicklist(); renderPickMini();
+    };
+    row.ondragend = () => { dragTeam = null; };
+  }
 }
 
 function renderPicklist() {
@@ -268,15 +341,18 @@ function renderPicklist() {
   const taken = takenTeams();
   $('#pkStatus').textContent = taken.size
     ? `${taken.size} team${taken.size > 1 ? 's' : ''} already taken — crossed off live`
-    : 'alliance selection not started';
-  $('#pkFull').innerHTML = ranked().map(({ t, s }, i) => `
+    : (ORDER.length ? 'hand-ordered — new data no longer reorders the board'
+                    : 'alliance selection not started');
+  $('#pkFull').innerHTML = ranked().map(({ t, s, was }, i) => `
     <div class="pk ${i === 0 ? 'top' : ''} ${taken.has(t.team) ? 'taken' : ''} ${DNP.has(t.team) ? 'dnp' : ''}"
-         style="margin:0;border-bottom:1px solid var(--row)">
+         style="margin:0;border-bottom:1px solid var(--row)"
+         data-team="${t.team}"${CAN_EDIT ? ' draggable="true"' : ''}>
       <span class="i">${i + 1}</span><span class="n">${t.team}</span>
-      <span class="nm">${esc(t.name || '')} — ${climbCell(t)} · ${t.estimated.avgFuel}±${t.estimated.band} fuel · stock ${Math.round(t.observed.stockpileRate)}%</span>
+      <span class="nm">${esc(t.name || '')} — ${climbCell(t)} · ${t.estimated.avgFuel}±${t.estimated.band} fuel · stock ${Math.round(t.observed.stockpileRate)}%${driftCell(was, i)}</span>
       <span class="s">${Math.round(s)}</span>
       ${CAN_EDIT ? `<button class="x" data-dnp="${t.team}">${DNP.has(t.team) ? 'UN-DNP' : 'DNP'}</button>` : ''}
     </div>`).join('') || '<div class="empty">Nothing to rank yet.</div>';
+  if (CAN_EDIT) wireDrag();
   for (const b of $$('[data-dnp]')) b.onclick = () => {
     const n = Number(b.dataset.dnp);
     DNP.has(n) ? DNP.delete(n) : DNP.add(n);
@@ -287,6 +363,15 @@ function renderPicklist() {
   $('#dnpList').innerHTML = [...DNP].length
     ? [...DNP].map((n) => `<div class="kv"><span>${n}</span><b>do not pick</b></div>`).join('')
     : '<div class="hint">nobody flagged</div>';
+  const reset = $('#pkReset');
+  if (reset) {
+    reset.classList.toggle('hide', !(CAN_EDIT && ORDER.length));
+    reset.onclick = () => {
+      ORDER = [];
+      savePicklist();
+      renderPicklist(); renderPickMini();
+    };
+  }
 }
 function renderWeights() {
   $('#weights').innerHTML = Object.entries(WEIGHTS).map(([k, v]) => `
@@ -481,9 +566,9 @@ function renderTeamDetail() {
     <div style="display:flex;align-items:flex-end;gap:14px">
       <div style="font:700 54px/.9 'Barlow Condensed',sans-serif">${t.team}</div>
       <div style="padding-bottom:6px"><div style="font:600 14px Barlow,sans-serif;color:var(--t1)">${esc(t.name || '')}</div>
-        <div class="hint">${t.matchesScouted} matches scouted · ${e.matchesWithOfficial} with official results</div></div>
+        <div class="hint">${t.matchesScouted} matches scouted · ${e.matchesWithOfficial} with official results${recordLine(e)}</div></div>
     </div>
-    <div class="tiles">
+    <div class="tiles" style="grid-template-columns:repeat(3,1fr)">
       ${tile('FUEL / MATCH', es.avgFuel, `± ${es.band} · estimated`)}
       ${tile('BEST CLIMB', e.bestClimb === 'None' ? '—' : e.bestClimb.replace('Level', 'L'),
              `${Math.round(e.climbRate[e.bestClimb] || 0)}% of matches · exact`)}
@@ -491,6 +576,9 @@ function renderTeamDetail() {
       ${tile('RELIABILITY', `${Math.round(100 - o.diedRate - o.noShowRate)}%`,
              `died ${Math.round(o.diedRate)}% · no-show ${Math.round(o.noShowRate)}%`,
              (o.diedRate + o.noShowRate) > 20 ? 'warn' : '')}
+      ${tile('EPA', t.epa.epa ?? '—', t.epa.epa == null ? 'statbotics unavailable'
+             : `auto ${t.epa.auto ?? '—'} · teleop ${t.epa.teleop ?? '—'} · statbotics`)}
+      ${tile('OPR', e.opr ?? '—', e.rank ? `rank ${e.rank} · exact` : 'no rankings yet')}
     </div>
     <div class="tbl"><div class="cap"><span class="t">WHAT SCOUTS SAW</span>
       <span class="n">yes/no observations — the reliable kind</span></div>
@@ -501,6 +589,16 @@ function renderTeamDetail() {
         <div class="kv"><span>defence</span><b>${o.defenseSecs ? `${o.defenseSecs}s/match` : 'none seen'}</b></div>
         <div class="kv"><span>driver</span><b>${o.driver ?? '—'} / 5</b></div>
         <div class="kv"><span>average preload</span><b>${o.avgPreload ?? '—'}</b></div>
+      </div></div>
+    <div class="tbl"><div class="cap"><span class="t">WHAT SCOUTS WROTE</span>
+      <span class="n">${t.notes.length ? `${t.notes.length} note${t.notes.length > 1 ? 's' : ''}` : 'nothing typed'}</span></div>
+      <div style="padding:6px 16px 12px">
+        ${t.notes.length ? t.notes.map((nt) => `
+          <div class="kv" style="align-items:flex-start">
+            <span style="flex:1">${esc(nt.note)}</span>
+            <b style="white-space:nowrap">${esc(shortCode(matchLabel(nt.matchKey)))} · ${esc(nt.scoutId || '?')}</b>
+          </div>`).join('')
+          : '<div class="hint">Scouts can type a note on the after-the-buzzer screen.</div>'}
       </div></div>`;
   const p = (pit && pit.payload) || null;
   $('#tdSide').innerHTML = `<div class="eyebrow">FROM THE PIT</div>` + (p ? `
