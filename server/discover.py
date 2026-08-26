@@ -8,12 +8,24 @@ import socket
 import struct
 import subprocess
 import threading
+import time
 
 MDNS_ADDR = "224.0.0.251"
 MDNS_PORT = 5353
 HOSTNAME = "scout"          # -> scout.local
 # Windows Mobile Hotspot always hands out this gateway; worth advertising loudly.
 WINDOWS_HOTSPOT = "192.168.137.1"
+# Every hotspot a team is likely to run, whether the laptop is the access point
+# or just another client on someone's phone. The laptop is often on two networks
+# at once - venue wifi for the API keys, hotspot for the scouts - and only the
+# hotspot address is reachable from the phones, so these sort to the top.
+HOTSPOT_PREFIXES = (
+    "192.168.137.",   # Windows Mobile Hotspot
+    "192.168.2.",     # macOS Internet Sharing
+    "172.20.10.",     # iPhone Personal Hotspot
+    "192.168.43.",    # Android tethering
+)
+IP_RECHECK_SECS = 15      # how often the responder re-reads its own address
 
 
 def _default_route_ip():
@@ -55,6 +67,18 @@ def _scraped_ips():
     return out
 
 
+def _is_private(ip):
+    """RFC 1918 only. 172. alone would sweep in public space that starts 172."""
+    if ip.startswith("192.168.") or ip.startswith("10."):
+        return True
+    if ip.startswith("172."):
+        try:
+            return 16 <= int(ip.split(".")[1]) <= 31
+        except (IndexError, ValueError):
+            return False
+    return False
+
+
 def local_ipv4s():
     """All plausible LAN addresses, best candidate first."""
     found = set()
@@ -67,14 +91,14 @@ def local_ipv4s():
               if not ip.startswith("127.") and not ip.startswith("169.254.")]
 
     def score(ip):
-        # hotspot gateway first, then private ranges, then anything else
+        # hotspot addresses first, then private ranges, then anything else
         if ip == WINDOWS_HOTSPOT:
             return 0
-        if ip.startswith("192.168.137."):
+        if ip.startswith(HOTSPOT_PREFIXES):
             return 1
         if ip == d:
             return 2
-        if ip.startswith(("192.168.", "10.")) or ip.startswith("172."):
+        if _is_private(ip):
             return 3
         return 4
 
@@ -117,12 +141,13 @@ class MDNSResponder(threading.Thread):
 
     daemon = True
 
-    def __init__(self, ip, name=HOSTNAME):
+    def __init__(self, ip=None, name=HOSTNAME):
         super().__init__(name="mdns")
-        self.ip = ip
+        self.ip = ip              # None means "whatever this machine has now"
         self.qname = (name + ".local").lower()
         self._stop = threading.Event()
         self.sock = None
+        self._next_check = 0.0
 
     def _open(self):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
@@ -138,18 +163,52 @@ class MDNSResponder(threading.Thread):
         s.settimeout(1.0)
         return s
 
+    def _refresh_ip(self):
+        """Follow the address this machine has *now*, not the one it booted on.
+
+        Starting the server on house wifi and joining the hotspot at the venue is
+        the normal Saturday, not the exception. Answering scout.local with the
+        address from breakfast points every phone at nothing, which is worse than
+        not answering at all. The socket goes with it: the multicast membership
+        was joined on the old interface and does not follow by itself.
+        """
+        now = time.monotonic()
+        if now < self._next_check:
+            return
+        self._next_check = now + IP_RECHECK_SECS
+        ips = local_ipv4s()
+        ip = ips[0] if ips else None
+        if ip and ip != self.ip:
+            self.ip = ip
+            self._close()
+
+    def _close(self):
+        if self.sock:
+            try:
+                self.sock.close()
+            except Exception:
+                pass
+        self.sock = None
+
     def run(self):
-        try:
-            self.sock = self._open()
-        except Exception:
-            return  # mDNS is a convenience; never take the server down for it
         while not self._stop.is_set():
+            self._refresh_ip()
+            if self.sock is None:
+                try:
+                    self.sock = self._open()
+                except Exception:
+                    # mDNS is a convenience; never take the server down for it,
+                    # and never give up on it either - the interface it needs may
+                    # only appear once the hotspot does.
+                    self._stop.wait(5)
+                    continue
             try:
                 data, addr = self.sock.recvfrom(2048)
             except socket.timeout:
                 continue
             except Exception:
-                return
+                self._close()
+                continue
             try:
                 reply = self._maybe_reply(data)
                 if reply:
@@ -159,9 +218,10 @@ class MDNSResponder(threading.Thread):
 
     def stop(self):
         self._stop.set()
+        self._close()
 
     def _maybe_reply(self, data):
-        if len(data) < 12:
+        if not self.ip or len(data) < 12:
             return None
         tid, flags, qd, *_ = struct.unpack("!6H", data[:12])
         if flags & 0x8000 or qd < 1:
