@@ -66,7 +66,7 @@ it *worse* (23.6% → 25.3% in simulation), so those are left alone and the matc
 A drum shooter empties faster than anyone can tap, so nobody counts balls.
 
 **The scout answers "who was shooting, when, and roughly how hard."** Left thumb picks a rate off
-the ladder (a trickle / steady / pouring). Right thumb holds the pad while the robot shoots. That
+the ladder (a trickle / steady / dumping). Right thumb holds the pad while the robot shoots. That
 is the whole interaction.
 
 **The server turns that into numbers.** TBA publishes the official fuel count per alliance *per

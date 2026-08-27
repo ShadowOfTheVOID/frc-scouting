@@ -239,6 +239,81 @@ def test_export_import_idempotent(L):
     return ok
 
 
+def test_snapshot_and_restore(L):
+    """The recovery procedure the README hands to a non-programmer.
+
+    "Stop the server. Copy the newest file out of data/snapshots/ over
+    data/scouting.db, delete the -wal and -shm files, start it again."  Nothing
+    covered it, and it is the step that runs on the worst day of the event -
+    against a database nobody can re-collect, by someone who is not a
+    programmer, with matches still queuing.
+    """
+    ok = True
+    entries, matches = len(L.store.scout_entries(EK)), len(L.store.matches(EK))
+
+    dest = L.store.snapshot(keep=12)
+    ok &= check("the snapshot lands in snapshots/ beside the database",
+                os.path.isfile(dest) and os.path.basename(os.path.dirname(dest)) == "snapshots",
+                f"({os.path.basename(dest)})")
+
+    # The claim store.snapshot exists to make: WAL means the .db file on disk is
+    # not a whole database, so this is sqlite's backup API rather than a copy.
+    # Carrying the one file off and opening it with no -wal or -shm beside it is
+    # exactly what a lead does, and is the assertion that would catch a
+    # regression to shutil.copy.
+    alone = os.path.join(L.dir, "carried-off", "scouting.db")
+    os.makedirs(os.path.dirname(alone), exist_ok=True)
+    shutil.copy(dest, alone)
+    lifted = Store(alone)
+    ok &= check("and is a whole database on its own, with no -wal or -shm beside it",
+                len(lifted.scout_entries(EK)) == entries and len(lifted.matches(EK)) == matches,
+                f"({len(lifted.scout_entries(EK))} entries, {len(lifted.matches(EK))} matches)")
+
+    # The procedure end to end, on a database of its own so the rest of the
+    # suite keeps its event.
+    room = tempfile.mkdtemp(prefix="frc-restore-test-")
+    try:
+        live = os.path.join(room, "scouting.db")
+        st = Store(live)
+        st.set("eventKey", EK)
+        st.put_event(EK, name="Test Event", level="regional")
+        st.put_teams(EK, [{"team": t, "name": f"Team {t}"} for t in (101, 102, 103)])
+        good = st.snapshot(keep=12)
+
+        # Whatever lands after the snapshot is what a bad shutdown costs you -
+        # at most the ten minutes between snapshots, which is the trade.
+        st.put_teams(EK, [{"team": 999, "name": "Written after the snapshot"}])
+        ok &= check("the live database has the later write",
+                    any(t["team"] == 999 for t in st.teams(EK)))
+
+        st.conn().close()                      # "stop the server"
+        shutil.copy(good, live)                # "copy the newest file over"
+        for suffix in ("-wal", "-shm"):        # "delete the -wal and -shm"
+            if os.path.exists(live + suffix):
+                os.remove(live + suffix)
+
+        back = Store(live)                     # "start it again"
+        ok &= check("restoring brings the event back",
+                    back.get("eventKey") == EK and len(back.teams(EK)) == 3,
+                    f"({len(back.teams(EK))} teams)")
+        ok &= check("losing only what was written after the snapshot",
+                    not any(t["team"] == 999 for t in back.teams(EK)))
+        ok &= check("and the restored database answers analytics rather than raising",
+                    isinstance(analytics.event_summary(back, EK).get("teams"), dict))
+
+        # Retention, written by hand: the stamp is per-second, so snapshots
+        # taken inside one second would collide rather than accumulate.
+        out = os.path.join(room, "snapshots")
+        for stamp in ("20260101-000001", "20260101-000002", "20260101-000003"):
+            open(os.path.join(out, f"scouting-{stamp}.db"), "w").close()
+        back.snapshot(keep=2)
+        kept = sorted(f for f in os.listdir(out) if f.endswith(".db"))
+        ok &= check("keeping the last N prunes the oldest", len(kept) == 2, f"({kept})")
+    finally:
+        shutil.rmtree(room, ignore_errors=True)
+    return ok
+
+
 def test_csv_export(L):
     ok = True
     code, body = L.req("/api/export.csv?table=teams", raw=True)
@@ -576,7 +651,8 @@ def main():
         seed_event(L)
         passed = True
         for fn in (test_sync_and_last_write_wins, test_solving_ran, test_analytics_null_safe,
-                   test_picklist_lock, test_export_import_idempotent, test_csv_export,
+                   test_picklist_lock, test_export_import_idempotent,
+                   test_snapshot_and_restore, test_csv_export,
                    test_seats, test_match_clock, test_reconcile, test_config_scope,
                    test_nexus_tba_one_row, test_legacy_keys_migrate,
                    test_concurrent_writes, test_score_report,
