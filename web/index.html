@@ -77,22 +77,20 @@
           <div class="h">Other teams' scouting for this event. Your scouting lead makes a key
             in the Lovat Dashboard (Settings → API keys); your team must be verified there
             first. It is shown next to our own numbers, never mixed into them. lovat.app</div></div>
-        <div class="f"><label>AI PROVIDER</label>
-          <select id="aiProvider">
-            <option value="none">none — no AI features</option>
-            <option value="anthropic">Claude (Anthropic)</option>
-            <option value="openai">OpenAI</option>
-            <option value="gemini">Gemini (Google)</option>
-          </select>
+        <div class="f"><label>AI MODEL</label>
+          <select id="aiModel"></select>
           <div class="h">Summarises scout notes, explains the picklist and answers questions
             about the event. It only ever reads the numbers already on this hub — it never
-            adds any, and nothing it writes is stored as data.</div></div>
+            adds any, and nothing it writes is stored as data. Prices are per million tokens;
+            one answer is a few thousand.</div></div>
+        <div class="f hide" id="aiOtherRow"><label>MODEL ID</label>
+          <input id="aiOther" placeholder="e.g. claude-opus-5" autocomplete="off"
+            autocapitalize="off" autocorrect="off" spellcheck="false">
+          <div class="h">For a model released after this list was written. The name decides
+            which company it is sent to.</div></div>
         <div class="f"><label>AI KEY</label>
-          <input id="aiKey" placeholder="provider api key" autocomplete="off"></div>
-        <div class="f"><label>AI MODEL</label>
-          <input id="aiModel" placeholder="leave blank for the default" autocomplete="off">
-          <div class="h">Blank uses the provider's default. Set it if your account needs a
-            particular model name.</div></div>
+          <input id="aiKey" placeholder="api key for whoever makes the model above"
+            autocomplete="off"></div>
         <div class="f"><label>STRATEGY PASSCODE</label>
           <input id="strategyPin" placeholder="leave blank for no lock" autocomplete="off">
           <div class="h">Gates the picklist and every AI answer. Shared, not personal — the hub stores only a hash
@@ -115,21 +113,55 @@ try {
   const bits = [c.keys.tba ? 'TBA SET' : 'NO TBA KEY', c.keys.nexus ? 'NEXUS SET' : 'NO NEXUS KEY'];
   if (c.keys.frcEvents) bits.push('FRC EVENTS SET');
   if (c.keys.lovat) bits.push('LOVAT SET');
-  bits.push(c.keys.ai ? `AI · ${(c.ai && c.ai.model) || 'ON'}` : 'NO AI');
-  if (c.ai && c.ai.provider && c.ai.provider !== 'none') $('#aiProvider').value = c.ai.provider;
-  if (c.ai && c.ai.model) $('#aiModel').placeholder = c.ai.model + ' (current)';
+  bits.push(c.keys.ai ? `AI · ${(c.ai && c.ai.label) || 'ON'}` : 'NO AI');
+  buildModelPicker(c.ai || {});
   bits.push(c.multipliersFittedFrom ? `CALIBRATED · ${c.multipliersFittedFrom} WINDOWS` : 'PRIORS ONLY');
   bits.push(c.picklistLocked ? 'PICKLIST LOCKED' : 'PICKLIST OPEN');
   $('#sub').textContent = bits.join(' · ');
 } catch { $('#sub').textContent = 'HUB NOT REACHABLE'; }
 
+/**
+ * One list instead of a provider and a model that can disagree.
+ *
+ * Built from the hub's own catalogue so the models live in one place
+ * (server/ai.py) rather than in two. Each option carries `provider:id`, so
+ * picking a model picks the company that makes it — which is the only thing
+ * the two-field version ever asked the user to know.
+ */
+function buildModelPicker(ai) {
+  const sel = $('#aiModel');
+  const groups = new Map();
+  for (const m of ai.models || []) {
+    if (!groups.has(m.provider)) groups.set(m.provider, []);
+    groups.get(m.provider).push(m);
+  }
+  const opt = (value, text) => `<option value="${value}">${text}</option>`;
+  let html = opt('none', 'none — no AI features');
+  for (const [provider, models] of groups) {
+    html += `<optgroup label="${(ai.providers || {})[provider] || provider}">`;
+    for (const m of models) html += opt(`${provider}:${m.id}`, `${m.label} — ${m.price} per 1M`);
+    html += '</optgroup>';
+  }
+  html += opt('other', 'other — type a model id');
+  sel.innerHTML = html;
+
+  const listed = (ai.models || []).some((m) => m.id === ai.model);
+  if (ai.model && listed) sel.value = `${ai.provider}:${ai.model}`;
+  else if (ai.model) { sel.value = 'other'; $('#aiOther').value = ai.model; }
+  else sel.value = 'none';
+  const syncOther = () => $('#aiOtherRow').classList.toggle('hide', sel.value !== 'other');
+  sel.onchange = syncOther;
+  syncOther();
+}
+
 $('#save').onclick = async () => {
   const body = { eventKey: $('#eventKey').value.trim(), eventLevel: $('#eventLevel').value,
                  ourTeam: $('#ourTeam').value.trim() };
-  for (const k of ['tbaKey','nexusKey','nexusToken','frcEventsUser','frcEventsToken','lovatKey','aiKey','aiModel']) {
+  for (const k of ['tbaKey','nexusKey','nexusToken','frcEventsUser','frcEventsToken','lovatKey','aiKey']) {
     const v = $('#'+k).value.trim(); if (v) body[k] = v;
   }
-  body.aiProvider = $('#aiProvider').value;
+  const picked = $('#aiModel').value;
+  body.aiModel = picked === 'other' ? $('#aiOther').value.trim() : picked;
   const pin = $('#strategyPin').value;
   if (pin !== '') body.strategyPin = pin.trim();
   $('#status').textContent = 'saving…';
@@ -139,6 +171,9 @@ $('#save').onclick = async () => {
     for (const k of ['tbaKey','nexusKey','nexusToken','frcEventsUser','frcEventsToken',
                      'lovatKey','aiKey','strategyPin'])
       $('#'+k).value = '';
+    // The model is a setting, not a secret: it stays on screen, re-read from
+    // the hub so the page shows what was actually saved.
+    try { buildModelPicker((await net.api('/api/config')).ai || {}); } catch { /* offline */ }
   } catch (e) { $('#status').textContent = 'Failed: ' + e.message; }
 };
 </script>

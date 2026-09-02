@@ -339,11 +339,26 @@ enforced in four places rather than merely hoped for:
   panel beside it — that is what the citations are for.
 - **It is always labelled** with the model that wrote it and when.
 
+### Why an empty panel is never just "unavailable"
+
+Every model on the list reasons before it answers, and those reasoning tokens come out of the
+same budget as the answer. Left at its default a model can spend the entire allowance thinking
+and return nothing — which, reported as "unreachable", would send you hunting for a network
+fault that is not there. So the hub turns reasoning down to its low setting on every provider
+(`output_config.effort`, `reasoning_effort`, `thinkingConfig.thinkingLevel` — one per vendor,
+and each rejects the other two), gives the budget room, and reports the real cause: **the
+answer ran out of room** (press again), **the model declined to answer that**, or **the model
+could not be reached**, which is the only one that means the network.
+
 ### What it costs, and who can spend it
 
 Generating always takes a button press. Opening a page only ever reads the cache, so walking
 the dashboard costs nothing. A cached answer regenerates by itself only when the data behind it
 changes; **SUMMARISE** / **EXPLAIN** forces a fresh one.
+
+An answer is a few thousand tokens. Across a whole regional that lands somewhere between a few
+cents and a couple of dollars depending on which model you picked — the list spans a 50×
+price range, and the cheapest end handles a note digest perfectly well.
 
 The routes are held to a stricter lock than the picklist, because they spend real money: you
 need the strategy passcode *and* a valid token, **or** you are sitting at the hub machine. With
@@ -431,7 +446,8 @@ Entered at `/` on the hub laptop. All keys are free and all are optional.
 | **Nexus webhook token** | Only if you registered a push webhook. |
 | **FRC Events** | The official result a few minutes before TBA posts it. Does not feed the solver. |
 | **Lovat API key** | Other teams' scouting for this event. Your scouting lead makes one in the Lovat Dashboard under Settings → API keys; it starts `lvt-`, and your team has to be verified on Lovat first. Polled once every five minutes — Lovat allows one request every three seconds per key, so the hub stays well inside it. The export is scoped to what your Lovat account is allowed to see, so a short list is a setting on their side, not a failure on ours. |
-| **AI provider / key / model** | Claude, OpenAI or Gemini. Turns on the three generated panels below. Blank model uses the provider's default. |
+| **AI model** | One list, grouped Claude / Gemini / OpenAI, each option priced per million tokens. Picking a model picks the company that makes it, so there is no provider field to get wrong. *none* is the default and turns the three panels below off entirely. **other** takes a typed model id for anything released after this list was written — the name decides where it is sent. |
+| **AI key** | The key for whoever makes the model you picked. |
 | Statbotics | EPA. No key needed. |
 
 ### Command line

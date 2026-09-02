@@ -79,7 +79,7 @@ runs without any, just with less live data.
 | **Nexus** | live queueing, match timing, pit map, alliance selection | [frc.nexus/api](https://frc.nexus/api) |
 | **FRC Events** | the official result a few minutes before TBA posts it | [frc-events.firstinspires.org](https://frc-events.firstinspires.org/services/API) |
 | **Lovat** | what other teams' scouts recorded about the same robots | [lovat.app](https://lovat.app) — see below |
-| **AI provider** | plain-English summaries of your scout notes | Claude, OpenAI or Gemini — see below |
+| **AI model** | plain-English summaries of your scout notes | Claude, Gemini or OpenAI — see below |
 | Statbotics | EPA next to your own numbers | nothing to do — no key needed |
 
 The fuel numbers always come from The Blue Alliance, whichever other keys you set. FRC Events
@@ -92,13 +92,19 @@ pulls what Lovat has for your event every five minutes. It is shown in its own c
 own panel, clearly marked as other teams' scouting, and it never changes any of your own
 numbers. It is a second opinion, not a correction.
 
-**AI** is optional and off until you pick a provider and paste a key. It adds three things: a
+**AI** is optional and off until you pick a model and paste a key. It adds three things: a
 summary of what your scout notes add up to on each team, a plain-English explanation of the
 picklist you already built, and a question box on the CREW tab. It only ever reads the numbers
 already on this hub — it cannot look anything up, it is told to cite the match and the scout
-behind every claim, and it never changes a number or the picklist order. If you leave the
-provider on *none*, none of it appears. Answers cost a fraction of a cent each and only ever
-happen when somebody presses a button.
+behind every claim, and it never changes a number or the picklist order. If you leave it on
+*none*, none of it appears.
+
+Pick from one dropdown, grouped Claude, then Gemini, then OpenAI, with the price beside each
+name. Picking the model picks the company, so the key you paste underneath is just that
+company's key — there is nothing to match up. Any of them will do this job; the list spans a
+50× price range and the cheap end is genuinely fine for summarising scout notes. An answer
+costs somewhere between a fraction of a cent and a few cents depending on which you pick, and
+only ever happens when somebody presses a button.
 
 Also set the **event key** (like `2026casf` — the code on frc.events or The Blue Alliance) and
 **our team** (6059). Click **SAVE & REFRESH**.

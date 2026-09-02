@@ -1003,7 +1003,7 @@ async function aiCall(path, body) {
 function aiBlock(res, idle) {
   if (!res) return `<div class="hint">${idle}</div>`;
   if (res.configured === false) {
-    return '<div class="hint">No AI provider set — add one in Setup on the hub machine.</div>';
+    return '<div class="hint">No AI model chosen — pick one in Setup on the hub machine.</div>';
   }
   if (res.text) {
     const when = res.at ? new Date(res.at * 1000).toLocaleTimeString() : '';

@@ -19,10 +19,52 @@ import time
 
 import sources
 
-PROVIDERS = {
-    "anthropic": {"label": "Claude (Anthropic)", "model": "claude-opus-5"},
-    "openai": {"label": "OpenAI", "model": "gpt-4o-mini"},
-    "gemini": {"label": "Gemini (Google)", "model": "gemini-2.0-flash"},
+#: Every model the Setup page offers, in the order it offers them: Claude,
+#: then Gemini, then OpenAI.  One list, because it has to drive three things -
+#: the dropdown, which provider a model belongs to, and the shape of the
+#: request that model accepts - and three copies of that would drift.
+#:
+#: `effort` is whether the model takes a reasoning knob at all.  It is a
+#: property of the model, not the provider: `output_config.effort` is right for
+#: Opus 5 and a 400 on Haiku 4.5.  Unknown models get no knob, which is the one
+#: shape that cannot be rejected.
+#:
+#: `fallbacks` asks Anthropic to retry a refusal on another model inside the
+#: same call, which Anthropic recommends by default for these two.
+MODELS = [
+    # id                  provider     label                price          effort fallbacks
+    ("claude-opus-5",     "anthropic", "Claude Opus 5",     "$5 / $25",     True,  True),
+    ("claude-fable-5-1",  "anthropic", "Claude Fable 5.1",  "$10 / $50",    True,  True),
+    ("claude-sonnet-5",   "anthropic", "Claude Sonnet 5",   "$2 / $10",     True,  False),
+    ("claude-haiku-4-5",  "anthropic", "Claude Haiku 4.5",  "$1 / $5",      False, False),
+    ("gemini-3.7-flash",  "gemini",    "Gemini 3.7 Flash",  "$0.75 / $3.75", True, False),
+    ("gemini-3.6-flash",  "gemini",    "Gemini 3.6 Flash",  "$0.75 / $3.75", True, False),
+    ("gemini-3.1-pro",    "gemini",    "Gemini 3.1 Pro",    "$2 / $12",     True,  False),
+    ("gpt-5.6-sol",       "openai",    "GPT-5.6 Sol",       "$4 / $20",     True,  False),
+    ("gpt-5.6-terra",     "openai",    "GPT-5.6 Terra",     "$2 / $12",     True,  False),
+    ("gpt-5.6-luna",      "openai",    "GPT-5.6 Luna",      "$0.20 / $1.20", True, False),
+]
+
+BY_ID = {m[0]: m for m in MODELS}
+
+PROVIDERS = {"anthropic": "Claude (Anthropic)", "gemini": "Gemini (Google)",
+             "openai": "OpenAI"}
+
+#: What the Setup page starts on. Not a fallback: a hub with no model chosen
+#: has the AI features off, and must not quietly behave as though it picked one.
+DEFAULT_MODEL = "claude-opus-5"
+
+#: Reasoning is on by default on every model in the list above, and the tokens
+#: it spends come out of the same budget as the answer.  Left alone, Gemini
+#: thinks at HIGH and can use the whole allowance before writing a word, which
+#: reads at a competition as "the model could not be reached" on a perfectly
+#: good key.  Summarising twenty scout notes does not need deep reasoning, so
+#: every provider is turned down to its low setting.
+EFFORT = {
+    "anthropic": ("output_config", {"effort": "low"}),
+    "openai": ("reasoning_effort", "low"),
+    # thinkingLevel and thinkingBudget together are a 400; only ever send this.
+    "gemini": ("thinkingConfig", {"thinkingLevel": "LOW"}),
 }
 
 #: Prepended to every system prompt.  The app's whole doctrine is that its
@@ -48,23 +90,72 @@ Absolute rules:
   scouts and is unverified.
 - Be brief and plain. No preamble, no encouragement, no advice about scouting."""
 
+OUT_OF_ROOM = "the answer ran out of room - try again"
+DECLINED = "the model declined to answer that"
+UNREACHABLE = "the model could not be reached"
+
+
+def provider_for(model_id):
+    """Which API a model belongs to.
+
+    The catalogue answers for anything on the list.  The prefix rule is for a
+    model typed in by hand after this file was written, which is the whole
+    reason the Setup page keeps a free-text box.
+    """
+    m = (model_id or "").strip().lower()
+    if m in BY_ID:
+        return BY_ID[m][1]
+    if m.startswith("claude"):
+        return "anthropic"
+    if m.startswith("gemini"):
+        return "gemini"
+    if m.startswith(("gpt", "o1", "o3", "o4", "chatgpt")):
+        return "openai"
+    return None
+
+
+def catalogue():
+    """The list as the Setup page needs it, in order."""
+    return [{"id": i, "provider": p, "label": lb, "price": pr}
+            for i, p, lb, pr, _, _ in MODELS]
+
 
 class Client:
     def __init__(self, provider, key, model=None):
-        self.provider = (provider or "none").strip().lower()
+        self.model = (model or "").strip()
+        # A stored provider that disagrees with the model loses: the model is
+        # what the request is actually built for.
+        self.provider = ((provider_for(self.model) if self.model else None)
+                         or (provider or "").strip().lower() or "none")
         self.key = (key or "").strip()
-        self.model = (model or "").strip() or (
-            PROVIDERS.get(self.provider, {}).get("model"))
         self.down_until = 0.0
 
     @property
     def ok(self):
         return bool(self.provider in PROVIDERS and self.key and self.model)
 
-    def ask(self, system, user, max_tokens=1200):
-        """System + user prompt in, text out.  None means "we could not"."""
-        if not self.ok or time.time() < self.down_until:
-            return None
+    @property
+    def label(self):
+        row = BY_ID.get(self.model)
+        return row[2] if row else (self.model or None)
+
+    def _flag(self, i):
+        row = BY_ID.get(self.model)
+        # An unknown model gets neither knob: the plainest request is the one
+        # that cannot be rejected for a parameter the model does not take.
+        return bool(row[i]) if row else False
+
+    def ask(self, system, user, max_tokens=4000):
+        """System + user prompt in, `(text, reason)` out - exactly one is set.
+
+        The reason matters. Every failure used to read the same way, and "could
+        not be reached" is a lie when the truth is that the answer was cut off
+        or the model declined.
+        """
+        if not self.ok:
+            return None, UNREACHABLE
+        if time.time() < self.down_until:
+            return None, UNREACHABLE
         url, headers, payload = self._build(system, user, max_tokens)
         body, status = sources._request(
             url, headers, timeout=60, method="POST",
@@ -74,47 +165,83 @@ class Client:
             # next press of the button; sit out a minute instead.
             if status in (401, 403, 429):
                 self.down_until = time.time() + 60
-            return None
+            return None, UNREACHABLE
         return self._text(body)
 
     # ------------------------------------------------------------ per provider
     def _build(self, system, user, max_tokens):
         msg = [{"role": "user", "content": user}]
+        effort = EFFORT[self.provider] if self._flag(4) else None
+
         if self.provider == "anthropic":
-            return ("https://api.anthropic.com/v1/messages",
-                    {"x-api-key": self.key, "anthropic-version": "2023-06-01",
-                     "content-type": "application/json"},
-                    {"model": self.model, "max_tokens": max_tokens,
-                     "system": system, "messages": msg})
+            headers = {"x-api-key": self.key, "anthropic-version": "2023-06-01",
+                       "content-type": "application/json"}
+            payload = {"model": self.model, "max_tokens": max_tokens,
+                       "system": system, "messages": msg}
+            if effort:
+                payload[effort[0]] = effort[1]
+            if self._flag(5):
+                headers["anthropic-beta"] = "server-side-fallback-2026-07-01"
+                payload["fallbacks"] = "default"
+            return "https://api.anthropic.com/v1/messages", headers, payload
+
         if self.provider == "openai":
+            payload = {"model": self.model, "max_completion_tokens": max_tokens,
+                       "messages": [{"role": "system", "content": system}] + msg}
+            if effort:
+                payload[effort[0]] = effort[1]
             return ("https://api.openai.com/v1/chat/completions",
                     {"Authorization": "Bearer " + self.key,
-                     "content-type": "application/json"},
-                    {"model": self.model, "max_completion_tokens": max_tokens,
-                     "messages": [{"role": "system", "content": system}] + msg})
+                     "content-type": "application/json"}, payload)
+
+        payload = {"systemInstruction": {"parts": [{"text": system}]},
+                   "contents": [{"role": "user", "parts": [{"text": user}]}],
+                   "generationConfig": {"maxOutputTokens": max_tokens}}
+        if effort:
+            payload["generationConfig"][effort[0]] = effort[1]
         return ("https://generativelanguage.googleapis.com/v1beta/models/"
                 f"{self.model}:generateContent",
                 {"x-goog-api-key": self.key, "content-type": "application/json"},
-                {"systemInstruction": {"parts": [{"text": system}]},
-                 "contents": [{"role": "user", "parts": [{"text": user}]}],
-                 "generationConfig": {"maxOutputTokens": max_tokens}})
+                payload)
 
     def _text(self, body):
         try:
             if self.provider == "anthropic":
+                stop = body.get("stop_reason")
                 parts = [b.get("text", "") for b in body.get("content") or []
                          if b.get("type") == "text"]
-                return "\n".join(p for p in parts if p).strip() or None
+                return self._finish("\n".join(p for p in parts if p),
+                                    out_of_room=stop == "max_tokens",
+                                    declined=stop == "refusal")
             if self.provider == "openai":
-                choices = body.get("choices") or []
-                txt = ((choices[0].get("message") or {}).get("content")
-                       if choices else None)
-                return (txt or "").strip() or None
-            cands = body.get("candidates") or []
-            parts = ((cands[0].get("content") or {}).get("parts") or []) if cands else []
-            return "\n".join(p.get("text", "") for p in parts).strip() or None
-        except (AttributeError, IndexError, TypeError):
-            return None
+                choice = (body.get("choices") or [{}])[0]
+                txt = (choice.get("message") or {}).get("content") or ""
+                return self._finish(txt, out_of_room=choice.get("finish_reason") == "length",
+                                    declined=choice.get("finish_reason") == "content_filter")
+            cand = (body.get("candidates") or [{}])[0]
+            fin = cand.get("finishReason")
+            # A thought part is the model's reasoning, not its answer. Printing
+            # it as the digest would be worse than printing nothing.
+            parts = [p.get("text", "") for p in (cand.get("content") or {}).get("parts") or []
+                     if not p.get("thought")]
+            return self._finish("\n".join(p for p in parts if p),
+                                out_of_room=fin == "MAX_TOKENS",
+                                declined=fin in ("SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST"))
+        except (AttributeError, IndexError, KeyError, TypeError):
+            return None, UNREACHABLE
+
+    @staticmethod
+    def _finish(text, out_of_room=False, declined=False):
+        text = (text or "").strip()
+        if text:
+            return text, None
+        if declined:
+            return None, DECLINED
+        if out_of_room:
+            # Reasoning spent the whole budget. Naming that is what tells a
+            # lead to press again rather than go hunting for a network fault.
+            return None, OUT_OF_ROOM
+        return None, UNREACHABLE
 
 
 def client(cfg):

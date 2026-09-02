@@ -56,6 +56,12 @@ LOVAT_POLL_SECONDS = 300
 # A ceiling on generated answers per event, so a stuck button cannot quietly
 # spend a team's API credit all afternoon. Raise it in Setup if you need to.
 AI_CALL_CEILING = 250
+# These budgets cover the model's reasoning as well as its answer - every model
+# on the list thinks before it writes, out of the same allowance - so they are
+# several times what the text itself needs. Too small does not truncate
+# politely; it returns nothing at all.
+AI_PANEL_TOKENS = 4000
+AI_ASK_TOKENS = 3000
 # The whole event lives on one laptop that gets carried around a venue all day.
 SNAPSHOT_SECONDS = 600
 SNAPSHOT_KEEP = 12
@@ -1344,9 +1350,15 @@ class Handler(BaseHTTPRequestHandler):
                          "ai": h.ai().ok},
                 # The provider and model are settings, not secrets - the panel
                 # that shows generated text has to be able to name what wrote it.
-                "ai": {"provider": h.cfg("aiProvider") or "none", "model": h.ai().model,
+                "ai": {"provider": h.cfg("aiProvider") or "none",
+                       "model": h.cfg("aiModel") or None,
+                       # The label is the model's name in words, and is absent
+                       # rather than defaulted when nothing has been chosen.
+                       "label": (ai.Client(None, "x", h.cfg("aiModel")).label
+                                 if h.cfg("aiModel") else None),
                        "calls": h.ai_calls(), "limit": h.ai_ceiling(),
-                       "providers": {k: v["label"] for k, v in ai.PROVIDERS.items()}},
+                       "providers": dict(ai.PROVIDERS), "models": ai.catalogue(),
+                       "default": ai.DEFAULT_MODEL},
                 "picklistLocked": h.pin_set(),
                 "ourTeam": h.cfg("ourTeam"),
                 "status": h.status,
@@ -1462,9 +1474,23 @@ class Handler(BaseHTTPRequestHandler):
                 }, 403)
             for k in ("eventKey", "tbaKey", "nexusKey", "nexusToken", "eventLevel", "ourTeam",
                       "frcEventsUser", "frcEventsToken", "lovatKey",
-                      "aiProvider", "aiKey", "aiModel", "aiCallLimit"):
+                      "aiProvider", "aiKey", "aiCallLimit"):
                 if k in body:
                     h.store.set(k, body[k])
+            # The Setup page sends one value for both, as "provider:model", so
+            # the two can never be saved disagreeing with each other. A bare id
+            # typed by hand still resolves.
+            if "aiModel" in body:
+                raw = (body["aiModel"] or "").strip()
+                provider, _, model = raw.rpartition(":")
+                model = model.strip()
+                if model.lower() in ("", "none"):
+                    h.store.set("aiModel", "")
+                    h.store.set("aiProvider", "none")
+                else:
+                    h.store.set("aiModel", model)
+                    h.store.set("aiProvider",
+                                provider.strip() or ai.provider_for(model) or "none")
             if "strategyPin" in body:
                 h.set_pin(body["strategyPin"])
             if body.get("eventKey"):
@@ -1693,7 +1719,7 @@ class Handler(BaseHTTPRequestHandler):
             rows = [r for r in (_ai_team_payload(t) for t in known) if r]
             return self._ai_send(None, AI_ASK_TASK,
                                  json.dumps({"question": question, "teams": rows},
-                                            sort_keys=True), 900)
+                                            sort_keys=True), AI_ASK_TOKENS)
         else:
             return self.send_error(404, "Not found")
 
@@ -1708,7 +1734,7 @@ class Handler(BaseHTTPRequestHandler):
         if body.get("peek"):
             return self._json({"configured": True, "text": None, "peek": True,
                                "stale": bool(cached.get("text"))})
-        return self._ai_send(cache, system, user, 1400, stamp)
+        return self._ai_send(cache, system, user, AI_PANEL_TOKENS, stamp)
 
     def _ai_send(self, cache, task, user, max_tokens, stamp=None):
         h = Handler.hub
@@ -1717,12 +1743,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"configured": True, "text": None,
                                "reason": f"answer ceiling reached ({h.ai_ceiling()}) - "
                                          "raise the limit in Setup"})
-        text = client.ask(ai.GROUND_RULES + "\n\n" + task, user, max_tokens)
+        text, reason = client.ask(ai.GROUND_RULES + "\n\n" + task, user, max_tokens)
         if not text:
             # Offline at a venue is the normal case, not an error worth a dialog.
-            return self._json({"configured": True, "text": None,
-                               "reason": "the model could not be reached"})
-        out = {"text": text, "provider": client.provider, "model": client.model,
+            # The reason separates that from an answer that was cut off or
+            # declined, which need different things from the person reading it.
+            return self._json({"configured": True, "text": None, "reason": reason})
+        out = {"text": text, "provider": client.provider, "model": client.label,
                "at": time.time(), "stamp": stamp}
         if cache:
             h.store.set(cache, out)
