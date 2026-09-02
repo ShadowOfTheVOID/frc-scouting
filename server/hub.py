@@ -1350,12 +1350,11 @@ class Handler(BaseHTTPRequestHandler):
                          "ai": h.ai().ok},
                 # The provider and model are settings, not secrets - the panel
                 # that shows generated text has to be able to name what wrote it.
-                "ai": {"provider": h.cfg("aiProvider") or "none",
-                       "model": h.cfg("aiModel") or None,
-                       # The label is the model's name in words, and is absent
-                       # rather than defaulted when nothing has been chosen.
-                       "label": (ai.Client(None, "x", h.cfg("aiModel")).label
-                                 if h.cfg("aiModel") else None),
+                # The effective model, not the stored one: a hub that has
+                # never picked gets the default, and the page has to show what
+                # would actually be used.
+                "ai": {"provider": h.ai().provider, "model": h.ai().model or None,
+                       "label": h.ai().label,
                        "calls": h.ai_calls(), "limit": h.ai_ceiling(),
                        "providers": dict(ai.PROVIDERS), "models": ai.catalogue(),
                        "default": ai.DEFAULT_MODEL},

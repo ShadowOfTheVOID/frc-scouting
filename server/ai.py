@@ -50,9 +50,14 @@ BY_ID = {m[0]: m for m in MODELS}
 PROVIDERS = {"anthropic": "Claude (Anthropic)", "gemini": "Gemini (Google)",
              "openai": "OpenAI"}
 
-#: What the Setup page starts on. Not a fallback: a hub with no model chosen
-#: has the AI features off, and must not quietly behave as though it picked one.
+#: The default, in both senses: what the Setup page starts on, and what a hub
+#: that has a key but has never picked a model uses. Turning the features off
+#: is a deliberate choice - the `none` option, which stores `aiProvider` as
+#: "none" - and not the same thing as never having chosen.
 DEFAULT_MODEL = "claude-opus-5"
+
+#: What `aiProvider` holds when a lead has picked "none — no AI features".
+OFF = "none"
 
 #: Reasoning is on by default on every model in the list above, and the tokens
 #: it spends come out of the same budget as the answer.  Left alone, Gemini
@@ -122,11 +127,17 @@ def catalogue():
 
 class Client:
     def __init__(self, provider, key, model=None):
+        stored = (provider or "").strip().lower()
         self.model = (model or "").strip()
+        # Never chosen falls back to the default; chosen "none" stays off, even
+        # with a key sitting there. Those are different states and conflating
+        # them would either ignore the off switch or leave a keyed hub inert.
+        if not self.model and stored != OFF:
+            self.model = DEFAULT_MODEL
         # A stored provider that disagrees with the model loses: the model is
         # what the request is actually built for.
         self.provider = ((provider_for(self.model) if self.model else None)
-                         or (provider or "").strip().lower() or "none")
+                         or stored or OFF)
         self.key = (key or "").strip()
         self.down_until = 0.0
 

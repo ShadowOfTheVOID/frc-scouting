@@ -145,9 +145,16 @@ function buildModelPicker(ai) {
   html += opt('other', 'other — type a model id');
   sel.innerHTML = html;
 
-  const listed = (ai.models || []).some((m) => m.id === ai.model);
-  if (ai.model && listed) sel.value = `${ai.provider}:${ai.model}`;
-  else if (ai.model) { sel.value = 'other'; $('#aiOther').value = ai.model; }
+  // The hub reports the model it would actually use, which on a fresh install
+  // is the default rather than nothing — so this lands on Claude Opus 5, and a
+  // lead who only wants to paste a key never has to touch the list. Choosing
+  // "none" is a different state from never having chosen, and stays chosen.
+  const model = ai.provider === 'none' ? '' : (ai.model || ai.default);
+  // The row owns the provider half of the value; taking it from anywhere else
+  // is how you end up selecting an option that does not exist.
+  const row = (ai.models || []).find((m) => m.id === model);
+  if (row) sel.value = `${row.provider}:${row.id}`;
+  else if (model) { sel.value = 'other'; $('#aiOther').value = model; }
   else sel.value = 'none';
   const syncOther = () => $('#aiOtherRow').classList.toggle('hide', sel.value !== 'other');
   sel.onchange = syncOther;

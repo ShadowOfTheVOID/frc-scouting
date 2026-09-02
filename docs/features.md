@@ -446,7 +446,7 @@ Entered at `/` on the hub laptop. All keys are free and all are optional.
 | **Nexus webhook token** | Only if you registered a push webhook. |
 | **FRC Events** | The official result a few minutes before TBA posts it. Does not feed the solver. |
 | **Lovat API key** | Other teams' scouting for this event. Your scouting lead makes one in the Lovat Dashboard under Settings → API keys; it starts `lvt-`, and your team has to be verified on Lovat first. Polled once every five minutes — Lovat allows one request every three seconds per key, so the hub stays well inside it. The export is scoped to what your Lovat account is allowed to see, so a short list is a setting on their side, not a failure on ours. |
-| **AI model** | One list, grouped Claude / Gemini / OpenAI, each option priced per million tokens. Picking a model picks the company that makes it, so there is no provider field to get wrong. *none* is the default and turns the three panels below off entirely. **other** takes a typed model id for anything released after this list was written — the name decides where it is sent. |
+| **AI model** | One list, grouped Claude / Gemini / OpenAI, each option priced per million tokens. Picking a model picks the company that makes it, so there is no provider field to get wrong. Starts on **Claude Opus 5**, so pasting a key is enough — you never have to touch the list. *none* turns the three panels below off entirely, and stays off even with a key in the box. **other** takes a typed model id for anything released after this list was written; the name decides where it is sent. |
 | **AI key** | The key for whoever makes the model you picked. |
 | Statbotics | EPA. No key needed. |
 

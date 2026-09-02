@@ -101,7 +101,8 @@ behind every claim, and it never changes a number or the picklist order. If you 
 
 Pick from one dropdown, grouped Claude, then Gemini, then OpenAI, with the price beside each
 name. Picking the model picks the company, so the key you paste underneath is just that
-company's key — there is nothing to match up. Any of them will do this job; the list spans a
+company's key — there is nothing to match up. It starts on **Claude Opus 5**, so if that suits
+you, pasting a key is the whole job. Any of them will do this job; the list spans a
 50× price range and the cheap end is genuinely fine for summarising scout notes. An answer
 costs somewhere between a fraction of a cent and a few cents depending on which you pick, and
 only ever happens when somebody presses a button.

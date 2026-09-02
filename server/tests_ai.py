@@ -61,8 +61,17 @@ def test_routing():
                 and ai.provider_for("gpt-9") == "openai")
     ok &= check("a name belonging to nobody routes nowhere, rather than guessing",
                 ai.provider_for("llama-4") is None and ai.provider_for("") is None)
-    ok &= check("no model chosen means the features are off, not defaulted on",
-                ai.Client("anthropic", "a-real-key", "").ok is False)
+    # "Never chosen" and "chosen none" are different states: the first should
+    # just work on the default, the second is an off switch that a key sitting
+    # in the box must not override.
+    never = ai.Client(None, "a-real-key", "")
+    ok &= check("a key with no model yet gets the default, Claude Opus 5",
+                never.ok and never.model == "claude-opus-5" == ai.DEFAULT_MODEL,
+                f"({never.model})")
+    ok &= check("choosing none stays off, key or no key",
+                ai.Client("none", "a-real-key", "").ok is False)
+    ok &= check("and no key is still off, whatever the model",
+                ai.Client(None, "", "claude-opus-5").ok is False)
     ok &= check("a stored provider that disagrees with the model loses",
                 ai.Client("openai", "k", "claude-opus-5").provider == "anthropic")
     ok &= check("the picker list is grouped Claude, then Gemini, then OpenAI",
