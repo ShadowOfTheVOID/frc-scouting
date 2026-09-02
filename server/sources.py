@@ -19,6 +19,7 @@ TBA_BASE = "https://www.thebluealliance.com/api/v3"
 STATBOTICS_BASE = "https://api.statbotics.io/v3"
 NEXUS_BASE = "https://frc.nexus/api/v1"
 FRC_EVENTS_BASE = "https://frc-api.firstinspires.org/v3.0"
+LOVAT_BASE = "https://api.lovat.app/v1"
 
 USER_AGENT = "frc-rebuilt-scouting/1.0 (+https://frc.nexus)"
 _ctx = ssl.create_default_context()
@@ -46,7 +47,12 @@ class _Cache:
 CACHE = _Cache()
 
 
-def _request(url, headers=None, timeout=12, use_etag=False, method="GET", data=None):
+def _request(url, headers=None, timeout=12, use_etag=False, method="GET", data=None, raw=False):
+    """`raw` returns the decoded body as text instead of parsed JSON.
+
+    Lovat exports CSV, and it deserves the same gzip / ETag / timeout handling
+    as every other source rather than a second copy of this function.
+    """
     headers = dict(headers or {})
     headers.setdefault("User-Agent", USER_AGENT)
     headers.setdefault("Accept-Encoding", "gzip")
@@ -58,10 +64,13 @@ def _request(url, headers=None, timeout=12, use_etag=False, method="GET", data=N
     req = urllib.request.Request(url, headers=headers, method=method, data=data)
     try:
         with urllib.request.urlopen(req, timeout=timeout, context=_ctx) as res:
-            raw = res.read()
+            data_bytes = res.read()
             if res.headers.get("Content-Encoding") == "gzip":
-                raw = gzip.GzipFile(fileobj=io.BytesIO(raw)).read()
-            body = json.loads(raw.decode("utf-8")) if raw else None
+                data_bytes = gzip.GzipFile(fileobj=io.BytesIO(data_bytes)).read()
+            if raw:
+                body = data_bytes.decode("utf-8", "replace") if data_bytes else None
+            else:
+                body = json.loads(data_bytes.decode("utf-8")) if data_bytes else None
             if use_etag:
                 CACHE.put(url, res.headers.get("ETag"), body)
             return body, res.status
@@ -230,3 +239,52 @@ class FRCEvents:
 
     def scores(self, season, event, level="qual"):
         return self._get(f"/{season}/scores/{event}/{level}")
+
+
+# --------------------------------------------------------------- Lovat
+
+class Lovat:
+    """Other teams' scouting, from https://lovat.app.
+
+    Auth is an API key the scouting lead mints in the Lovat Dashboard; it starts
+    with `lvt-` and rides on `Authorization: Bearer`.  Lovat rate-limits a key to
+    one request every three seconds and 403s a team that has not verified its
+    email, so a failure here backs off rather than hammering the key - the same
+    shape as Statbotics.
+    """
+
+    #: Lovat allows one request per three seconds per key; a rejection means we
+    #: sit out five minutes rather than burn the team's quota re-asking.
+    BACKOFF_SECONDS = 300
+
+    def __init__(self, key):
+        self.key = (key or "").strip()
+        self.down_until = 0.0
+
+    @property
+    def ok(self):
+        return bool(self.key)
+
+    def report_csv(self, tournament_key):
+        """Every scout report at one tournament, one row per team per match.
+
+        Returns CSV text, or None for "we do not know" - no key, rate limited,
+        an unverified team, or an event Lovat has nothing for.
+        """
+        if not (self.ok and tournament_key):
+            return None
+        if time.time() < self.down_until:
+            return None
+        q = urllib.parse.urlencode({"tournamentKey": tournament_key})
+        body, status = _request(
+            f"{LOVAT_BASE}/analysis/reportcsv?{q}",
+            {"Authorization": f"Bearer {self.key}", "Accept": "text/csv"},
+            use_etag=True, raw=True, timeout=20,
+        )
+        if body is None:
+            # 429 (rate limited), 403 (team not verified) and 401 (bad key) all
+            # mean the next few requests would fail the same way.
+            if status in (401, 403, 429):
+                self.down_until = time.time() + self.BACKOFF_SECONDS
+            return None
+        return body

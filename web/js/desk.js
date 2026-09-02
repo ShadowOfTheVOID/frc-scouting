@@ -20,7 +20,7 @@ let PICK_MODE = 'first';
 const activeWeights = () => (PICK_MODE === 'first' ? WEIGHTS : WEIGHTS2);
 
 const RANK_COLS = '56px minmax(120px,1fr) 84px 74px 52px 44px 86px';
-const ALL_COLS  = '62px 56px minmax(160px,1fr) 84px 74px 62px 60px 62px 62px 56px 52px 64px';
+const ALL_COLS  = '62px 56px minmax(160px,1fr) 84px 74px 62px 60px 62px 62px 56px 52px 70px 64px';
 
 // ------------------------------------------------------------------ bits
 function climbCell(t) {
@@ -218,7 +218,8 @@ let sortKey = 'fuel', sortDir = -1;
 const ALL_HEAD = [
   ['rank', 'RANK', 2], ['team', 'TEAM', 0], ['name', 'NAME', 0], ['fuel', 'FUEL/MATCH', 1],
   ['climb', 'CLIMB', 1], ['epa', 'EPA', 1], ['tower', 'TOWER', 1], ['stock', 'STOCK', 1],
-  ['waste', 'WASTED', 1], ['died', 'DIED', 1], ['drv', 'DRIVER', 1], ['n', 'MATCHES', 1],
+  ['waste', 'WASTED', 1], ['died', 'DIED', 1], ['drv', 'DRIVER', 1],
+  ['lovat', 'LOVAT', 1], ['n', 'MATCHES', 1],
 ];
 function sortVal(t, k) {
   switch (k) {
@@ -233,13 +234,33 @@ function sortVal(t, k) {
     case 'waste': return -(t.observed.wastedFuelPct ?? 999);
     case 'died': return -t.observed.diedRate;
     case 'drv': return t.observed.driver ?? 0;
+    case 'lovat': return (t.lovat && t.lovat.avgFuel) ?? -1;
     case 'n': return t.matchesScouted;
     default: return 0;
   }
 }
+/**
+ * Lovat — other teams' scouting, kept in its own column on purpose.
+ *
+ * It is not our data and it is not verified, so it never merges into the fuel
+ * estimate beside it. Blank means nobody uploaded that robot to Lovat, which
+ * is a different thing from a zero.
+ */
+function lovatN(t) { return (t.lovat && t.lovat.matches) || 0; }
+// Like teamCounts, but the labels are free text from another team's app.
+function teamRoles(map) {
+  const rows = Object.entries(map || {}).sort((a, b) => b[1] - a[1]);
+  if (!rows.length) return '—';
+  return rows.slice(0, 3).map(([r, n]) => `${esc(r)}${n > 1 ? ` \u00d7${n}` : ''}`).join(' · ');
+}
+function lovatCell(t) {
+  if (!lovatN(t) || t.lovat.avgFuel == null) return '<span class="band">—</span>';
+  return `${Math.round(t.lovat.avgFuel)} <span class="band">n${lovatN(t)}</span>`;
+}
+
 function renderTeams() {
   if (!ANALYTICS) return;
-  const rows = Object.values(ANALYTICS.teams).filter((t) => t.matchesScouted);
+  const rows = Object.values(ANALYTICS.teams).filter((t) => t.matchesScouted || lovatN(t));
   rows.sort((a, b) => (sortVal(a, sortKey) - sortVal(b, sortKey)) * sortDir);
   $('#allHead').style.gridTemplateColumns = ALL_COLS;
   $('#allHead').innerHTML = ALL_HEAD.map(([k, l, n]) =>
@@ -256,7 +277,7 @@ function renderTeams() {
       <span class="num">${Math.round(t.observed.stockpileRate)}%</span>
       <span class="num">${t.observed.wastedFuelPct == null ? '—' : Math.round(t.observed.wastedFuelPct) + '%'}</span>
       <span class="num">${Math.round(t.observed.diedRate)}%</span>
-      <span class="num">${t.observed.driver ?? '—'}</span>
+      <span class="num">${lovatCell(t)}</span>
       <span class="num">${t.matchesScouted}</span>
     </div>`).join('') || '<div class="empty">No scouted teams yet.</div>';
 
@@ -488,6 +509,11 @@ function renderPicklist() {
   $('#dnpList').innerHTML = [...DNP].length
     ? [...DNP].map((n) => `<div class="kv"><span>${n}</span><b>do not pick</b></div>`).join('')
     : '<div class="hint">nobody flagged</div>';
+  // The order is the board's; this only ever explains it.
+  const order = ranked().slice(0, 10).map(({ t }) => t.team);
+  peekAi('#pkWhyBody', 'picklist', { order }, 'Not written yet.');
+  wireAi('#pkWhyGo', '#pkWhyBody', 'picklist', () => ({ order }), 'Not written yet.');
+
   const reset = $('#pkReset');
   if (reset) {
     reset.classList.toggle('hide', !(CAN_EDIT && activeOrder().length));
@@ -857,6 +883,7 @@ function renderTeamDetail() {
   }
   const pit = ((STATE && STATE.pitEntries) || []).find((p) => p.team === openTeam);
   const o = t.observed, e = t.exact, es = t.estimated;
+  const lv = t.lovat || {}, lvN = lovatN(t);
   $('#tdMain').innerHTML = `
     <div style="display:flex;align-items:flex-end;gap:14px">
       <div style="font:700 54px/.9 'Barlow Condensed',sans-serif">${t.team}</div>
@@ -893,6 +920,32 @@ function renderTeamDetail() {
         <div class="kv"><span>driver</span><b>${o.driver ?? '—'} / 5</b></div>
         <div class="kv"><span>average preload</span><b>${o.avgPreload ?? 'not asked'}</b></div>
       </div></div>
+    ${lvN ? `
+    <div class="tbl"><div class="cap"><span class="t">FROM LOVAT</span>
+      <span class="n">other teams' scouts — not ours, and not verified</span></div>
+      <div style="padding:6px 16px 12px">
+        <div class="kv"><span>matches uploaded</span><b>${lvN} · ${lv.scouters || '?'} scout${lv.scouters === 1 ? '' : 's'}</b></div>
+        <div class="kv"><span>fuel / match</span><b>${lv.avgFuel ?? '—'}</b></div>
+        <div class="kv"><span>fuel / second</span><b>${lv.fuelPerSec ?? '—'}</b></div>
+        <div class="kv"><span>accuracy</span><b>${lv.accuracy == null ? '—' : lv.accuracy}</b></div>
+        <div class="kv"><span>best climb seen</span><b>${esc(lv.bestClimb || '—')}${
+          lv.autoClimbRate == null ? '' : ` · auto ${Math.round(lv.autoClimbRate)}%`}</b></div>
+        <div class="kv"><span>driver</span><b>${lv.driver ?? '—'}</b></div>
+        <div class="kv"><span>feeding</span><b>${lv.feedSecs == null ? '—' : lv.feedSecs + 's/match'}</b></div>
+        <div class="kv"><span>defence</span><b>${lv.defenseSecs == null ? '—' : lv.defenseSecs + 's/match'}${
+          lv.defenseEffectiveness == null ? '' : ` · effect ${lv.defenseEffectiveness}`}</b></div>
+        <div class="kv"><span>roles</span><b>${teamRoles(lv.roles)}</b></div>
+        ${(lv.unmatched || []).length ? `<div class="hint" style="margin-top:6px">${
+          lv.unmatched.length} row${lv.unmatched.length > 1 ? 's' : ''} we could not place on our
+          schedule (${esc(lv.unmatched.join(', '))}) — counted here, not joined to a match.</div>` : ''}
+      </div></div>` : ''}
+    <div class="tbl"><div class="cap"><span class="t">WHAT THE NOTES ADD UP TO</span>
+      <span class="n">generated — a reading of the notes below, not a measurement</span></div>
+      <div style="padding:6px 16px 12px" id="aiNotesBody"></div>
+      <div style="padding:0 16px 12px"><button id="aiNotesGo"
+        style="padding:8px 12px;border-radius:8px;background:transparent;border:1px solid var(--btn);
+        color:var(--t4);font:700 10.5px Barlow,sans-serif;letter-spacing:.12em;cursor:pointer"
+        >SUMMARISE THE NOTES</button></div></div>
     <div class="tbl"><div class="cap"><span class="t">WHAT SCOUTS WROTE</span>
       <span class="n">${t.notes.length ? `${t.notes.length} note${t.notes.length > 1 ? 's' : ''}` : 'nothing typed'}</span></div>
       <div style="padding:6px 16px 12px">
@@ -902,7 +955,15 @@ function renderTeamDetail() {
             <b style="white-space:nowrap">${esc(shortCode(matchLabel(nt.matchKey)))} · ${esc(nt.scoutId || '?')}</b>
           </div>`).join('')
           : '<div class="hint">Scouts can type a note on the after-the-buzzer screen.</div>'}
+        ${(lv.notes || []).map((nt) => `
+          <div class="kv" style="align-items:flex-start;opacity:.78">
+            <span style="flex:1">${esc(nt.note)}</span>
+            <b style="white-space:nowrap">${esc(nt.match || '?')} · ${esc(nt.scouter || '?')} · lovat</b>
+          </div>`).join('')}
       </div></div>`;
+  const team = openTeam;
+  peekAi('#aiNotesBody', `notes/${team}`, {}, 'Not summarised yet.');
+  wireAi('#aiNotesGo', '#aiNotesBody', `notes/${team}`, () => ({}), 'Not summarised yet.');
   const p = (pit && pit.payload) || null;
   $('#tdSide').innerHTML = `<div class="eyebrow">FROM THE PIT</div>` + (p ? `
     <div class="kv"><span>drivetrain</span><b>${esc(p.drivetrain || '—')}</b></div>
@@ -917,6 +978,76 @@ function renderTeamDetail() {
       ${(p.photos || []).map((id) => `<img src="/api/photo/${id}" style="width:88px;height:88px;object-fit:cover;border-radius:8px;border:1px solid var(--btn)">`).join('')}
     </div>`
     : '<div class="hint">Not pit scouted yet.</div>');
+}
+
+// ══════════════════════════════════════════════════════════════════ AI
+/**
+ * Generated text, and how it is allowed to appear.
+ *
+ * Three rules the markup enforces rather than merely mentions: it is always
+ * labelled with the model that wrote it, it is never rendered where a
+ * measurement goes, and it is never fetched without a button press — opening a
+ * page must not spend the team's API credit. A peek reads the hub's cache and
+ * stops there.
+ */
+async function aiCall(path, body) {
+  try {
+    return await net.api('/api/ai/' + path,
+                         { method: 'POST', body: JSON.stringify(body || {}) });
+  } catch (e) {
+    if (e.locked) return { configured: true, text: null, reason: 'strategy passcode required' };
+    return { configured: true, text: null, reason: 'hub unreachable' };
+  }
+}
+
+function aiBlock(res, idle) {
+  if (!res) return `<div class="hint">${idle}</div>`;
+  if (res.configured === false) {
+    return '<div class="hint">No AI model chosen — pick one in Setup on the hub machine.</div>';
+  }
+  if (res.text) {
+    const when = res.at ? new Date(res.at * 1000).toLocaleTimeString() : '';
+    return `<div style="white-space:pre-wrap;font:400 12.5px/1.55 Barlow,sans-serif;color:var(--t1)"
+      >${esc(res.text)}</div>
+      <div class="hint" style="margin-top:8px">generated by ${esc(res.model || res.provider || 'the model')}${
+        when ? ` · ${esc(when)}` : ''}${res.cached ? ' · cached' : ''} — read it against the numbers above</div>`;
+  }
+  if (res.peek) {
+    return `<div class="hint">${res.stale ? 'The data moved since this was last written.' : idle}</div>`;
+  }
+  return `<div class="hint">${esc(res.reason || 'unavailable')}</div>`;
+}
+
+function wireAi(btnSel, bodySel, path, bodyFn, idle) {
+  const btn = $(btnSel);
+  if (!btn) return;
+  btn.onclick = async () => {
+    const label = btn.textContent;
+    btn.textContent = 'THINKING…'; btn.disabled = true;
+    $(bodySel).innerHTML = aiBlock(await aiCall(path, { ...bodyFn(), force: true }), idle);
+    btn.textContent = label; btn.disabled = false;
+  };
+}
+
+async function peekAi(bodySel, path, body, idle) {
+  const el = $(bodySel);
+  if (!el) return;
+  el.innerHTML = `<div class="hint">${idle}</div>`;
+  el.innerHTML = aiBlock(await aiCall(path, { ...(body || {}), peek: true }), idle);
+}
+
+function wireAsk() {
+  const box = $('#askBox'), go = $('#askGo');
+  if (!box || !go) return;
+  const ask = async () => {
+    const question = box.value.trim();
+    if (!question) return;
+    go.textContent = 'THINKING…'; go.disabled = true;
+    $('#askOut').innerHTML = aiBlock(await aiCall('ask', { question }), '');
+    go.textContent = 'ASK'; go.disabled = false;
+  };
+  go.onclick = ask;
+  box.onkeydown = (ev) => { if (ev.key === 'Enter') ask(); };
 }
 
 // ═══════════════════════════════════════════════════════════════ SEATS
@@ -1062,7 +1193,8 @@ async function main() {
   };
   await loadPicklistState();
   await refresh();
-  for (const t of ['nexus', 'results', 'scout', 'alliances', 'calibration', 'matchStatus', 'seats', 'matchStart']) net.on(t, refresh);
+  for (const t of ['nexus', 'results', 'scout', 'alliances', 'calibration', 'matchStatus', 'seats', 'matchStart', 'lovat']) net.on(t, refresh);
+  wireAsk();
   setInterval(refresh, 30000);
   // the crew board is the lead's live view; keep it fresher than the rest
   setInterval(async () => {

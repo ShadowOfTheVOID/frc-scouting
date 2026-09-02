@@ -195,7 +195,8 @@ out with every bonus. That last one is a ceiling, not a forecast, and says so.
 ### TEAMS
 
 Every scouted team, sortable on any column: rank, fuel per match with its band, climb, EPA,
-tower points, stockpile rate, wasted fuel, died rate, driver rating, matches scouted, and a
+tower points, stockpile rate, wasted fuel, died rate, driver rating, **Lovat** fuel with the
+number of matches behind it, matches scouted, and a
 **CONFIDENCE** bar. Confidence is a property of the data on that robot — how many matches, and
 how tight the band is relative to the mean — not a judgement of anybody. Click a row for team
 detail.
@@ -213,6 +214,10 @@ back. Teams are crossed off automatically as they are picked. **DNP** flags a te
 do-not-pick.
 
 Anyone may look. Changing it needs the strategy passcode.
+
+**WHY THIS ORDER** sits above the board and is generated (see [AI](#ai) below). It explains the
+order the weights and your dragging already produced — it never reorders anything, and it is
+labelled with the model that wrote it.
 
 ### HEALTH
 
@@ -261,13 +266,18 @@ Two warnings fire here:
 Reached by clicking a team. Fuel, climb, tower points, reliability, EPA and OPR as tiles; then
 what scouts saw — stockpiling, wasted fuel, feeding, defence in **both** directions (who this
 robot defends, and who defends it), usual start zone, auto failures, fouls, driver rating,
-average preload — then every note anyone typed about them, and their pit scouting with photos.
+average preload — then **FROM LOVAT** if other teams scouted them, then **WHAT THE NOTES ADD UP
+TO** (generated, see [AI](#ai)), then every note anyone typed about them, and their pit scouting
+with photos.
+
+Lovat notes appear in the same list as ours, dimmed and tagged `· lovat`, so you can always see
+whose scout wrote a line.
 
 ---
 
 ## Where the numbers come from
 
-Four sources, kept deliberately separate, because mixing them is how a picklist ends up
+Five sources, kept deliberately separate, because mixing them is how a picklist ends up
 confidently wrong. `server/analytics.py` enforces the split.
 
 | Block | Source | Trust |
@@ -276,6 +286,7 @@ confidently wrong. `server/analytics.py` enforces the split.
 | `estimated` | our solver | Estimated, **always** carries a band. Fuel per match, consistency, cycle rate. |
 | `observed` | the scouts | Reliable in kind, not in magnitude — yes/no answers, ratings, counts. |
 | `epa` | Statbotics | An independent outside read, which is why it earns a place beside a number we produced ourselves. |
+| `lovat` | other teams' scouts, via [lovat.app](https://lovat.app) | Somebody else's scouting, unverified, collected to somebody else's standard. Shown for comparison and **fed into nothing** — not the solver, not the picklist, not any other block. |
 
 A missing source reads as **unknown**, never as zero. No API key means a blank column, not a
 row of noughts.
@@ -296,6 +307,65 @@ TBA at all. That is a real comparison, and it is what makes "we are running 10% 
 statement about the scouting rather than about arithmetic.
 
 The maths behind the solver itself is in [how-it-works.md](how-it-works.md).
+
+---
+
+## AI
+
+Optional, off unless you set a provider and a key in Setup. Three panels, all of them text
+beside the numbers and never a number of their own:
+
+| Panel | Where | What it does |
+|---|---|---|
+| **WHAT THE NOTES ADD UP TO** | TEAM DETAIL | Reads that team's notes — ours and Lovat's — and names the recurring themes, citing the matches and scouts behind each, and flagging where two scouts disagree. |
+| **WHY THIS ORDER** | PICKLIST | One sentence per team explaining the board you already have, then a first-pick and second-pick argument. |
+| **ASK THE DATA** | CREW, in the side column | One question, answered from the team records on this hub. |
+
+### What it is allowed to do
+
+The whole point is to surface context that is **already in the data** — which match a claim
+rests on, which scout said it, which block a number came from — and to add nothing. That is
+enforced in four places rather than merely hoped for:
+
+- **The prompt is closed.** Every system prompt (`server/ai.py`, `GROUND_RULES`) tells the model
+  it has no knowledge of these teams beyond the JSON in front of it, must never state a number
+  that is not in that JSON, must cite the block or the match-and-scout behind every claim, must
+  say "not enough data" rather than fill a gap, and must report a disagreement between scouts
+  rather than resolve it.
+- **The payload is small and labelled.** The hub sends a trimmed per-team record with the block
+  names attached, never the raw entry table.
+- **Nothing is written back.** Answers are cached under an `ai:` key as generated text. No AI
+  output reaches the solver, the bands, the picklist order or a team record. Read it against the
+  panel beside it — that is what the citations are for.
+- **It is always labelled** with the model that wrote it and when.
+
+### Why an empty panel is never just "unavailable"
+
+Every model on the list reasons before it answers, and those reasoning tokens come out of the
+same budget as the answer. Left at its default a model can spend the entire allowance thinking
+and return nothing — which, reported as "unreachable", would send you hunting for a network
+fault that is not there. So the hub turns reasoning down to its low setting on every provider
+(`output_config.effort`, `reasoning_effort`, `thinkingConfig.thinkingLevel` — one per vendor,
+and each rejects the other two), gives the budget room, and reports the real cause: **the
+answer ran out of room** (press again), **the model declined to answer that**, or **the model
+could not be reached**, which is the only one that means the network.
+
+### What it costs, and who can spend it
+
+Generating always takes a button press. Opening a page only ever reads the cache, so walking
+the dashboard costs nothing. A cached answer regenerates by itself only when the data behind it
+changes; **SUMMARISE** / **EXPLAIN** forces a fresh one.
+
+An answer is a few thousand tokens. Across a whole regional that lands somewhere between a few
+cents and a couple of dollars depending on which model you picked — the list spans a 50×
+price range, and the cheapest end handles a note digest perfectly well.
+
+The routes are held to a stricter lock than the picklist, because they spend real money: you
+need the strategy passcode *and* a valid token, **or** you are sitting at the hub machine. With
+no passcode configured that means the hub machine only. There is also a per-event ceiling
+(250 answers by default, `aiCallLimit` to change it) and the SERVER tab shows the count.
+
+Cached answers live in the database, so once written they still read with the network gone.
 
 ---
 
@@ -375,6 +445,9 @@ Entered at `/` on the hub laptop. All keys are free and all are optional.
 | **Nexus** | Live queueing and match status, pit map, pit addresses, inspection, alliance selection. |
 | **Nexus webhook token** | Only if you registered a push webhook. |
 | **FRC Events** | The official result a few minutes before TBA posts it. Does not feed the solver. |
+| **Lovat API key** | Other teams' scouting for this event. Your scouting lead makes one in the Lovat Dashboard under Settings → API keys; it starts `lvt-`, and your team has to be verified on Lovat first. Polled once every five minutes — Lovat allows one request every three seconds per key, so the hub stays well inside it. The export is scoped to what your Lovat account is allowed to see, so a short list is a setting on their side, not a failure on ours. |
+| **AI model** | One list, grouped Claude / Gemini / OpenAI, each option priced per million tokens. Picking a model picks the company that makes it, so there is no provider field to get wrong. Starts on **Claude Opus 5**, so pasting a key is enough — you never have to touch the list. *none* turns the three panels below off entirely, and stays off even with a key in the box. **other** takes a typed model id for anything released after this list was written; the name decides where it is sent. |
+| **AI key** | The key for whoever makes the model you picked. |
 | Statbotics | EPA. No key needed. |
 
 ### Command line
@@ -417,10 +490,16 @@ Everything is JSON over plain HTTP. Useful if you want to drive another display 
 | `/api/seat`, `/api/unseat`, `/api/matchstart` | POST | Station claims and the shared clock. |
 | `/api/photo/<id>`, `/api/photos` | GET | Pit photos. |
 | `/api/refresh`, `/api/resolve` | POST | Force a poll, or re-solve one match. |
+| `/api/ai/notes/<team>` | POST | Note digest. `{"peek":true}` reads the cache without generating; `{"force":true}` regenerates. |
+| `/api/ai/picklist` | POST | Rationale for an order you send as `{"order":[team,…]}`. Same `peek` / `force`. |
+| `/api/ai/ask` | POST | `{"question":"…"}`. Never cached. |
 | `/api/discover` | GET | Every address the hub is reachable on. |
 | `/api/nexus/webhook` | POST | Nexus push, verified by `Nexus-Token`. |
 | `/api/stream` | GET | Server-sent events. |
 
+The AI routes need the strategy passcode or the hub machine, and answer `{"configured": false}`
+rather than an error when no provider is set.
+
 The stream pushes `nexus`, `matchStatus`, `matchStart`, `results`, `earlyScores`, `scout`,
-`solved`, `seats`, `picklist`, `rankings`, `epa` and `calibration`, so a client can react
-instead of polling.
+`solved`, `seats`, `picklist`, `rankings`, `epa`, `lovat` and `calibration`, so a client can
+react instead of polling.

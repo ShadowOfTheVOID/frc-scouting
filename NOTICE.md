@@ -13,6 +13,10 @@ identical at a venue with no internet. Only the latin subset is included.
 
 ## Bundled data
 
+`server/fixtures/lovat_report_example.csv` is a small hand-written file in the shape of Lovat's
+`GET /v1/analysis/reportcsv` export. It contains no real scouting data — the rows are invented
+to exercise the parser — and is used only by `server/tests_lovat.py`.
+
 `server/fixtures/nexus_pitmap_example.json` is the example response published in the
 [Nexus API docs](https://frc.nexus/api/v1/docs) for `GET /event/{eventKey}/map`. It is used
 only by `seed_demo.py` to generate a realistic offline demo event, and is replaced by live
@@ -28,7 +32,21 @@ This project reads from, and is grateful to:
 - **[The Blue Alliance](https://www.thebluealliance.com)** — official match results, per-window
   fuel counts, per-robot climb.
 - **[Statbotics](https://statbotics.io)** — EPA, shown alongside our own numbers.
+- **[Lovat](https://lovat.app)**, by FRC 8033 Highlander Robotics — other teams' scout reports
+  for the same event, read with the team's own API key and shown in a block of its own. The
+  endpoints used are documented by its open-source backend,
+  [HighlanderRobotics/lovat-server](https://github.com/HighlanderRobotics/lovat-server).
 - **[FIRST](https://www.firstinspires.org)** — the FRC Events API.
+
+## Optional AI providers
+
+The generated panels are off by default. When a provider is configured, the hub calls one of
+[Anthropic](https://www.anthropic.com), [OpenAI](https://openai.com) or
+[Google Gemini](https://ai.google.dev) over plain HTTPS with the team's own key. No vendor SDK
+is bundled or required, and nothing is sent to any of them unless somebody presses a button.
+What is sent is the trimmed per-team record described in
+[docs/features.md](docs/features.md#ai) — robot data, scout ids and scout notes; no other
+personal data.
 
 *FIRST®* and *FIRST® Robotics Competition* are registered trademarks of FIRST, which is not
 affiliated with and does not endorse this project.

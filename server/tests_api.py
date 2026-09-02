@@ -386,7 +386,8 @@ def test_config_scope(L):
     ok = True
     code, c = L.req("/api/config")
     ok &= check("config reports which keys are set",
-                code == 200 and c["keys"] == {"tba": False, "nexus": False, "frcEvents": False},
+                code == 200 and c["keys"] == {"tba": False, "nexus": False, "frcEvents": False,
+                                              "lovat": False, "ai": False},
                 f"({c['keys']})")
     L.req("/api/config", {"frcEventsUser": "someone", "frcEventsToken": "secret"})
     code, c = L.req("/api/config")
@@ -395,9 +396,81 @@ def test_config_scope(L):
     ok &= check("no key value is ever served back to a client",
                 "secret" not in json.dumps(c) and "frcEventsToken" not in c)
 
+    L.req("/api/config", {"lovatKey": "lvt-hunter2", "aiKey": "sk-hunter2",
+                          "aiModel": "anthropic:claude-opus-5"})
+    code, c = L.req("/api/config")
+    ok &= check("lovat and ai register as set", c["keys"]["lovat"] is True and c["keys"]["ai"] is True)
+    ok &= check("one field sets both the model and its provider",
+                c["ai"]["provider"] == "anthropic" and c["ai"]["model"] == "claude-opus-5"
+                and c["ai"]["label"] == "Claude Opus 5", f"({c['ai']})")
+    ok &= check("no key value is ever served back, ai included",
+                "hunter2" not in json.dumps(c))
+
+    # A model typed by hand after this list was written still has to route.
+    L.req("/api/config", {"aiModel": "gemini-4.0-imaginary"})
+    code, c = L.req("/api/config")
+    ok &= check("an unlisted model is routed by name, not rejected",
+                c["ai"]["provider"] == "gemini" and c["ai"]["model"] == "gemini-4.0-imaginary",
+                f"({c['ai']})")
+
+    # The picker is built from this list, so the order it arrives in is the
+    # order a scouting lead reads: Claude, then Gemini, then OpenAI.
+    seen = []
+    for m in c["ai"]["models"]:
+        if m["provider"] not in seen:
+            seen.append(m["provider"])
+    ok &= check("the model list is served for the picker, grouped Claude/Gemini/OpenAI",
+                seen == ["anthropic", "gemini", "openai"]
+                and all(m["id"] and m["label"] and m["price"] for m in c["ai"]["models"]),
+                f"({len(c['ai']['models'])} models, {seen})")
+
+    L.req("/api/config", {"aiModel": "none"})
+    code, c = L.req("/api/config")
+    ok &= check("choosing none turns it off rather than storing a fake model",
+                c["keys"]["ai"] is False and c["ai"]["provider"] == "none"
+                and c["ai"]["model"] is None, f"({c['ai']})")
+
     # Anything not on the allowlist must not become config.
     L.req("/api/config", {"somethingElse": "nope"})
     ok &= check("an unknown config field is ignored", L.store.get("somethingElse") is None)
+    return ok
+
+
+def test_ai_is_gated_and_grounded(L):
+    """The AI routes spend real money and must never be reachable by accident.
+
+    Nothing here calls a model: with no provider configured every route reports
+    that plainly, which is also the state most hubs run in.
+    """
+    ok = True
+    real_is_local = hub.Handler._is_local
+    try:
+        L.req("/api/config", {"aiModel": "none", "aiKey": "", "strategyPin": ""})
+        hub.Handler._is_local = lambda self: False
+        code, r = L.req("/api/ai/ask", {"question": "who feeds?"})
+        ok &= check("with no passcode set, a phone in the stands cannot spend the key",
+                    code == 403, f"(HTTP {code})")
+
+        hub.Handler._is_local = lambda self: True
+        code, r = L.req("/api/ai/ask", {"question": "who feeds?"})
+        ok &= check("the hub machine gets a plain 'no model chosen' answer, not an error",
+                    code == 200 and r.get("configured") is False, f"({r})")
+
+        L.req("/api/config", {"aiModel": "anthropic:claude-opus-5", "aiKey": "sk-test"})
+        code, r = L.req("/api/ai/ask", {})
+        ok &= check("an empty question is refused before any model is called",
+                    code == 200 and r.get("text") is None and "question" in (r.get("reason") or ""),
+                    f"({r})")
+        before = L.store.get("aiCalls") or 0
+        code, r = L.req("/api/ai/notes/6059", {"peek": True})
+        ok &= check("a peek never spends a call", (L.store.get("aiCalls") or 0) == before,
+                    f"({r})")
+        code, r = L.req("/api/ai/picklist", {"order": []})
+        ok &= check("an empty picklist is refused before any model is called",
+                    code == 200 and r.get("text") is None, f"({r})")
+    finally:
+        hub.Handler._is_local = real_is_local
+        L.req("/api/config", {"aiModel": "none", "aiKey": ""})
     return ok
 
 
@@ -654,6 +727,7 @@ def main():
                    test_picklist_lock, test_export_import_idempotent,
                    test_snapshot_and_restore, test_csv_export,
                    test_seats, test_match_clock, test_reconcile, test_config_scope,
+                   test_ai_is_gated_and_grounded,
                    test_nexus_tba_one_row, test_legacy_keys_migrate,
                    test_concurrent_writes, test_score_report,
                    test_scout_data_is_lead_only):

@@ -28,6 +28,17 @@ jobs:
       - name: HTTP surface
         run: python3 server/tests_api.py
 
+      # Lovat's export is somebody else's file format and it will drift. This
+      # parses a fixture off disk - no network, no key.
+      - name: Lovat import
+        run: python3 server/tests_lovat.py
+
+      # Every model on the picker reasons before it answers, out of the same
+      # token budget, and each vendor turns that down with a parameter the
+      # other two reject. Stubbed HTTP - no network, no key.
+      - name: AI adapter
+        run: python3 server/tests_ai.py
+
       # The schedule arrives from Nexus at a real event, under Nexus's own
       # labels, while results arrive from TBA under TBA's keys. They have to
       # land on one row. Seeding only TBA-shaped rows is what let a bug ship

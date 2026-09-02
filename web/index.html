@@ -72,9 +72,28 @@
             frc-events.firstinspires.org</div></div>
         <div class="f"><label>FRC EVENTS TOKEN</label>
           <input id="frcEventsToken" placeholder="authorization token" autocomplete="off"></div>
+        <div class="f"><label>LOVAT API KEY</label>
+          <input id="lovatKey" placeholder="lvt-…" autocomplete="off">
+          <div class="h">Other teams' scouting for this event. Your scouting lead makes a key
+            in the Lovat Dashboard (Settings → API keys); your team must be verified there
+            first. It is shown next to our own numbers, never mixed into them. lovat.app</div></div>
+        <div class="f"><label>AI MODEL</label>
+          <select id="aiModel"></select>
+          <div class="h">Summarises scout notes, explains the picklist and answers questions
+            about the event. It only ever reads the numbers already on this hub — it never
+            adds any, and nothing it writes is stored as data. Prices are per million tokens;
+            one answer is a few thousand.</div></div>
+        <div class="f hide" id="aiOtherRow"><label>MODEL ID</label>
+          <input id="aiOther" placeholder="e.g. claude-opus-5" autocomplete="off"
+            autocapitalize="off" autocorrect="off" spellcheck="false">
+          <div class="h">For a model released after this list was written. The name decides
+            which company it is sent to.</div></div>
+        <div class="f"><label>AI KEY</label>
+          <input id="aiKey" placeholder="api key for whoever makes the model above"
+            autocomplete="off"></div>
         <div class="f"><label>STRATEGY PASSCODE</label>
           <input id="strategyPin" placeholder="leave blank for no lock" autocomplete="off">
-          <div class="h">Gates the picklist. Shared, not personal — the hub stores only a hash
+          <div class="h">Gates the picklist and every AI answer. Shared, not personal — the hub stores only a hash
             of the code, never who used it. Changing it signs everyone out.</div></div>
         <div><button class="go" id="save">SAVE &amp; REFRESH</button></div>
         <div class="hint" id="status"></div>
@@ -93,25 +112,75 @@ try {
   $('#eventLevel').value = c.eventLevel || 'regional';
   const bits = [c.keys.tba ? 'TBA SET' : 'NO TBA KEY', c.keys.nexus ? 'NEXUS SET' : 'NO NEXUS KEY'];
   if (c.keys.frcEvents) bits.push('FRC EVENTS SET');
+  if (c.keys.lovat) bits.push('LOVAT SET');
+  bits.push(c.keys.ai ? `AI · ${(c.ai && c.ai.label) || 'ON'}` : 'NO AI');
+  buildModelPicker(c.ai || {});
   bits.push(c.multipliersFittedFrom ? `CALIBRATED · ${c.multipliersFittedFrom} WINDOWS` : 'PRIORS ONLY');
   bits.push(c.picklistLocked ? 'PICKLIST LOCKED' : 'PICKLIST OPEN');
   $('#sub').textContent = bits.join(' · ');
 } catch { $('#sub').textContent = 'HUB NOT REACHABLE'; }
 
+/**
+ * One list instead of a provider and a model that can disagree.
+ *
+ * Built from the hub's own catalogue so the models live in one place
+ * (server/ai.py) rather than in two. Each option carries `provider:id`, so
+ * picking a model picks the company that makes it — which is the only thing
+ * the two-field version ever asked the user to know.
+ */
+function buildModelPicker(ai) {
+  const sel = $('#aiModel');
+  const groups = new Map();
+  for (const m of ai.models || []) {
+    if (!groups.has(m.provider)) groups.set(m.provider, []);
+    groups.get(m.provider).push(m);
+  }
+  const opt = (value, text) => `<option value="${value}">${text}</option>`;
+  let html = opt('none', 'none — no AI features');
+  for (const [provider, models] of groups) {
+    html += `<optgroup label="${(ai.providers || {})[provider] || provider}">`;
+    for (const m of models) html += opt(`${provider}:${m.id}`, `${m.label} — ${m.price} per 1M`);
+    html += '</optgroup>';
+  }
+  html += opt('other', 'other — type a model id');
+  sel.innerHTML = html;
+
+  // The hub reports the model it would actually use, which on a fresh install
+  // is the default rather than nothing — so this lands on Claude Opus 5, and a
+  // lead who only wants to paste a key never has to touch the list. Choosing
+  // "none" is a different state from never having chosen, and stays chosen.
+  const model = ai.provider === 'none' ? '' : (ai.model || ai.default);
+  // The row owns the provider half of the value; taking it from anywhere else
+  // is how you end up selecting an option that does not exist.
+  const row = (ai.models || []).find((m) => m.id === model);
+  if (row) sel.value = `${row.provider}:${row.id}`;
+  else if (model) { sel.value = 'other'; $('#aiOther').value = model; }
+  else sel.value = 'none';
+  const syncOther = () => $('#aiOtherRow').classList.toggle('hide', sel.value !== 'other');
+  sel.onchange = syncOther;
+  syncOther();
+}
+
 $('#save').onclick = async () => {
   const body = { eventKey: $('#eventKey').value.trim(), eventLevel: $('#eventLevel').value,
                  ourTeam: $('#ourTeam').value.trim() };
-  for (const k of ['tbaKey','nexusKey','nexusToken','frcEventsUser','frcEventsToken']) {
+  for (const k of ['tbaKey','nexusKey','nexusToken','frcEventsUser','frcEventsToken','lovatKey','aiKey']) {
     const v = $('#'+k).value.trim(); if (v) body[k] = v;
   }
+  const picked = $('#aiModel').value;
+  body.aiModel = picked === 'other' ? $('#aiOther').value.trim() : picked;
   const pin = $('#strategyPin').value;
   if (pin !== '') body.strategyPin = pin.trim();
   $('#status').textContent = 'saving…';
   try {
     await net.api('/api/config', { method:'POST', body: JSON.stringify(body) });
     $('#status').textContent = 'Saved. Fetching event data…';
-    for (const k of ['tbaKey','nexusKey','nexusToken','frcEventsUser','frcEventsToken','strategyPin'])
+    for (const k of ['tbaKey','nexusKey','nexusToken','frcEventsUser','frcEventsToken',
+                     'lovatKey','aiKey','strategyPin'])
       $('#'+k).value = '';
+    // The model is a setting, not a secret: it stays on screen, re-read from
+    // the hub so the page shows what was actually saved.
+    try { buildModelPicker((await net.api('/api/config')).ai || {}); } catch { /* offline */ }
   } catch (e) { $('#status').textContent = 'Failed: ' + e.message; }
 };
 </script>
