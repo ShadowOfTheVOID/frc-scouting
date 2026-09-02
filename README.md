@@ -78,10 +78,27 @@ runs without any, just with less live data.
 | **The Blue Alliance** | official match results, per-robot climb | [thebluealliance.com/account](https://www.thebluealliance.com/account) |
 | **Nexus** | live queueing, match timing, pit map, alliance selection | [frc.nexus/api](https://frc.nexus/api) |
 | **FRC Events** | the official result a few minutes before TBA posts it | [frc-events.firstinspires.org](https://frc-events.firstinspires.org/services/API) |
+| **Lovat** | what other teams' scouts recorded about the same robots | [lovat.app](https://lovat.app) — see below |
+| **AI provider** | plain-English summaries of your scout notes | Claude, OpenAI or Gemini — see below |
 | Statbotics | EPA next to your own numbers | nothing to do — no key needed |
 
 The fuel numbers always come from The Blue Alliance, whichever other keys you set. FRC Events
 only gets you the result sooner.
+
+**Lovat** is another team's scouting app that a lot of teams use. If your team is registered and
+verified on Lovat, your scouting lead can make a key: open the Lovat Dashboard, go to
+**Settings → API keys**, add one, and copy it — it starts with `lvt-`. Paste that in and the hub
+pulls what Lovat has for your event every five minutes. It is shown in its own column and its
+own panel, clearly marked as other teams' scouting, and it never changes any of your own
+numbers. It is a second opinion, not a correction.
+
+**AI** is optional and off until you pick a provider and paste a key. It adds three things: a
+summary of what your scout notes add up to on each team, a plain-English explanation of the
+picklist you already built, and a question box on the CREW tab. It only ever reads the numbers
+already on this hub — it cannot look anything up, it is told to cite the match and the scout
+behind every claim, and it never changes a number or the picklist order. If you leave the
+provider on *none*, none of it appears. Answers cost a fraction of a cent each and only ever
+happen when somebody presses a button.
 
 Also set the **event key** (like `2026casf` — the code on frc.events or The Blue Alliance) and
 **our team** (6059). Click **SAVE & REFRESH**.
@@ -228,6 +245,8 @@ the fuel column.
 |---|---|---|
 | Phones cannot connect at all | Windows Firewall blocked it | Restart the server, click **Allow access** on **Private networks** |
 | A phone says it cannot reach the hub | out of range, or the laptop moved networks | Walk back toward the laptop. Data is safe; it sends itself |
+| An AI panel says "the model could not be reached" | no internet, or the key is wrong | it is safe to ignore — nothing else depends on it. Re-check the key at http://localhost:8080/ |
+| The LOVAT column is empty | no Lovat key, or nobody uploaded that robot | not a fault: blank means nobody scouted it there, which is not a zero |
 | Scouts see an old event's teams | event key not changed | http://localhost:8080/ on the laptop, set the new event key |
 | Fuel numbers look wrong for one team | a scout was on their own clock, or missed matches | Check the **HEALTH** tab — flagged matches are listed with the reason |
 | Every team's fuel looks too high, or too low | scouts are calling shooting harder or softer than it scores | **HEALTH** tab, ACCURACY panel — it says `running N% hot` or `cold`. Worth a word about the rate ladder; the solver corrects for it either way |

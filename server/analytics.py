@@ -4,10 +4,14 @@ Deliberately separates EXACT fields (straight from TBA, no estimation) from
 ESTIMATED ones (solver output, always carrying a band).  The picklist leans on
 the exact side; fuel volume only breaks ties.
 
-Four blocks per team: `exact` (TBA), `estimated` (our solver), `observed`
-(scout yes/no answers) and `epa` (Statbotics).  EPA is the only one from
-outside, which is exactly why it earns a place next to a number we produced
-ourselves.  Every block is null-safe: a missing source reads as unknown, never
+Five blocks per team: `exact` (TBA), `estimated` (our solver), `observed`
+(scout yes/no answers), `epa` (Statbotics) and `lovat` (other teams' scouts,
+pulled from lovat.app).  The last two are the ones from outside, which is
+exactly why they earn a place next to a number we produced ourselves - and
+exactly why they stay in their own blocks.  `lovat` in particular is somebody
+else's scouting, unverified and collected to somebody else's standard: it is
+shown for comparison and feeds nothing.  Neither the solver nor the picklist
+reads it.  Every block is null-safe: a missing source reads as unknown, never
 as zero.
 """
 import math
@@ -38,6 +42,7 @@ def event_summary(store, event_key, include_scouts=False):
     # (no key, or Statbotics down) and must read as "unknown", never as zero.
     rankings = store.get(f"rankings:{event_key}") or {}
     epa = store.get(f"epa:{event_key}") or {}
+    lovat_rows = store.get(f"lovat:{event_key}") or {}
     entries = store.scout_entries(event_key)
     solved = store.solved(event_key)
     teams = {t["team"]: t for t in store.teams(event_key)}
@@ -65,12 +70,18 @@ def event_summary(store, event_key, include_scouts=False):
         defended_by.setdefault(target, {})
         defended_by[target][e["team"]] = defended_by[target].get(e["team"], 0) + 1
 
+    # A team Lovat has and we do not is still a team at this event worth a row -
+    # it is the case where somebody else's scouting is most use to us.
+    lovat_teams = [t for t in (_int(k) for k in lovat_rows) if t is not None]
+
     out = {}
-    for team in sorted(set(list(teams) + list(entries_by_team) + list(solved_by))):
+    for team in sorted(set(list(teams) + list(entries_by_team) + list(solved_by)
+                           + lovat_teams)):
         out[team] = _team_summary(team, teams.get(team, {}), entries_by_team.get(team, []),
                                   solved_by.get(team, []), by_match,
                                   _lookup(rankings, team), _lookup(epa, team),
-                                  defended_by.get(team) or {})
+                                  defended_by.get(team) or {},
+                                  _lookup(lovat_rows, team))
 
     return {
         "eventKey": event_key,
@@ -180,10 +191,18 @@ def _lookup(table, team):
     return table.get(team) or table.get(str(team)) or {}
 
 
+def _int(v):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def _team_summary(team, meta, entries, solved, by_match, ranking=None, epa=None,
-                  defended_by=None):
+                  defended_by=None, lovat=None):
     ranking, epa = ranking or {}, epa or {}
     defended_by = defended_by or {}
+    lovat = lovat or {}
     # ---------------------------------------------- EXACT (from TBA)
     climbs = {"Level1": 0, "Level2": 0, "Level3": 0, "None": 0}
     auto_climbs = 0
@@ -378,6 +397,19 @@ def _team_summary(team, meta, entries, solved, by_match, ranking=None, epa=None,
             "defenseAgainst": defense_against,
             "defendedBy": defended_by,
         },
+        # A fifth kind of number, and the second one from outside: other teams'
+        # scouts, via lovat.app. Unverified, collected to somebody else's
+        # standard, and read here only as a second opinion - nothing in
+        # solve.py or the picklist sees it. Absent means nobody at this event
+        # uploaded that robot to Lovat, which is not the same as a zero.
+        "lovat": {k: lovat.get(k) for k in (
+            "matches", "avgFuel", "fuelPerSec", "accuracy", "throughput",
+            "volleys", "driver", "totalPoints", "autoPoints", "teleopPoints",
+            "feedSecs", "feedingRate", "feedsPerMatch", "ballsFed",
+            "defenseSecs", "contactDefenseSecs", "campingDefenseSecs",
+            "defenseEffectiveness", "climbs", "climbRate", "bestClimb",
+            "autoClimbRate", "beachedRate", "roles", "intakeTypes",
+            "scouters", "notes", "unmatched")},
         "notes": sorted(notes, key=lambda x: -(x.get("at") or 0)),
     }
 

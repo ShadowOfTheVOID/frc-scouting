@@ -30,8 +30,10 @@ from urllib.parse import urlparse, parse_qs
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import ai
 import analytics
 import discover
+import lovat as lovat_report
 import rules
 import solve
 import sources
@@ -47,6 +49,13 @@ TBA_POLL_SECONDS = 45
 STATBOTICS_POLL_SECONDS = 600
 # Only ever used to fill in matches TBA has not posted yet, so it can be slow.
 FRC_EVENTS_POLL_SECONDS = 60
+# Lovat rate-limits an API key to one request every three seconds. One request
+# every five minutes pulls the whole tournament and leaves that limit alone
+# even when a config save fires _poll_all at the same moment.
+LOVAT_POLL_SECONDS = 300
+# A ceiling on generated answers per event, so a stuck button cannot quietly
+# spend a team's API credit all afternoon. Raise it in Setup if you need to.
+AI_CALL_CEILING = 250
 # The whole event lives on one laptop that gets carried around a venue all day.
 SNAPSHOT_SECONDS = 600
 SNAPSHOT_KEEP = 12
@@ -64,7 +73,7 @@ class Hub:
         self.stop_flag = threading.Event()
         self.port = 8080
         self.status = {"nexus": None, "tba": None, "statbotics": None,
-                       "frcEvents": None, "lastUpdate": None}
+                       "frcEvents": None, "lovat": None, "lastUpdate": None}
         self.last_snapshot = None
         self.started_at = time.time()
         self._recal_lock = threading.Lock()
@@ -94,6 +103,7 @@ class Hub:
                     "detail": detail}
 
         nx, tba, fe = self.nexus(), self.tba(), self.frc_events()
+        lv, ai_c = self.lovat(), self.ai()
         age = lambda t: f"{int(now - t)}s ago" if t else "never"
         services = [
             svc("http + sse", True, f"{len(self.subs)} client(s) streaming"),
@@ -111,6 +121,12 @@ class Hub:
                 "unreachable, backing off" if self.statbotics.down_until > now
                 else age(self.status["statbotics"]),
                 not self.status["statbotics"]),
+            svc("lovat", bool(lv.ok),
+                ("rate limited, backing off" if lv.down_until > now
+                 else age(self.status["lovat"])) if lv.ok else "no api key",
+                bool(lv.ok) and not self.status["lovat"]),
+            svc("ai", ai_c.ok, f"{ai_c.provider} · {ai_c.model} · {self.ai_calls()}"
+                f"/{self.ai_ceiling()} answers this event" if ai_c.ok else "no provider set"),
             svc("solver", True, f"multipliers fitted from {self.store.get('multipliersFittedFrom') or 0} windows"),
             svc("snapshots", True,
                 f"last {age(self.last_snapshot)}, keeping {SNAPSHOT_KEEP}"
@@ -145,6 +161,32 @@ class Hub:
 
     def frc_events(self):
         return sources.FRCEvents(self.cfg("frcEventsUser"), self.cfg("frcEventsToken"))
+
+    def lovat(self):
+        return sources.Lovat(self.cfg("lovatKey"))
+
+    def ai(self):
+        return ai.client(self.cfg)
+
+    def ai_ceiling(self):
+        try:
+            return max(0, int(self.cfg("aiCallLimit") or AI_CALL_CEILING))
+        except (TypeError, ValueError):
+            return AI_CALL_CEILING
+
+    def ai_calls(self):
+        return int(self.store.get("aiCalls") or 0)
+
+    def ai_charge(self):
+        """Count one generated answer. False once the event ceiling is reached."""
+        limit = self.ai_ceiling()
+
+        def apply(n):
+            n = int(n or 0)
+            if n >= limit:
+                return None, False
+            return n + 1, True
+        return self.store.mutate("aiCalls", apply, 0)
 
     # ------------------------------------------------------------- SSE
     def subscribe(self, who=None):
@@ -391,6 +433,33 @@ class Hub:
         if self.store.get(cache) != out:
             self.store.set(cache, out)
             self.broadcast("epa", {"teams": len(out)})
+
+    def poll_lovat(self):
+        """Other teams' scouting, pulled whole in one request.
+
+        Lovat's export is scoped to what our account's team-source rule allows,
+        so a short list is a setting on their side, not a failure on ours.  A
+        parse that comes back empty is still written: "Lovat has nothing for
+        this event" is an answer, and it must not leave yesterday's rows on
+        screen.
+        """
+        ek = self.event_key()
+        lv = self.lovat()
+        if not (ek and lv.ok):
+            return
+        text = lv.report_csv(ek)
+        if text is None:
+            return
+        teams = lovat_report.parse_report_csv(text, ek)
+        if teams is None:
+            self.note("error", "lovat export could not be parsed")
+            return
+        self.status["lovat"] = time.time()
+        out = {str(t): rec for t, rec in teams.items()}
+        cache = f"lovat:{ek}"
+        if self.store.get(cache) != out:
+            self.store.set(cache, out)
+            self.broadcast("lovat", {"teams": len(out)})
 
     def poll_frc_events(self):
         """Post the official result before TBA has caught up.
@@ -808,7 +877,7 @@ class Hub:
 
     # ---------------------------------------------------------- poller
     def run_poller(self):
-        next_nexus = next_tba = next_stat = next_frc = 0.0
+        next_nexus = next_tba = next_stat = next_frc = next_lovat = 0.0
         while not self.stop_flag.is_set():
             now = time.time()
             try:
@@ -824,6 +893,9 @@ class Hub:
                 if now >= next_stat:
                     self.poll_statbotics()
                     next_stat = now + STATBOTICS_POLL_SECONDS
+                if now >= next_lovat:
+                    self.poll_lovat()
+                    next_lovat = now + LOVAT_POLL_SECONDS
                 self.status["lastUpdate"] = time.time()
             except Exception as e:  # a poller crash must never take the server down
                 self.note("error", f"poll failed: {e}")
@@ -965,9 +1037,89 @@ def _secs(intervals):
                      for iv in (intervals or [])), 1)
 
 
+AI_NOTES_TASK = """Task: read one team's scout notes and say what they add up to.
+
+Write at most four short bullets naming a recurring theme, each citing the
+matches and scouts behind it, then - only if there is one - a line beginning
+"Scouts disagree:" stating both sides and who said each. A theme one scout
+mentioned once is a single observation, not a theme; say so. End there."""
+
+AI_PICKLIST_TASK = """Task: explain a picklist that has already been ordered.
+
+The order is fixed and was produced by this app's solver and the strategy
+lead. You are explaining it, not revising it: never suggest a different
+position for a team, and never say a team is ranked too high or too low.
+
+For each team in order, write one sentence saying what the data shows about
+that robot, citing the block each number comes from. Then two final lines,
+"First pick:" and "Second pick:", each naming a team already in the list and
+the recorded strength that argues for it."""
+
+AI_ASK_TASK = """Task: answer one question from the strategy lead about this event.
+
+Answer in at most four sentences, from the team records supplied and nothing
+else. Cite the team numbers and the block behind every claim. If the data
+does not contain the answer - it is about something nobody recorded, another
+event, or another season - say exactly that and stop. Do not guess, and do
+not offer to look it up."""
+
+
+def _ai_team_payload(rec, rank=None):
+    """The slice of a team record the model is allowed to see.
+
+    Deliberately small and deliberately labelled: the block names travel with
+    the numbers so a claim can be cited, and nothing here is a raw entry table.
+    """
+    if not rec:
+        return None
+    e, es, o, lv = (rec.get("exact") or {}), (rec.get("estimated") or {}), \
+                   (rec.get("observed") or {}), (rec.get("lovat") or {})
+    out = {
+        "team": rec.get("team"),
+        "name": rec.get("name"),
+        "matchesScouted": rec.get("matchesScouted"),
+        "exact": {k: e.get(k) for k in
+                  ("bestClimb", "climbRate", "autoClimbRate", "avgTowerPoints",
+                   "rank", "opr", "avgRP", "record", "matchesWithOfficial")},
+        "estimated": {k: es.get(k) for k in
+                      ("avgFuel", "band", "matches", "consistency", "cycleRate")},
+        "observed": {k: o.get(k) for k in
+                     ("stockpileRate", "wastedFuelPct", "feedRate", "feedSecs",
+                      "defenseSecs", "driver", "defense", "diedRate", "tippedRate",
+                      "noShowRate", "foulRate", "autoFailRate", "startZone")},
+        "epa": rec.get("epa") or {},
+        "noteCount": len(rec.get("notes") or []),
+    }
+    if lv.get("matches"):
+        out["lovat"] = {k: lv.get(k) for k in
+                        ("matches", "avgFuel", "fuelPerSec", "accuracy", "driver",
+                         "bestClimb", "climbRate", "autoClimbRate", "feedSecs",
+                         "defenseSecs", "defenseEffectiveness", "roles", "scouters")}
+    if rank is not None:
+        out["rank"] = rank
+    return out
+
+
+def _ai_notes_payload(rec):
+    """Our notes and Lovat's, kept apart so the model can say which is which."""
+    lv = rec.get("lovat") or {}
+    return {
+        "team": rec.get("team"),
+        "name": rec.get("name"),
+        "matchesScouted": rec.get("matchesScouted"),
+        "numbers": _ai_team_payload(rec),
+        "ourNotes": [{"match": n.get("matchKey"), "scout": n.get("scoutId"),
+                      "note": n.get("note")} for n in (rec.get("notes") or [])],
+        "lovatNotes": [{"match": n.get("matchKey") or n.get("match"),
+                        "scout": n.get("scouter"), "note": n.get("note")}
+                       for n in (lv.get("notes") or [])],
+    }
+
+
 def _poll_all(h):
     """Kick every source off the request thread. A poll must never block a save."""
-    for fn in (h.poll_nexus, h.poll_tba, h.poll_frc_events, h.poll_statbotics):
+    for fn in (h.poll_nexus, h.poll_tba, h.poll_frc_events, h.poll_statbotics,
+               h.poll_lovat):
         threading.Thread(target=fn, daemon=True).start()
 
 
@@ -1188,7 +1340,13 @@ class Handler(BaseHTTPRequestHandler):
                 "eventKey": h.event_key(),
                 "eventLevel": (h.store.event(h.event_key()) or {}).get("level", "regional") if h.event_key() else "regional",
                 "keys": {"tba": bool(h.cfg("tbaKey")), "nexus": bool(h.cfg("nexusKey")),
-                         "frcEvents": h.frc_events().ok},
+                         "frcEvents": h.frc_events().ok, "lovat": bool(h.cfg("lovatKey")),
+                         "ai": h.ai().ok},
+                # The provider and model are settings, not secrets - the panel
+                # that shows generated text has to be able to name what wrote it.
+                "ai": {"provider": h.cfg("aiProvider") or "none", "model": h.ai().model,
+                       "calls": h.ai_calls(), "limit": h.ai_ceiling(),
+                       "providers": {k: v["label"] for k, v in ai.PROVIDERS.items()}},
                 "picklistLocked": h.pin_set(),
                 "ourTeam": h.cfg("ourTeam"),
                 "status": h.status,
@@ -1303,7 +1461,8 @@ class Handler(BaseHTTPRequestHandler):
                              "Open http://localhost:%d/ there." % self.server.server_address[1],
                 }, 403)
             for k in ("eventKey", "tbaKey", "nexusKey", "nexusToken", "eventLevel", "ourTeam",
-                      "frcEventsUser", "frcEventsToken"):
+                      "frcEventsUser", "frcEventsToken", "lovatKey",
+                      "aiProvider", "aiKey", "aiModel", "aiCallLimit"):
                 if k in body:
                     h.store.set(k, body[k])
             if "strategyPin" in body:
@@ -1468,7 +1627,106 @@ class Handler(BaseHTTPRequestHandler):
                 h.request_recalibrate()
             return self._json({"ok": True})
 
+        if p.startswith("/api/ai/"):
+            return self._ai(p[len("/api/ai/"):], body)
+
         self.send_error(404, "Not found")
+
+    # --------------------------------------------------------------- AI
+    def _ai(self, kind, body):
+        """Generated text, and the three things that gate it.
+
+        Money, first: a generated answer costs the team real credit, so this is
+        the one read path held to the strict lock - a configured passcode and a
+        valid token, or you are sitting at the hub. With no passcode set that
+        means the hub machine only, which is the same call `_unlocked_strict`
+        already makes about scout quality scores and for the same reason.
+
+        Nothing here writes data. Answers are cached under an `ai:` key as
+        generated text and never merged into a team record, the solver, or the
+        picklist.
+        """
+        h = Handler.hub
+        if not (self._unlocked_strict() or self._is_local()):
+            return self._json({"error": "Strategy passcode required."}, 403)
+        client = h.ai()
+        if not client.ok:
+            return self._json({"configured": False})
+        ek = h.event_key()
+        if not ek:
+            return self._json({"configured": True, "text": None, "reason": "no event set"})
+
+        summary = analytics.event_summary(h.store, ek)
+        teams = summary.get("teams") or {}
+        if kind.startswith("notes/"):
+            team = _int(kind.split("/", 1)[1])
+            rec = teams.get(team) or teams.get(str(team))
+            if not rec:
+                return self._json({"configured": True, "text": None,
+                                   "reason": "nothing scouted for that team"})
+            payload = _ai_notes_payload(rec)
+            if not (payload["ourNotes"] or payload["lovatNotes"]):
+                return self._json({"configured": True, "text": None,
+                                   "reason": "no notes typed yet"})
+            cache, system, user = (f"ai:notes:{ek}:{team}", AI_NOTES_TASK,
+                                   json.dumps(payload, sort_keys=True))
+        elif kind == "picklist":
+            order = [t for t in (_int(x) for x in (body.get("order") or [])) if t]
+            rows = [_ai_team_payload(teams.get(t) or teams.get(str(t)), i + 1)
+                    for i, t in enumerate(order[:10])]
+            rows = [r for r in rows if r]
+            if not rows:
+                return self._json({"configured": True, "text": None,
+                                   "reason": "nothing ranked yet"})
+            cache, system, user = (f"ai:picklist:{ek}", AI_PICKLIST_TASK,
+                                   json.dumps({"ranking": rows}, sort_keys=True))
+        elif kind == "ask":
+            question = (body.get("question") or "").strip()[:400]
+            if not question:
+                return self._json({"configured": True, "text": None,
+                                   "reason": "ask a question first"})
+            # Capped: a big event is 75 teams and the whole point is a small,
+            # readable payload. Teams nobody has data on add nothing to answer with.
+            known = sorted((t for t in teams.values()
+                            if t.get("matchesScouted") or (t.get("lovat") or {}).get("matches")),
+                           key=lambda t: -(t.get("matchesScouted") or 0))[:60]
+            rows = [r for r in (_ai_team_payload(t) for t in known) if r]
+            return self._ai_send(None, AI_ASK_TASK,
+                                 json.dumps({"question": question, "teams": rows},
+                                            sort_keys=True), 900)
+        else:
+            return self.send_error(404, "Not found")
+
+        # Regenerate only when the data behind the answer changed - or when the
+        # button was pressed on purpose.
+        stamp = hashlib.sha256(user.encode("utf-8")).hexdigest()[:16]
+        cached = h.store.get(cache) or {}
+        if cached.get("stamp") == stamp and not body.get("force"):
+            return self._json({**cached, "configured": True, "cached": True})
+        # A peek reads the cache and stops. Opening a team page must never spend
+        # the team's credit on its own - generating is always a button press.
+        if body.get("peek"):
+            return self._json({"configured": True, "text": None, "peek": True,
+                               "stale": bool(cached.get("text"))})
+        return self._ai_send(cache, system, user, 1400, stamp)
+
+    def _ai_send(self, cache, task, user, max_tokens, stamp=None):
+        h = Handler.hub
+        client = h.ai()
+        if not h.ai_charge():
+            return self._json({"configured": True, "text": None,
+                               "reason": f"answer ceiling reached ({h.ai_ceiling()}) - "
+                                         "raise the limit in Setup"})
+        text = client.ask(ai.GROUND_RULES + "\n\n" + task, user, max_tokens)
+        if not text:
+            # Offline at a venue is the normal case, not an error worth a dialog.
+            return self._json({"configured": True, "text": None,
+                               "reason": "the model could not be reached"})
+        out = {"text": text, "provider": client.provider, "model": client.model,
+               "at": time.time(), "stamp": stamp}
+        if cache:
+            h.store.set(cache, out)
+        return self._json({**out, "configured": True, "cached": False})
 
     # -------------------------------------------------------------- SSE
     def _stream(self):

@@ -59,6 +59,16 @@
       <div id="crewSwaps"></div>
       <div class="eyebrow" style="margin-top:14px">COVERAGE</div>
       <div id="crewCoverage"></div>
+      <div class="eyebrow" style="margin-top:14px">ASK THE DATA</div>
+      <div class="hint">Answered from the team records on this hub and nothing else. It cites
+        what it used, and says so when the data has no answer.</div>
+      <input id="askBox" placeholder="who are the best feeders?" autocomplete="off"
+        style="width:100%;margin-top:8px;padding:9px 10px;border-radius:8px;background:var(--btn-bg,transparent);
+        border:1px solid var(--btn);color:var(--t1);font:500 12.5px Barlow,sans-serif">
+      <button id="askGo" style="margin-top:8px;padding:9px;width:100%;border-radius:8px;
+        background:transparent;border:1px solid var(--btn);color:var(--t4);
+        font:700 10.5px Barlow,sans-serif;letter-spacing:.12em;cursor:pointer">ASK</button>
+      <div id="askOut" style="margin-top:8px"></div>
     </div>
   </div>
 
@@ -114,6 +124,15 @@
   <div class="cols hide" id="t-picklist" style="grid-template-columns:1fr 290px">
     <div class="pane mid">
       <div id="pkEditBar"></div>
+      <div class="tbl" style="margin-bottom:12px">
+        <div class="cap"><span class="t">WHY THIS ORDER</span>
+          <span class="n" id="pkWhyMeta">generated — it explains the board, it never reorders it</span></div>
+        <div style="padding:6px 16px 12px" id="pkWhyBody"></div>
+        <div style="padding:0 16px 12px"><button id="pkWhyGo"
+          style="padding:8px 12px;border-radius:8px;background:transparent;border:1px solid var(--btn);
+          color:var(--t4);font:700 10.5px Barlow,sans-serif;letter-spacing:.12em;cursor:pointer"
+          >EXPLAIN THE BOARD</button></div>
+      </div>
       <div class="tbl">
         <div class="cap">
           <span class="t">DRAFT BOARD</span>

@@ -72,9 +72,30 @@
             frc-events.firstinspires.org</div></div>
         <div class="f"><label>FRC EVENTS TOKEN</label>
           <input id="frcEventsToken" placeholder="authorization token" autocomplete="off"></div>
+        <div class="f"><label>LOVAT API KEY</label>
+          <input id="lovatKey" placeholder="lvt-…" autocomplete="off">
+          <div class="h">Other teams' scouting for this event. Your scouting lead makes a key
+            in the Lovat Dashboard (Settings → API keys); your team must be verified there
+            first. It is shown next to our own numbers, never mixed into them. lovat.app</div></div>
+        <div class="f"><label>AI PROVIDER</label>
+          <select id="aiProvider">
+            <option value="none">none — no AI features</option>
+            <option value="anthropic">Claude (Anthropic)</option>
+            <option value="openai">OpenAI</option>
+            <option value="gemini">Gemini (Google)</option>
+          </select>
+          <div class="h">Summarises scout notes, explains the picklist and answers questions
+            about the event. It only ever reads the numbers already on this hub — it never
+            adds any, and nothing it writes is stored as data.</div></div>
+        <div class="f"><label>AI KEY</label>
+          <input id="aiKey" placeholder="provider api key" autocomplete="off"></div>
+        <div class="f"><label>AI MODEL</label>
+          <input id="aiModel" placeholder="leave blank for the default" autocomplete="off">
+          <div class="h">Blank uses the provider's default. Set it if your account needs a
+            particular model name.</div></div>
         <div class="f"><label>STRATEGY PASSCODE</label>
           <input id="strategyPin" placeholder="leave blank for no lock" autocomplete="off">
-          <div class="h">Gates the picklist. Shared, not personal — the hub stores only a hash
+          <div class="h">Gates the picklist and every AI answer. Shared, not personal — the hub stores only a hash
             of the code, never who used it. Changing it signs everyone out.</div></div>
         <div><button class="go" id="save">SAVE &amp; REFRESH</button></div>
         <div class="hint" id="status"></div>
@@ -93,6 +114,10 @@ try {
   $('#eventLevel').value = c.eventLevel || 'regional';
   const bits = [c.keys.tba ? 'TBA SET' : 'NO TBA KEY', c.keys.nexus ? 'NEXUS SET' : 'NO NEXUS KEY'];
   if (c.keys.frcEvents) bits.push('FRC EVENTS SET');
+  if (c.keys.lovat) bits.push('LOVAT SET');
+  bits.push(c.keys.ai ? `AI · ${(c.ai && c.ai.model) || 'ON'}` : 'NO AI');
+  if (c.ai && c.ai.provider && c.ai.provider !== 'none') $('#aiProvider').value = c.ai.provider;
+  if (c.ai && c.ai.model) $('#aiModel').placeholder = c.ai.model + ' (current)';
   bits.push(c.multipliersFittedFrom ? `CALIBRATED · ${c.multipliersFittedFrom} WINDOWS` : 'PRIORS ONLY');
   bits.push(c.picklistLocked ? 'PICKLIST LOCKED' : 'PICKLIST OPEN');
   $('#sub').textContent = bits.join(' · ');
@@ -101,16 +126,18 @@ try {
 $('#save').onclick = async () => {
   const body = { eventKey: $('#eventKey').value.trim(), eventLevel: $('#eventLevel').value,
                  ourTeam: $('#ourTeam').value.trim() };
-  for (const k of ['tbaKey','nexusKey','nexusToken','frcEventsUser','frcEventsToken']) {
+  for (const k of ['tbaKey','nexusKey','nexusToken','frcEventsUser','frcEventsToken','lovatKey','aiKey','aiModel']) {
     const v = $('#'+k).value.trim(); if (v) body[k] = v;
   }
+  body.aiProvider = $('#aiProvider').value;
   const pin = $('#strategyPin').value;
   if (pin !== '') body.strategyPin = pin.trim();
   $('#status').textContent = 'saving…';
   try {
     await net.api('/api/config', { method:'POST', body: JSON.stringify(body) });
     $('#status').textContent = 'Saved. Fetching event data…';
-    for (const k of ['tbaKey','nexusKey','nexusToken','frcEventsUser','frcEventsToken','strategyPin'])
+    for (const k of ['tbaKey','nexusKey','nexusToken','frcEventsUser','frcEventsToken',
+                     'lovatKey','aiKey','strategyPin'])
       $('#'+k).value = '';
   } catch (e) { $('#status').textContent = 'Failed: ' + e.message; }
 };
