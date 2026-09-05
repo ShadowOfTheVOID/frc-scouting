@@ -15,6 +15,14 @@
   --amber:#f5a524;
   --t0:#f4f4f6; --t1:#a0a0ab; --t2:#9a9aa4; --t3:#8b8b95; --t4:#7d7d88;
   --t5:#6b6b76; --t6:#5f5f6a;
+
+  /* Chart series slots, in fixed order and never cycled: a team keeps its
+     colour when another team is dropped from the picker. Stepped for a dark
+     surface and validated as a set - every adjacent pair clears the
+     colour-vision separation floor against this page's background, which is
+     what a laptop screen in a lit venue actually needs. */
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70;
+  --s4:#c98500; --s5:#d55181; --s6:#008300;
 }
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--page);font-family:Barlow,system-ui,sans-serif}
@@ -153,3 +161,51 @@ a:hover{color:var(--red-label)}
 .mono{font-family:'JetBrains Mono',ui-monospace,monospace}
 .hide{display:none !important}
 .empty{padding:22px 16px;font:500 12.5px Barlow,sans-serif;color:var(--t5);text-align:center}
+
+/* ------------------------------------------------------------- charts */
+/* Marks carry the series colour; every piece of text wears a text token, so a
+   chart stays readable if a hue is hard to see. */
+.chart{display:flex;flex-direction:column;gap:8px}
+.chart .plot{position:relative}
+.chart svg{display:block;width:100%;height:auto;overflow:visible}
+.chart .grid{stroke:var(--line);stroke-width:1}
+.chart .ax{font:600 10px Barlow,sans-serif;fill:var(--t5)}
+.chart .rowlab{font:700 12px 'Barlow Condensed',sans-serif;fill:var(--t2)}
+.chart .val{font:600 10.5px Barlow,sans-serif;fill:var(--t4)}
+.chart .endlab{font:700 10.5px Barlow,sans-serif;fill:var(--t3)}
+.chart .ln{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.chart .band{opacity:.16;stroke:none}   /* a wash on a near-black surface */
+/* The 2px ring is the surface doing the separating, so a dot stays legible
+   where it lands on another line. */
+.chart .dot{stroke:var(--panel);stroke-width:2}
+.chart .bar{stroke:none}
+.chart .cross{stroke:var(--track);stroke-width:1}
+.chart .agree{stroke:var(--track);stroke-width:1;stroke-dasharray:3 4}
+.chart .legend{display:flex;flex-wrap:wrap;gap:4px 14px}
+.chart .legend .key{display:flex;align-items:center;gap:6px;
+  font:600 10.5px Barlow,sans-serif;letter-spacing:.06em;color:var(--t4)}
+.chart .legend .key i{width:12px;height:3px;border-radius:2px;flex:none}
+.chart .tip{position:absolute;pointer-events:none;z-index:5;min-width:120px;
+  background:var(--chrome);border:1px solid var(--btn);border-radius:8px;
+  padding:8px 10px;box-shadow:0 10px 24px rgba(0,0,0,.55)}
+.chart .tip .hd{font:800 10px Barlow,sans-serif;letter-spacing:.12em;color:var(--t4);
+  margin-bottom:5px}
+.chart .tip .row{display:flex;align-items:center;gap:7px;padding:1px 0}
+.chart .tip .row i{width:10px;height:3px;border-radius:2px;flex:none}
+.chart .tip .row b{font:700 13px 'Barlow Condensed',sans-serif;color:var(--t0);min-width:34px}
+.chart .tip .row span{font:500 11px Barlow,sans-serif;color:var(--t5)}
+.chart .tip .u{font:500 10px Barlow,sans-serif;color:var(--t6);margin-top:4px}
+.chart .tblview summary{font:600 10.5px Barlow,sans-serif;color:var(--t5);cursor:pointer}
+.chart .tblview table{width:100%;border-collapse:collapse;margin-top:6px}
+.chart .tblview th,.chart .tblview td{text-align:right;padding:4px 8px;
+  font:500 11px Barlow,sans-serif;color:var(--t2);border-bottom:1px solid var(--row)}
+.chart .tblview th:first-child,.chart .tblview td:first-child{text-align:left;color:var(--t4)}
+.chart .tblview th{color:var(--t5);font-weight:700}
+.empty-chart{padding:22px 16px;font:500 12.5px Barlow,sans-serif;color:var(--t5);text-align:center}
+
+/* The team picker above the event-wide charts. One row, above what it scopes. */
+.picker{display:flex;flex-wrap:wrap;gap:5px}
+.picker button{padding:5px 9px;border-radius:7px;background:transparent;cursor:pointer;
+  border:1px solid var(--btn);color:var(--t4);font:700 10.5px Barlow,sans-serif;letter-spacing:.06em}
+.picker button.on{border-color:transparent;color:var(--t0)}
+.picker button.on i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:6px}

@@ -15,9 +15,14 @@ so it has to be mapped onto ours.  Qualification matches map cleanly; anything
 else keeps its raw label and is reported in `unmatched` rather than being
 dropped or, worse, mis-joined onto a qual match of the same number.
 
-Every field is null-safe: a column Lovat did not fill reads as unknown, never as
-zero.  This module never raises - a malformed export returns None, the same
-"we do not know" every source in sources.py returns.
+Every column in the export is kept, and every one of them is null-safe: a
+column Lovat did not fill reads as unknown, never as zero.  Most are averaged
+into the per-team record, and the ones a chart needs are kept per row as well,
+in `perMatch` - an average cannot show that a robot's fuel collapsed after
+Q30, and that is the shape worth walking to the pits about.
+
+This module never raises - a malformed export returns None, the same "we do
+not know" every source in sources.py returns.
 """
 import csv
 import io
@@ -50,10 +55,38 @@ NUMERIC = {
 
 #: Booleans we count as a rate over the matches that answered.
 FLAGS = {"autoClimb": "autoClimbRate", "beached": "beachedRate",
-         "scoresWhileMoving": "scoresWhileMovingRate", "disrupts": "disruptRate"}
+         "scoresWhileMoving": "scoresWhileMovingRate", "disrupts": "disruptRate",
+         "fieldTraversal": "traversalRate"}
+
+#: Lovat records a climb by the second it STARTED, in one column per level, and
+#: fills only the level the robot actually used.  That is the one thing in this
+#: export our own scouting cannot produce - a scout with two thumbs cannot time
+#: a climb - and it answers the question every alliance captain asks about a
+#: robot that says it climbs: how long before the buzzer does it have to leave?
+CLIMB_START = {"l1StartTime": "Level1", "l2StartTime": "Level2", "l3StartTime": "Level3"}
 
 #: Pipe-joined list columns, tallied.
 LISTS = {"robotRoles": "roles", "feederTypes": "feederTypes", "intakeType": "intakeTypes"}
+
+#: The columns kept per row rather than only averaged, so the dashboard can
+#: draw Lovat's fuel and defence match by match beside our own instead of one
+#: number beside one number.  An average hides the shape: a robot that put up
+#: 40 fuel then 120 averages the same as one that put up 80 twice, and only the
+#: first of those is worth asking about in the pits.
+PER_MATCH = {
+    "totalFuelOutputted": "fuel",
+    "totalBallThroughput": "throughput",
+    "fuelPerSecond": "fuelPerSec",
+    "accuracy": "accuracy",
+    "totalBallsFed": "ballsFed",
+    "totalDefenseTime": "defenseSecs",
+    "contactDefenseTime": "contactDefenseSecs",
+    "campingDefenseTime": "campingDefenseSecs",
+    "defenseEffectiveness": "defenseEffectiveness",
+    "timeFeeding": "feedSecs",
+    "totalPoints": "totalPoints",
+    "driverAbility": "driver",
+}
 
 
 def _num(v):
@@ -95,6 +128,22 @@ def _climb_level(v):
         if d in s:
             return "Level" + d
     return None
+
+
+def _climb_start(row):
+    """Seconds into the match this robot began its climb, and at which level.
+
+    Lovat fills one of three columns and leaves the other two blank, so the
+    filled one names the level as well as the time.  Two filled at once means
+    the robot moved up a level mid-endgame; the later start is the one that
+    matters, because it is the one that decided when it had to stop scoring.
+    """
+    found = [(name, _num(row.get(col))) for col, name in CLIMB_START.items()]
+    found = [(name, secs) for name, secs in found if secs is not None]
+    if not found:
+        return None, None
+    level, secs = max(found, key=lambda pair: pair[1])
+    return level, secs
 
 
 def match_key(label, event_key):
@@ -183,6 +232,33 @@ def _team_record(team, rows, event_key):
                           "scouter": who or None, "note": note})
     rec["notes"] = notes
     rec["scouters"] = len(scouters)
+    # One row per match, in the order Lovat exported them, keyed onto our
+    # schedule where the label maps.  A playoff row keeps its raw label and a
+    # null matchKey: it is real data about the robot, and dropping it here
+    # would make the chart disagree with the `matches` count beside it.
+    rec["perMatch"] = []
+    for r, (label, mk) in zip(rows, labels):
+        level, secs = _climb_start(r)
+        rec["perMatch"].append({
+            "match": label or None, "matchKey": mk,
+            **{name: _num(r.get(col)) for col, name in PER_MATCH.items()},
+            "climb": _climb_level(r.get("endgameClimb")),
+            "climbLevelTimed": level,
+            "climbStartSecs": secs,
+            "autoClimbStartSecs": _num(r.get("autoClimbStartTime")),
+        })
+
+    # Climb timing, per level and overall. Kept per level as well as pooled
+    # because "starts its L3 at 128s" and "starts its L1 at 128s" are different
+    # robots: the first is quick, the second has given up half the endgame.
+    starts = {}
+    for row in rec["perMatch"]:
+        if row["climbStartSecs"] is not None and row["climbLevelTimed"]:
+            starts.setdefault(row["climbLevelTimed"], []).append(row["climbStartSecs"])
+    rec["climbStart"] = {lvl: _mean(v) for lvl, v in sorted(starts.items())}
+    rec["climbStartSecs"] = _mean([v for vs in starts.values() for v in vs])
+    rec["autoClimbStartSecs"] = _mean(
+        [v for v in (row["autoClimbStartSecs"] for row in rec["perMatch"]) if v is not None])
     # Kept so the dashboard can say "42 rows, 3 of them playoff labels we could
     # not place" instead of silently showing a smaller number than Lovat has.
     rec["unmatched"] = sorted(set(unmatched))

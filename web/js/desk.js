@@ -3,6 +3,7 @@
 
 import * as db from './db.js';
 import * as net from './net.js';
+import * as chart from './chart.js';
 import { loadRules, rpThresholds, rules as gameRules } from './game2026.js';
 
 const $ = (s) => document.querySelector(s);
@@ -863,13 +864,96 @@ function defenseNote(m, side, teams) {
     <div class="b">${hits.slice(0, 4).map(esc).join(' · ')}.</div></div>`;
 }
 
+// Which match the tab is showing. Null follows the field - the next match is
+// what a lead wants nine times out of ten - and a pick from the dropdown holds
+// still, so a refresh in the middle of reading a match does not move it.
+let openMatch = null;
+
+function nextMatch() {
+  const ms = (STATE && STATE.matches) || [];
+  return ms.find((x) => x.status === 'On field')
+      || ms.find((x) => x.status === 'Now queuing' || x.status === 'On deck')
+      || ms.find((x) => !x.breakdown)
+      || ms[ms.length - 1];
+}
+
 function renderMatchPreview() {
   const ms = (STATE && STATE.matches) || [];
-  const m = ms.find((x) => x.status === 'On field')
-        || ms.find((x) => x.status === 'Now queuing' || x.status === 'On deck')
-        || ms.find((x) => !x.breakdown);
+  const m = (openMatch && ms.find((x) => x.matchKey === openMatch)) || nextMatch();
   $('#mvRed').innerHTML = m ? allianceCard(m, 'red') : '<div class="empty">No upcoming match.</div>';
   $('#mvBlue').innerHTML = m ? allianceCard(m, 'blue') : '';
+
+  const pick = $('#mvPick');
+  if (pick) {
+    pick.innerHTML = ms.map((x) => `<option value="${esc(x.matchKey)}"${
+      m && x.matchKey === m.matchKey ? ' selected' : ''}>${esc(x.label || x.matchKey)}${
+      x.breakdown ? ' · played' : ''}</option>`).join('')
+      || '<option>no schedule yet</option>';
+    pick.onchange = () => { openMatch = pick.value; renderMatchPreview(); };
+    $('#mvHint').textContent = m
+      ? (openMatch ? 'showing the match you picked' : 'following the field')
+      : 'set an event key on the hub to get a schedule';
+  }
+
+  // Generated text never arrives on its own: opening this tab must not spend
+  // the team's API credit, so this only reads the hub's cache.
+  const body = '#aiMatchBody';
+  if ($(body) && m) {
+    const idle = 'Not read yet.';
+    peekAi(body, `match/${m.matchKey}`, {}, idle);
+    wireAi('#aiMatchGo', body, `match/${m.matchKey}`, () => ({}), idle);
+  }
+}
+
+/**
+ * One robot, match by match: fuel from every source that has an opinion, and
+ * the defence it played and took.
+ *
+ * The x axis here is this robot's own matches, so a gap really is a missing
+ * measurement - a match Lovat has no row for, or one our scouts missed - and
+ * the lines break rather than bridging it.
+ */
+function teamCharts(t) {
+  const rows = t.trend || [];
+  if (!rows.length) return '';
+  const x = rows.map((r) => ({ key: r.matchKey, label: r.label || r.matchKey,
+                               short: shortCode(r.label) }));
+  const lovatFuel = rows.map((r) => r.lovatFuel ?? null);
+  const hasLovat = lovatFuel.some((v) => v != null);
+  const fuel = chart.line({
+    x,
+    series: [
+      { label: 'ours', color: 'var(--s1)',
+        values: rows.map((r) => r.fuel ?? null),
+        band: rows.map((r) => r.band ?? null) },
+      ...(hasLovat ? [{ label: 'lovat', color: 'var(--s2)', values: lovatFuel }] : []),
+    ],
+    unit: 'fuel this robot put up',
+    caption: 'The shaded band is the solver’s uncertainty on that single match, not the '
+           + 'spread of the season.' + (hasLovat
+             ? ' Lovat is other teams’ scouts counting the same robot.' : ''),
+  });
+
+  const played = rows.map((r) => r.defenseSecs ?? null);
+  const faced = rows.map((r) => r.defenseFacedSecs ?? null);
+  const lovatDef = rows.map((r) => r.lovatDefenseSecs ?? null);
+  const defSeries = [];
+  if (played.some((v) => v)) defSeries.push({ label: 'played', color: 'var(--s1)', values: played });
+  if (faced.some((v) => v)) defSeries.push({ label: 'faced', color: 'var(--s2)', values: faced });
+  if (lovatDef.some((v) => v)) defSeries.push({ label: 'played (lovat)', color: 'var(--s3)', values: lovatDef });
+
+  return `
+    <div class="tbl"><div class="cap"><span class="t">FUEL BY MATCH</span>
+      <span class="n">estimated — one point per match this robot played</span></div>
+      <div style="padding:12px 16px 16px">${fuel}</div></div>
+    ${defSeries.length ? `
+    <div class="tbl"><div class="cap"><span class="t">DEFENCE BY MATCH</span>
+      <span class="n">seconds of contact — played, and taken from the other alliance</span></div>
+      <div style="padding:12px 16px 16px">${chart.line({
+        x, series: defSeries, unit: 'seconds',
+        caption: 'Zero is a scout watching and seeing no defence. A gap is no scout entry at all.',
+        height: 170,
+      })}</div></div>` : ''}`;
 }
 
 // ═════════════════════════════════════════════════════════ TEAM DETAIL
@@ -920,6 +1004,7 @@ function renderTeamDetail() {
         <div class="kv"><span>driver</span><b>${o.driver ?? '—'} / 5</b></div>
         <div class="kv"><span>average preload</span><b>${o.avgPreload ?? 'not asked'}</b></div>
       </div></div>
+    ${teamCharts(t)}
     ${lvN ? `
     <div class="tbl"><div class="cap"><span class="t">FROM LOVAT</span>
       <span class="n">other teams' scouts — not ours, and not verified</span></div>
@@ -934,7 +1019,20 @@ function renderTeamDetail() {
         <div class="kv"><span>feeding</span><b>${lv.feedSecs == null ? '—' : lv.feedSecs + 's/match'}</b></div>
         <div class="kv"><span>defence</span><b>${lv.defenseSecs == null ? '—' : lv.defenseSecs + 's/match'}${
           lv.defenseEffectiveness == null ? '' : ` · effect ${lv.defenseEffectiveness}`}</b></div>
+        <div class="kv"><span>leaves to climb at</span><b>${lv.climbStartSecs == null ? '—'
+          : `${Math.round(lv.climbStartSecs)}s${lv.autoClimbStartSecs == null ? ''
+             : ` · auto ${Math.round(lv.autoClimbStartSecs)}s`}`}</b></div>
+        <div class="kv"><span>scores while moving</span><b>${lv.scoresWhileMovingRate == null
+          ? '—' : Math.round(lv.scoresWhileMovingRate) + '%'}</b></div>
+        <div class="kv"><span>crosses the field</span><b>${lv.traversalRate == null
+          ? '—' : Math.round(lv.traversalRate) + '%'}</b></div>
+        <div class="kv"><span>gets beached</span><b>${lv.beachedRate == null
+          ? '—' : Math.round(lv.beachedRate) + '%'}</b></div>
+        <div class="kv"><span>disrupts</span><b>${lv.disruptRate == null
+          ? '—' : Math.round(lv.disruptRate) + '%'}</b></div>
+        <div class="kv"><span>outpost intakes</span><b>${lv.outpostIntakes ?? '—'}</b></div>
         <div class="kv"><span>roles</span><b>${teamRoles(lv.roles)}</b></div>
+        <div class="kv"><span>intake</span><b>${teamRoles(lv.intakeTypes)}</b></div>
         ${(lv.unmatched || []).length ? `<div class="hint" style="margin-top:6px">${
           lv.unmatched.length} row${lv.unmatched.length > 1 ? 's' : ''} we could not place on our
           schedule (${esc(lv.unmatched.join(', '))}) — counted here, not joined to a match.</div>` : ''}
@@ -961,6 +1059,7 @@ function renderTeamDetail() {
             <b style="white-space:nowrap">${esc(nt.match || '?')} · ${esc(nt.scouter || '?')} · lovat</b>
           </div>`).join('')}
       </div></div>`;
+  chart.wire($('#tdMain'));
   const team = openTeam;
   peekAi('#aiNotesBody', `notes/${team}`, {}, 'Not summarised yet.');
   wireAi('#aiNotesGo', '#aiNotesBody', `notes/${team}`, () => ({}), 'Not summarised yet.');
@@ -1050,6 +1149,187 @@ function wireAsk() {
   box.onkeydown = (ev) => { if (ev.key === 'Enter') ask(); };
 }
 
+// ══════════════════════════════════════════════════════════════ GRAPHS
+/**
+ * The graphs tab: the same numbers the tables carry, drawn over time.
+ *
+ * A table answers "how good is this robot"; a line answers "is it getting
+ * better, and did something change on Saturday morning" - which is the question
+ * a picklist meeting actually turns on, and the one an average cannot answer.
+ *
+ * Every source keeps its own line. Our solver, our scouts and Lovat's scouts
+ * are never averaged into one number here for the same reason they are kept in
+ * separate blocks everywhere else: where two of them disagree about a robot,
+ * that disagreement is the finding.
+ */
+
+// Up to six teams, held in fixed slots. Removing a team leaves a hole rather
+// than shuffling the rest along, so every other team keeps the colour the
+// reader has already learned.
+let gSlots = [];
+
+function graphTeams() {
+  // A slot can outlive its team - the event key changes, or a team drops out -
+  // and every chart below indexes straight into the record.
+  return gSlots.filter((t) => t && ANALYTICS && ANALYTICS.teams[t]);
+}
+function toggleGraphTeam(team) {
+  const at = gSlots.indexOf(team);
+  if (at >= 0) { gSlots[at] = null; return; }
+  const hole = gSlots.indexOf(null);
+  if (hole >= 0) gSlots[hole] = team;
+  else if (gSlots.length < chart.SLOTS) gSlots.push(team);
+}
+function graphColor(team) {
+  const at = gSlots.indexOf(team);
+  return at < 0 ? 'var(--t5)' : chart.slot(at);
+}
+
+/** Our own team first, then the biggest scorers — a sensible opening view. */
+function defaultGraphTeams() {
+  const rows = Object.values((ANALYTICS && ANALYTICS.teams) || {})
+    .filter((t) => (t.trend || []).length)
+    .sort((a, b) => b.estimated.avgFuel - a.estimated.avgFuel);
+  const out = [];
+  if (ourTeam && rows.some((t) => t.team === ourTeam)) out.push(ourTeam);
+  for (const t of rows) {
+    if (out.length >= chart.SLOTS) break;
+    if (!out.includes(t.team)) out.push(t.team);
+  }
+  return out;
+}
+
+/** The schedule, in order, as the x axis every team's line is drawn on. */
+function graphAxis(teams) {
+  const wanted = new Set();
+  for (const team of teams) {
+    for (const r of (((ANALYTICS.teams[team] || {}).trend) || [])) wanted.add(r.matchKey);
+  }
+  return ((STATE && STATE.matches) || [])
+    .filter((m) => wanted.has(m.matchKey))
+    .map((m) => ({ key: m.matchKey, label: m.label || m.matchKey, short: shortCode(m.label) }));
+}
+
+/** A team's trend, indexed by match key, so a chart can look one match up. */
+function trendBy(team) {
+  const out = new Map();
+  for (const r of (((ANALYTICS.teams[team] || {}).trend) || [])) out.set(r.matchKey, r);
+  return out;
+}
+
+function renderGraphs() {
+  const host = $('#gPick');
+  if (!host || !ANALYTICS) return;
+  if (!gSlots.length) gSlots = defaultGraphTeams();
+
+  const all = Object.values(ANALYTICS.teams)
+    .filter((t) => (t.trend || []).length || lovatN(t))
+    .sort((a, b) => a.team - b.team);
+  const picked = graphTeams();
+  const full = picked.length >= chart.SLOTS;
+
+  host.innerHTML = all.map((t) => {
+    const on = picked.includes(t.team);
+    return `<button data-team="${t.team}" class="${on ? 'on' : ''}"
+      ${!on && full ? 'disabled style="opacity:.35"' : ''}
+      >${on ? `<i style="background:${graphColor(t.team)}"></i>` : ''}${t.team}</button>`;
+  }).join('') || '<div class="hint">No scouted teams yet.</div>';
+  for (const b of $$('#gPick button')) {
+    b.onclick = () => { toggleGraphTeam(Number(b.dataset.team)); renderGraphs(); };
+  }
+
+  const x = graphAxis(picked);
+  const byTeam = new Map(picked.map((t) => [t, trendBy(t)]));
+
+  // ---- fuel per match, one line per team
+  $('#gFuel').innerHTML = picked.length ? chart.line({
+    x,
+    // A team is absent from most matches because it was not in them, so its own
+    // consecutive matches join up: the gap is the schedule, not missing data.
+    series: picked.map((team) => ({
+      label: String(team), color: graphColor(team), connect: true,
+      values: x.map((p) => (byTeam.get(team).get(p.key) || {}).fuel ?? null),
+    })),
+    unit: 'fuel, estimated by our solver',
+    empty: 'None of the picked teams has a solved match yet.',
+    caption: 'Estimated. Each point is what the solver gave that robot out of its alliance’s '
+           + 'official window totals, so it already agrees with TBA at the alliance level.',
+  }) : '<div class="empty">Pick a team above.</div>';
+
+  // ---- defence, played and faced
+  const anyLovatDef = picked.some((t) => (ANALYTICS.teams[t].lovat || {}).defenseSecs != null);
+  const defSeries = [
+    { label: 'played (our scouts)', color: 'var(--s1)' },
+    { label: 'faced (our scouts)', color: 'var(--s2)' },
+    ...(anyLovatDef ? [{ label: 'played (lovat)', color: 'var(--s3)' }] : []),
+  ];
+  const defRows = picked.map((team) => {
+    const t = ANALYTICS.teams[team], o = t.observed, lv = t.lovat || {};
+    return {
+      label: `${team}`,
+      values: [o.defenseSecs || 0, o.defenseFacedSecs ?? null,
+               ...(anyLovatDef ? [lv.defenseSecs ?? null] : [])],
+    };
+  });
+  $('#gDefense').innerHTML = picked.length ? chart.bars({
+    rows: defRows, series: defSeries, unit: 'seconds per match',
+    empty: 'No scout has logged defence for any of these robots yet.',
+    caption: 'Seconds of contact per match, averaged. "Faced" counts only defence a scout '
+           + 'attributed to a named robot, so it is a floor rather than a total.',
+  }) : '<div class="empty">Pick a team above.</div>';
+
+  // ---- our numbers against the two sources from outside
+  const rows = Object.values(ANALYTICS.teams);
+  $('#gVsLovat').innerHTML = chart.scatter({
+    points: rows.filter((t) => t.estimated.matches && lovatN(t) && t.lovat.avgFuel != null)
+      .map((t) => ({ label: `${t.team}`, x: t.estimated.avgFuel, y: t.lovat.avgFuel })),
+    xLabel: 'our fuel / match', yLabel: 'lovat fuel / match', diagonal: true,
+    height: 250, width: 400,
+    empty: 'No team here has both our fuel and Lovat’s — set a Lovat key on the hub.',
+    caption: 'The dashes are agreement. A robot well off them is one the two sets of scouts '
+           + 'read differently — usually a robot one of them has seen fewer times.',
+  });
+  $('#gVsEpa').innerHTML = chart.scatter({
+    points: rows.filter((t) => t.estimated.matches && t.epa.epa != null)
+      .map((t) => ({ label: `${t.team}`, x: t.estimated.avgFuel, y: t.epa.epa })),
+    xLabel: 'our fuel / match', yLabel: 'statbotics EPA', diagonal: false,
+    height: 250, width: 400,
+    empty: 'Statbotics has nothing for this event yet.',
+    caption: 'Different units, so there is no agreement line to draw — only a shape. EPA is '
+           + 'a whole-season fit and counts climb and auto; our fuel column does not.',
+  });
+
+  // ---- the side pane
+  const withLovat = rows.filter((t) => lovatN(t)).length;
+  const withEpa = rows.filter((t) => t.epa.epa != null).length;
+  $('#gSources').innerHTML = `
+    <div class="kv"><span>teams our scouts have seen</span><b>${rows.filter((t) => t.matchesScouted).length}</b></div>
+    <div class="kv"><span>teams lovat has</span><b>${withLovat || '—'}</b></div>
+    <div class="kv"><span>teams statbotics has</span><b>${withEpa || '—'}</b></div>`;
+
+  const defenders = rows.filter((t) => t.observed.defenseSecs)
+    .sort((a, b) => b.observed.defenseSecs - a.observed.defenseSecs).slice(0, 5);
+  const pressured = rows.filter((t) => t.observed.defenseFacedSecs)
+    .sort((a, b) => b.observed.defenseFacedSecs - a.observed.defenseFacedSecs).slice(0, 3);
+  $('#gDefSummary').innerHTML =
+    (defenders.length
+      ? defenders.map((t) => `<div class="kv"><span>${t.team} plays defence</span>
+          <b>${t.observed.defenseSecs}s</b></div>`).join('')
+      : '<div class="hint">No scout has logged defence yet.</div>')
+    + (pressured.length ? `<div class="hint" style="margin-top:6px">Most defended:
+        ${pressured.map((t) => `${t.team} (${t.observed.defenseFacedSecs}s)`).join(', ')}.</div>` : '');
+
+  const timed = rows.filter((t) => (t.lovat || {}).climbStartSecs != null)
+    .sort((a, b) => a.lovat.climbStartSecs - b.lovat.climbStartSecs).slice(0, 6);
+  $('#gClimbTiming').innerHTML = timed.length
+    ? timed.map((t) => `<div class="kv"><span>${t.team} leaves to climb</span>
+        <b>${Math.round(t.lovat.climbStartSecs)}s${t.lovat.bestClimb
+          ? ` · ${esc(String(t.lovat.bestClimb).replace('Level', 'L'))}` : ''}</b></div>`).join('')
+    : '<div class="hint">No Lovat data for this event — set a Lovat key on the hub.</div>';
+
+  chart.wire($('#t-graphs'));
+}
+
 // ═══════════════════════════════════════════════════════════════ SEATS
 const SEAT_KEYS = ['red1', 'red2', 'red3', 'blue1', 'blue2', 'blue3'];
 function renderSeats() {
@@ -1137,6 +1417,7 @@ function renderServer() {
        <a href="/api/export.csv?table=teams">TEAM SUMMARY · CSV</a>
        <a href="/api/export.csv?table=scout">EVERY SCOUT ENTRY · CSV</a>
        <a href="/api/export.csv?table=pit">PIT SCOUTING · CSV</a>
+       <a href="/api/export.csv?table=lovat">WHAT LOVAT HAS · CSV</a>
        <a href="/picklist/print" target="_blank">PRINTABLE PICKLIST</a>
        <a href="/picklist/print?list=second" target="_blank">PRINTABLE SECOND-PICK LIST</a>
      </div>
@@ -1156,7 +1437,8 @@ function renderAll() {
     ? `QUAL ${played} / ${total} · ${(STATE.teams || []).length} TEAMS${ago != null ? ` · SYNC ${ago}s` : ''}`
     : 'NO EVENT · 0 TEAMS';
   renderLive(); renderTeams(); renderPicklist(); renderHealth();
-  renderMatchPreview(); renderTeamDetail(); renderSeats(); renderServer(); renderCrew();
+  renderMatchPreview(); renderTeamDetail(); renderGraphs();
+  renderSeats(); renderServer(); renderCrew();
 }
 
 async function refresh() {
@@ -1176,7 +1458,8 @@ async function main() {
   CONFIG = await net.start();
   ourTeam = Number((CONFIG && CONFIG.ourTeam) || 0) || null;
 
-  const TABS = ['crew', 'live', 'teams', 'picklist', 'health', 'seats', 'server', 'match', 'team'];
+  const TABS = ['crew', 'live', 'teams', 'graphs', 'picklist', 'health', 'seats', 'server',
+                'match', 'team'];
   const goTab = (name) => {
     for (const x of $$('#tabs button')) x.classList.toggle('on', x.dataset.tab === name);
     for (const t of TABS) { const el = $(`#t-${t}`); if (el) el.classList.toggle('hide', t !== name); }

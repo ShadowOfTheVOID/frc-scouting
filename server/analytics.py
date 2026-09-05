@@ -57,8 +57,12 @@ def event_summary(store, event_key, include_scouts=False):
         entries_by_team.setdefault(e["team"], []).append(e)
 
     # Defence is logged against the robot doing it; the robot on the receiving
-    # end wants to know too, and only a pass over every entry can say.
+    # end wants to know too, and only a pass over every entry can say. Seconds
+    # as well as matches: "defended three times" and "defended for ninety
+    # seconds" are different facts, and the second is the one that explains a
+    # fuel number that fell off a cliff.
     defended_by = {}
+    faced_secs = {}
     for e in entries:
         target = (e.get("payload") or {}).get("defenseTarget")
         if target is None:
@@ -69,6 +73,9 @@ def event_summary(store, event_key, include_scouts=False):
             continue
         defended_by.setdefault(target, {})
         defended_by[target][e["team"]] = defended_by[target].get(e["team"], 0) + 1
+        secs = _interval_secs((e.get("payload") or {}).get("defenseIntervals"))
+        faced = faced_secs.setdefault(target, {})
+        faced[e["matchKey"]] = faced.get(e["matchKey"], 0.0) + secs
 
     # A team Lovat has and we do not is still a team at this event worth a row -
     # it is the case where somebody else's scouting is most use to us.
@@ -81,7 +88,15 @@ def event_summary(store, event_key, include_scouts=False):
                                   solved_by.get(team, []), by_match,
                                   _lookup(rankings, team), _lookup(epa, team),
                                   defended_by.get(team) or {},
-                                  _lookup(lovat_rows, team))
+                                  _lookup(lovat_rows, team),
+                                  faced_secs.get(team) or {})
+        # Kept beside the averages rather than folded into them: an average
+        # says how good a robot is, a series says whether it is getting better,
+        # and a picklist meeting the night before eliminations wants both.
+        out[team]["trend"] = _team_trend(team, matches, entries_by_team.get(team, []),
+                                         solved_by.get(team, []),
+                                         _lookup(lovat_rows, team),
+                                         faced_secs.get(team) or {})
 
     return {
         "eventKey": event_key,
@@ -186,6 +201,153 @@ def score_report(store, event_key, matches=None, entries=None):
     }
 
 
+def _interval_secs(intervals):
+    return sum(max(0.0, float(iv.get("end", iv["start"])) - float(iv["start"]))
+               for iv in (intervals or []))
+
+
+def _team_trend(team, matches, entries, solved, lovat, faced_secs):
+    """One row per match this robot played, in schedule order.
+
+    Everything the dashboard draws a line through, joined on the match key and
+    kept in its own source's terms: `fuel` is the solver, `officialFuel` is
+    TBA's total for the whole alliance, `defenseSecs` is our scouts, and the
+    `lovat*` fields are somebody else's scouts.  Four sources on one x axis is
+    the point - the disagreements are where the interesting robots are - and
+    mixing them into one averaged number would hide exactly that.
+
+    A field nobody recorded is null and the chart leaves a gap. It is never
+    zero: "no scout was watching" and "did nothing" look identical on a line
+    and mean opposite things.
+    """
+    solved_by_key = {s["matchKey"]: s for s in solved}
+    # A HAND OVER mid-match leaves two entries for one (match, team); the
+    # first is the one that covers the start of the match.
+    entry_by_key = {}
+    for e in entries:
+        entry_by_key.setdefault(e["matchKey"], e)
+    lovat_by_key = {}
+    for row in (lovat or {}).get("perMatch") or []:
+        if row.get("matchKey"):
+            lovat_by_key.setdefault(row["matchKey"], row)
+
+    out = []
+    for m in matches:
+        mk = m["matchKey"]
+        alliance = ("red" if team in (m.get("red") or [])
+                    else "blue" if team in (m.get("blue") or []) else None)
+        sv, e, lv = solved_by_key.get(mk), entry_by_key.get(mk), lovat_by_key.get(mk)
+        known = sv or e or lv
+        if not (alliance or known):
+            continue                    # not this robot's match at all
+        # A match still to be played carries no measurement from anybody, and a
+        # run of empty points on the right of a chart is dead space that
+        # squashes the part with data in it.
+        if not (m.get("breakdown") or known):
+            continue
+        info = ((m.get("breakdown") or {}).get(alliance) or {}) if alliance else {}
+        lineup = (m.get(alliance) or []) if alliance else []
+        idx = lineup.index(team) if team in lineup else None
+        climb = ((info.get("endgameTower") or [None, None, None])[idx]
+                 if idx is not None and info else None)
+        auto_climb = ((info.get("autoTower") or [None, None, None])[idx]
+                      if idx is not None and info else None)
+        p = (e.get("payload") or {}) if e else {}
+        row = {
+            "matchKey": mk,
+            "label": m.get("label"),
+            "alliance": alliance,
+            "played": bool(m.get("breakdown")),
+            # estimated
+            "fuel": sv["fuel"] if sv else None,
+            "band": sv["band"] if sv else None,
+            "provisional": bool(sv.get("provisional")) if sv else None,
+            # exact - the whole alliance, which is what TBA publishes
+            "officialFuel": (sum(v for v in (info.get("windows") or {}).values() if v)
+                             if info.get("windows") else None),
+            "climb": climb,
+            "autoClimb": auto_climb,
+            "towerPoints": (rules.tower_points(climb or "None", "teleop")
+                            + rules.tower_points(auto_climb or "None", "auto")
+                            if info else None),
+            # observed
+            "defenseSecs": round(_interval_secs(p.get("defenseIntervals")), 1) if e else None,
+            "feedSecs": round(_interval_secs(p.get("feedIntervals")), 1) if e else None,
+            "defenseFacedSecs": round(faced_secs[mk], 1) if mk in faced_secs else None,
+            "died": bool(p.get("died")) if e else None,
+            # lovat
+            "lovatFuel": lv.get("fuel") if lv else None,
+            "lovatDefenseSecs": lv.get("defenseSecs") if lv else None,
+            "lovatClimbStartSecs": lv.get("climbStartSecs") if lv else None,
+        }
+        out.append(row)
+    return out
+
+
+def match_projection(teams, match, alliance):
+    """What the numbers already on the hub add up to for one alliance.
+
+    Sums, not a forecast: `projectedFuel` is each robot's solver average added
+    together, `band` is how well we know those averages, `matchSpread` is how
+    much a single match swings (independent robots, so the variances add), and
+    the tower points are TBA's own per-robot averages.
+
+    It exists so a generated match read can cite a projection rather than do
+    arithmetic - the ground rules forbid the model computing new numbers, and a
+    strategy call needs the alliance total, not three separate averages. The
+    dashboard's own `project()` in desk.js is the same sum for the same reason;
+    this one travels to the model.
+    """
+    lineup = (match.get(alliance) or []) if match else []
+    fuel = band_sq = spread_sq = tower = 0.0
+    scouted, unscouted = 0, []
+    for t in lineup:
+        rec = teams.get(t) or teams.get(str(t))
+        if not rec or not rec.get("estimated", {}).get("matches"):
+            unscouted.append(t)
+            continue
+        scouted += 1
+        es, ex = rec["estimated"], rec.get("exact") or {}
+        fuel += es.get("avgFuel") or 0
+        band_sq += (es.get("band") or 0) ** 2
+        spread_sq += (es.get("matchBand") or 0) ** 2
+        tower += ex.get("avgTowerPoints") or 0
+    fuel_pts = rules.RULES.get("fuelPoints", 1)
+    return {
+        "alliance": alliance,
+        "lineup": lineup,
+        "robotsScouted": scouted,
+        "notScouted": unscouted,
+        "projectedFuel": round(fuel, 1),
+        "band": round(math.sqrt(band_sq), 1),
+        "matchSpread": round(math.sqrt(spread_sq), 1),
+        "projectedTowerPoints": round(tower, 1),
+        "projectedPoints": round(fuel * fuel_pts + tower, 1),
+    }
+
+
+def defense_history(teams, match):
+    """Who on each alliance has made a habit of defending whom on the other.
+
+    Straight out of `observed.defenseAgainst`, restricted to pairs that are
+    actually on the field together in this match. Our scouts logged every one
+    of these against a named robot, so it is the one part of a match read that
+    is a record rather than an inference.
+    """
+    out = []
+    for side, other in (("red", "blue"), ("blue", "red")):
+        for t in (match.get(side) or []):
+            rec = teams.get(t) or teams.get(str(t))
+            if not rec:
+                continue
+            for target, n in ((rec.get("observed") or {}).get("defenseAgainst") or {}).items():
+                tgt = _int(target)
+                if tgt in (match.get(other) or []):
+                    out.append({"by": t, "byAlliance": side, "against": tgt, "matches": n,
+                                "secsPerMatch": (rec.get("observed") or {}).get("defenseSecs")})
+    return out
+
+
 def _lookup(table, team):
     """kv-store tables round-trip through JSON, so integer keys come back as strings."""
     return table.get(team) or table.get(str(team)) or {}
@@ -199,9 +361,10 @@ def _int(v):
 
 
 def _team_summary(team, meta, entries, solved, by_match, ranking=None, epa=None,
-                  defended_by=None, lovat=None):
+                  defended_by=None, lovat=None, faced_secs=None):
     ranking, epa = ranking or {}, epa or {}
     defended_by = defended_by or {}
+    faced_secs = faced_secs or {}
     lovat = lovat or {}
     # ---------------------------------------------- EXACT (from TBA)
     climbs = {"Level1": 0, "Level2": 0, "Level3": 0, "None": 0}
@@ -396,6 +559,12 @@ def _team_summary(team, meta, entries, solved, by_match, ranking=None, epa=None,
             # {team: matches} in both directions.
             "defenseAgainst": defense_against,
             "defendedBy": defended_by,
+            # Seconds, averaged over the matches somebody was on us. Absent
+            # means nobody has bothered defending this robot yet, which is
+            # itself worth knowing before you pick it.
+            "defenseFacedSecs": (round(_mean(list(faced_secs.values())), 1)
+                                 if faced_secs else None),
+            "defenseFacedMatches": len(faced_secs),
         },
         # A fifth kind of number, and the second one from outside: other teams'
         # scouts, via lovat.app. Unverified, collected to somebody else's
@@ -408,7 +577,10 @@ def _team_summary(team, meta, entries, solved, by_match, ranking=None, epa=None,
             "feedSecs", "feedingRate", "feedsPerMatch", "ballsFed",
             "defenseSecs", "contactDefenseSecs", "campingDefenseSecs",
             "defenseEffectiveness", "climbs", "climbRate", "bestClimb",
-            "autoClimbRate", "beachedRate", "roles", "intakeTypes",
+            "autoClimbRate", "beachedRate", "scoresWhileMovingRate",
+            "disruptRate", "traversalRate", "outpostIntakes",
+            "climbStart", "climbStartSecs", "autoClimbStartSecs",
+            "roles", "intakeTypes", "feederTypes",
             "scouters", "notes", "unmatched")},
         "notes": sorted(notes, key=lambda x: -(x.get("at") or 0)),
     }

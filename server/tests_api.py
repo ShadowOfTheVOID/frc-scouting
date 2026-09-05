@@ -177,6 +177,68 @@ def test_analytics_null_safe(L):
     return ok
 
 
+def test_trend_series(L):
+    """The per-match series the charts draw, and the gaps in it.
+
+    The one thing a chart can get catastrophically wrong is drawing a zero
+    where nobody looked, so this checks the shape of the row as much as the
+    numbers in it: absent must survive the whole way out as null.
+    """
+    ok = True
+    _, a = L.req("/api/analytics")
+    t = a["teams"].get("101") or a["teams"].get(101)
+    trend = t.get("trend") or []
+    ok &= check("a scouted, played match becomes one row", len(trend) == 1, f"({len(trend)})")
+    row = trend[0]
+    ok &= check("the row carries the solver's fuel and its band",
+                row["fuel"] is not None and row["band"] is not None, f"({row})")
+    ok &= check("and TBA's own numbers beside it, not mixed into it",
+                row["officialFuel"] == 70 and row["climb"] == "Level2", f"({row})")
+    ok &= check("our scouts' defence seconds are a real zero, because a scout watched",
+                row["defenseSecs"] == 0.0, f"({row['defenseSecs']})")
+    ok &= check("nobody defended this robot, so the seconds faced are unknown, not zero",
+                row["defenseFacedSecs"] is None, f"({row['defenseFacedSecs']})")
+    ok &= check("with no Lovat key every lovat field on the row is unknown",
+                row["lovatFuel"] is None and row["lovatDefenseSecs"] is None, f"({row})")
+
+    # A match still to be played is not a data point, and a run of empty points
+    # on the right of a chart squashes the part with data in it.
+    L.store.put_match(EK, f"{EK}_qm2", label="Qualification 2", comp_level="qm", match_number=2,
+                      red=[101, 102, 103], blue=[201, 202, 203])
+    _, a = L.req("/api/analytics")
+    t = a["teams"].get("101") or a["teams"].get(101)
+    ok &= check("a scheduled match nobody has played yet adds no point",
+                len(t["trend"]) == 1, f"({len(t['trend'])})")
+    return ok
+
+
+def test_defence_counts_both_ways(L):
+    """Defence is logged against the robot doing it; the robot taking it wants
+    to know too, in seconds as well as in matches."""
+    ok = True
+    # Newer than whatever the earlier tests left behind - last-write-wins is the
+    # whole ingest rule, and a hard-coded offset would quietly lose to the
+    # import test's future-dated row.
+    latest = max([e["updatedAt"] for e in L.store.scout_entries(EK)] or [time.time()])
+    e = entry(f"{EK}_qm1", 101, "AK", latest + 60)
+    e["payload"]["defenseIntervals"] = [{"start": 40.0, "end": 55.0}]
+    e["payload"]["defenseTarget"] = 201
+    L.req("/api/sync", {"scout": [e]})
+    _, a = L.req("/api/analytics")
+    by = a["teams"].get("101") or a["teams"].get(101)
+    on = a["teams"].get("201") or a["teams"].get(201)
+    ok &= check("the defender's own seconds land in observed",
+                by["observed"]["defenseSecs"] == 15.0, f"({by['observed']['defenseSecs']})")
+    ok &= check("and the robot on the receiving end is told, in seconds",
+                on["observed"]["defenseFacedSecs"] == 15.0
+                and on["observed"]["defenseFacedMatches"] == 1,
+                f"({on['observed']})")
+    ok &= check("the same seconds land on that match's row, for the chart",
+                any(r["defenseFacedSecs"] == 15.0 for r in (on.get("trend") or [])),
+                f"({on.get('trend')})")
+    return ok
+
+
 def test_picklist_lock(L):
     ok = True
     code, pl = L.req("/api/picklist")
@@ -468,6 +530,14 @@ def test_ai_is_gated_and_grounded(L):
         code, r = L.req("/api/ai/picklist", {"order": []})
         ok &= check("an empty picklist is refused before any model is called",
                     code == 200 and r.get("text") is None, f"({r})")
+        code, r = L.req(f"/api/ai/match/{EK}_qm404", {})
+        ok &= check("a match that is not on the schedule is refused, not invented",
+                    code == 200 and r.get("text") is None
+                    and "no such match" in (r.get("reason") or ""), f"({r})")
+        before = L.store.get("aiCalls") or 0
+        code, r = L.req(f"/api/ai/match/{EK}_qm1", {"peek": True})
+        ok &= check("peeking at a match read never spends a call",
+                    code == 200 and (L.store.get("aiCalls") or 0) == before, f"({r})")
     finally:
         hub.Handler._is_local = real_is_local
         L.req("/api/config", {"aiModel": "none", "aiKey": ""})
@@ -727,6 +797,7 @@ def main():
                    test_picklist_lock, test_export_import_idempotent,
                    test_snapshot_and_restore, test_csv_export,
                    test_seats, test_match_clock, test_reconcile, test_config_scope,
+                   test_trend_series, test_defence_counts_both_ways,
                    test_ai_is_gated_and_grounded,
                    test_nexus_tba_one_row, test_legacy_keys_migrate,
                    test_concurrent_writes, test_score_report,

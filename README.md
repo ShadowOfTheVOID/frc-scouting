@@ -79,25 +79,60 @@ runs without any, just with less live data.
 | **Nexus** | live queueing, match timing, pit map, alliance selection | [frc.nexus/api](https://frc.nexus/api) |
 | **FRC Events** | the official result a few minutes before TBA posts it | [frc-events.firstinspires.org](https://frc-events.firstinspires.org/services/API) |
 | **Lovat** | what other teams' scouts recorded about the same robots | [lovat.app](https://lovat.app) — see below |
-| **AI model** | plain-English summaries of your scout notes | Claude, Gemini or OpenAI — see below |
+| **AI model** | summaries of your scout notes, and a read of the next match | Claude, Gemini or OpenAI — see below |
 | Statbotics | EPA next to your own numbers | nothing to do — no key needed |
 
 The fuel numbers always come from The Blue Alliance, whichever other keys you set. FRC Events
 only gets you the result sooner.
 
-**Lovat** is another team's scouting app that a lot of teams use. If your team is registered and
-verified on Lovat, your scouting lead can make a key: open the Lovat Dashboard, go to
-**Settings → API keys**, add one, and copy it — it starts with `lvt-`. Paste that in and the hub
-pulls what Lovat has for your event every five minutes. It is shown in its own column and its
-own panel, clearly marked as other teams' scouting, and it never changes any of your own
-numbers. It is a second opinion, not a correction.
+#### Getting a Lovat key — the long version
 
-**AI** is optional and off until you pick a model and paste a key. It adds three things: a
+**Lovat** ([lovat.app](https://lovat.app)) is another team's scouting app — FRC 8033 build it —
+that a lot of teams upload to. A key gets you what *their* scouts wrote about the robots at your
+event: fuel per match, defence, feeding, driver ratings, notes, and the one thing our own
+scouting cannot produce — the second on the clock each robot left to go and climb.
+
+It is free, and it takes about ten minutes the first time. Do it at home, not at the venue.
+
+1. **Make an account** at [lovat.app](https://lovat.app) and **verify the email** they send.
+   Skipping this is the single most common reason a key comes back empty: an unverified account
+   gets a polite `403` and no data.
+2. **Join or create your team** on Lovat, and get the team **verified**. Verification is a
+   person at Lovat checking that you are who you say you are; it is not instant, so do not
+   leave it until the Thursday before a competition.
+3. Open the **Lovat Dashboard** → **Settings** → **API keys** → **Add key**. Name it something
+   you will recognise later, like `6059 scouting hub`.
+4. **Copy the key immediately.** It starts with `lvt-` and Lovat will not show it to you again.
+5. Paste it into the **Lovat** box at http://localhost:8080/ on the hub laptop, set the event
+   key beside it, and click **SAVE & REFRESH**.
+6. Check it worked on the dashboard's **SERVER** tab: the `lovat` service goes green, and the
+   **GRAPHS** tab starts counting teams under `teams lovat has`.
+
+**Some things worth knowing before you rely on it.**
+
+- Lovat only hands back what your account is allowed to see. If you have set a *team source*
+  rule on their side that narrows it to your own team, that is what you will get. A short list
+  is a setting on their side, not a fault on ours.
+- The hub asks once every five minutes. Lovat rate-limits a key to one request every three
+  seconds, so this leaves that limit completely alone.
+- A blank Lovat column means **nobody at this event uploaded that robot**. It is not a zero, it
+  is not a bad robot, and nothing here will treat it as one.
+- Playoff rows cannot be joined onto our qualification schedule, so they are counted in the
+  totals and listed separately rather than being quietly attached to the wrong match.
+
+Everything Lovat sends is kept in its own column, its own panel, its own CSV and its own colour
+on every chart, clearly marked as other teams' scouting. **It never changes any of your own
+numbers** — neither the solver nor the picklist reads it. It is a second opinion, not a
+correction, and the places where it disagrees with your own scouts are the interesting ones:
+the **GRAPHS** tab plots the two against each other so you can see them.
+
+**AI** is optional and off until you pick a model and paste a key. It adds four things: a
 summary of what your scout notes add up to on each team, a plain-English explanation of the
-picklist you already built, and a question box on the CREW tab. It only ever reads the numbers
-already on this hub — it cannot look anything up, it is told to cite the match and the scout
-behind every claim, and it never changes a number or the picklist order. If you leave it on
-*none*, none of it appears.
+picklist you already built, a **read of the next match** on the MATCH tab — how it compares,
+which robot decides it, who to defend, and what would make that read wrong — and a question box
+on the CREW tab. It only ever reads the numbers already on this hub — it cannot look anything
+up, it is told to cite the match and the scout behind every claim, and it never changes a
+number or the picklist order. If you leave it on *none*, none of it appears.
 
 Pick from one dropdown, grouped Claude, then Gemini, then OpenAI, with the price beside each
 name. Picking the model picks the company, so the key you paste underneath is just that
@@ -226,6 +261,45 @@ second-pick board). One laptop is one laptop, and this is the ten minutes where 
 
 ---
 
+## Graphs
+
+The **GRAPHS** tab draws what the tables only average.
+
+- **FUEL BY MATCH** — up to six robots, a line each, over the whole schedule. This is the one
+  that answers *is it getting better*, which an average cannot. Pick teams from the row of
+  chips; a team keeps its colour while it is on, so the legend does not move under you.
+- **DEFENCE — PLAYED AND FACED** — seconds of contact per match, in both directions. A robot
+  with a good fuel number and a lot of seconds *faced* is a robot that scored that anyway,
+  which is worth knowing an hour before alliance selection.
+- **WHERE THE SOURCES DISAGREE** — every team as one dot: our fuel against Lovat's on the left,
+  our fuel against Statbotics EPA on the right. On the left, the dashed line is agreement, and
+  a robot well off it is one the two sets of scouts read differently. Those are the robots to
+  go and watch yourself.
+
+Every chart has a **table view** under it, so nothing is only reachable by hovering.
+
+A gap in a line is a match with no measurement — a match a robot did not play, or one nobody
+scouted. It is never drawn as a zero, because "nobody was watching" and "did nothing" are
+opposite facts.
+
+Each team's own page has the same two charts for that robot alone, with the solver's
+uncertainty shaded around the fuel line and Lovat's count of the same robot drawn beside it.
+
+## Reading a match before it happens
+
+The **MATCH** tab puts both alliances side by side: projected fuel and points, win probability
+with the margin it came from, and each robot's fuel and climb. It follows the field by default;
+pick any match from the dropdown to look ahead or back. Two warnings fire on their own — two
+partners who both start in the same auto zone, and an opponent with a logged history of
+defending someone in this lineup.
+
+**HOW TO PLAY IT** is the generated part, and only if you have set an AI key. Press the button
+and it writes four lines: how the two alliances compare, the single opposing robot that decides
+it, who to put defence on (or that the data does not support putting anyone on defence), and
+the one thing most likely to make that read wrong. It is told the projection rather than asked
+to work it out, it cites the block behind every number, and it says so plainly when an
+alliance has robots nobody has scouted.
+
 ## Judging the data, not the scouts
 
 A dashboard left open in the stands is readable by anyone walking past, so it is careful about
@@ -270,10 +344,12 @@ The **SERVER** tab on the dashboard has all of it:
 
 - **JSON export** — the whole event. This is the one that imports back in, and the one to send
   another laptop.
-- **CSV** — team summary, every scout entry, or pit scouting. For a spreadsheet, or for handing
-  numbers to an alliance partner. The team summary carries the same scout-vs-official check the
-  HEALTH tab shows, plus defence in both directions and each robot's usual start zone, so the
-  spreadsheet and the dashboard cannot disagree.
+- **CSV** — team summary, every scout entry, pit scouting, or everything Lovat has. For a
+  spreadsheet, or for handing numbers to an alliance partner. The team summary carries the same
+  scout-vs-official check the HEALTH tab shows, plus defence in both directions — seconds
+  played and seconds taken — and each robot's usual start zone, so the spreadsheet and the
+  dashboard cannot disagree. The Lovat file is separate on purpose: it is other teams' scouting
+  and mixing it into our columns is how it ends up quoted back as ours.
 - **Printable picklist** — see above.
 
 ---
@@ -289,12 +365,16 @@ python3 server/hub.py --db data/demo.db
 
 (On Windows, type `python` instead of `python3`.)
 
-That builds 31 teams, 40 matches with 26 already played, scout data already logged, and a real
-pit map. The teams are FIRST's actual **Off-Season Demo Teams (9970–9999)** plus **6059**, so
-nothing here can be confused with a real team's record.
+That builds 31 teams, 40 matches with 26 already played, scout data already logged, a real pit
+map, and a fake Lovat export covering about three quarters of the field. The teams are FIRST's
+actual **Off-Season Demo Teams (9970–9999)** plus **6059**, so nothing here can be confused
+with a real team's record.
 
-Everything works with no keys and no internet: the numbers crunch, the picklist ranks, the pit
-map draws.
+Everything works with no keys and no internet: the numbers crunch, the picklist ranks, the
+graphs draw with all three sources on them, and the pit map draws. The fake Lovat data is
+written as a CSV and read back through the same importer a real key feeds, so the demo
+exercises that path rather than faking around it — and because those scouts disagree with ours
+by a fifth or so, the "where the sources disagree" chart has something real to show.
 
 Adding `--via-nexus` builds the same event but feeds the schedule in the way a real competition
 does, through Nexus rather than as finished results. It is worth using if you are changing how
@@ -331,9 +411,11 @@ Run the tests with:
 ```
 python3 server/tests_solver.py    # the accuracy claims above, on 20k simulated matches
 python3 server/tests_api.py       # the server: syncing, the passcode, export and import
+python3 server/tests_lovat.py     # reading Lovat's export, which is somebody else's file format
+python3 server/tests_ai.py        # the model adapter, stubbed — no key and no network
 ```
 
-Both are plain Python with nothing to install, and both run on every push
+All four are plain Python with nothing to install, and all four run on every push
 (`.github/workflows/ci.yml`).
 
 ## License

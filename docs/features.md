@@ -172,8 +172,8 @@ tracks how much of the field is done.
 
 ## The dashboard
 
-`/dashboard`, on any laptop or tablet on the network. Seven tabs, plus two reached by clicking
-through.
+`/dashboard`, on any laptop or tablet on the network. Nine tabs, plus TEAM DETAIL, reached by
+clicking a team.
 
 ### CREW
 
@@ -200,6 +200,33 @@ number of matches behind it, matches scouted, and a
 **CONFIDENCE** bar. Confidence is a property of the data on that robot — how many matches, and
 how tight the band is relative to the mean — not a judgement of anybody. Click a row for team
 detail.
+
+### GRAPHS
+
+Everything the other tabs average, drawn over time. Three charts, all scoped by one row of team
+chips at the top — up to six teams, and a team keeps its colour for as long as it is selected
+so the legend never re-shuffles under the reader.
+
+- **FUEL BY MATCH** — one line per selected team across the whole schedule, from the solver.
+  The question a table cannot answer: is this robot getting better, and did something change
+  after lunch on Saturday.
+- **DEFENCE — PLAYED AND FACED** — seconds of contact per match in both directions, plus
+  Lovat's own defence seconds where they have them. *Faced* counts only defence a scout
+  attributed to a named robot, so it is a floor rather than a total, and the caption says so.
+- **WHERE THE SOURCES DISAGREE** — two scatter plots, one dot per team. Our fuel against
+  Lovat's fuel, with a dashed y=x line for agreement; and our fuel against Statbotics EPA,
+  with no such line, because they are different units and drawing one would invent a
+  relationship. A team far off the agreement line is one the two sets of scouts read
+  differently — usually a robot one of them has seen fewer times.
+
+The side pane counts how many teams each source has anything for, lists the busiest defenders
+and the most-defended robots, and — from Lovat only — how many seconds into a match each robot
+leaves to go and climb. Our own scouting cannot produce that number: a scout with two thumbs
+cannot time a climb.
+
+Every chart carries a hover readout and a **table view** underneath it, so no value is
+reachable only by hovering. A gap in a line is a match with no measurement; it is never drawn
+as a zero.
 
 ### PICKLIST
 
@@ -250,10 +277,12 @@ Diagnostics — uptime, memory, writes per minute, connected devices, per-servic
 every data source, the event log, every network address the hub is reachable on — and all the
 export links.
 
-### MATCH PREVIEW
+### MATCH
 
-Reached from the tab bar. Both alliances in the next match side by side: projected fuel and
-points, win probability with the margin it came from, and each robot's fuel and climb.
+Both alliances side by side: projected fuel and points, win probability with the margin it came
+from, and each robot's fuel and climb. It follows the field — on-field, then queuing, then the
+next unplayed match — until you pick a specific match from the dropdown, after which it holds
+still so a refresh does not move it while you are reading.
 
 Two warnings fire here:
 
@@ -261,14 +290,30 @@ Two warnings fire here:
   asking about before the match rather than watching it happen.
 - **EXPECT DEFENCE** — an opponent with a logged history of defending someone in this lineup.
 
+**HOW TO PLAY IT** is generated (see [AI](#ai)) and only appears with a model configured. Four
+labelled lines: how the alliances compare, the one opposing robot that decides the match, who
+to defend, and the risk that would make the read wrong. The projection is computed by
+`analytics.match_projection` and handed to the model already summed — the ground rules forbid
+it doing arithmetic, and an alliance total it worked out itself is a number nobody can check.
+
 ### TEAM DETAIL
 
 Reached by clicking a team. Fuel, climb, tower points, reliability, EPA and OPR as tiles; then
 what scouts saw — stockpiling, wasted fuel, feeding, defence in **both** directions (who this
 robot defends, and who defends it), usual start zone, auto failures, fouls, driver rating,
-average preload — then **FROM LOVAT** if other teams scouted them, then **WHAT THE NOTES ADD UP
-TO** (generated, see [AI](#ai)), then every note anyone typed about them, and their pit scouting
-with photos.
+average preload — then two charts, then **FROM LOVAT** if other teams scouted them, then **WHAT
+THE NOTES ADD UP TO** (generated, see [AI](#ai)), then every note anyone typed about them, and
+their pit scouting with photos.
+
+The two charts are this robot alone, match by match:
+
+- **FUEL BY MATCH** — the solver's number with its single-match uncertainty shaded around it,
+  and Lovat's count of the same robot drawn beside it where they have one. The x axis is this
+  robot's own matches, so a gap really is a missing measurement and the line breaks rather than
+  bridging it.
+- **DEFENCE BY MATCH** — seconds played, seconds taken, and Lovat's seconds, whichever of the
+  three anyone recorded. Zero is a scout watching and seeing no defence; a gap is no scout
+  entry at all.
 
 Lovat notes appear in the same list as ours, dimmed and tagged `· lovat`, so you can always see
 whose scout wrote a line.
@@ -294,6 +339,34 @@ row of noughts.
 Fuel is the only estimated number, and it is never shown as a bare integer. The picklist leads
 with exact fields and uses fuel to break ties.
 
+### What Lovat actually gives us
+
+Their export is one row per team per match, and every column of it is kept. Most are averaged
+into the team's `lovat` block; the ones a chart needs are also kept per row, because an average
+cannot show that a robot's fuel collapsed after Q30 and that is the shape worth walking to the
+pits about.
+
+| What | Notes |
+|---|---|
+| fuel, throughput, fuel per second, accuracy, volleys | their scouts' count of the same robot, next to ours |
+| feeding — seconds, rate, feeds per match, balls fed | |
+| defence — total, contact, camping, effectiveness | |
+| **climb start time**, per level, and auto climb start | the second the robot left to go and climb. Our scouting cannot produce this: a scout with two thumbs cannot time a climb |
+| climbs and climb rate per level, best climb | `L2`, `Level 2` and `2` all normalise onto our vocabulary; a label we cannot read is unknown, never a failed climb |
+| points — total, auto, teleop — and driver ability | |
+| beached, scores-while-moving, disrupts, field traversal | booleans, counted as a rate over the rows that answered |
+| outpost intakes, robot roles, feeder types, intake type | |
+| scouter names and free-text notes | notes are shown beside ours, tagged `· lovat` |
+
+Two things their exporter does that cannot be undone on our side: commas inside free text were
+replaced with semicolons before export, and playoff rows carry a label (`SF2-1`) that does not
+map onto a qualification match key. Playoff rows are counted and listed as `unmatched` rather
+than dropped or, worse, joined onto the qual match of the same number.
+
+The whole file is also downloadable as its own CSV from the SERVER tab — separate from the team
+summary on purpose, because a spreadsheet that mixes it into our columns is how it ends up
+quoted back as ours.
+
 ### Why SCOUTS vs TBA uses the raw estimate
 
 This one catches people out. The solver **distributes** TBA's official per-window totals across
@@ -312,12 +385,13 @@ The maths behind the solver itself is in [how-it-works.md](how-it-works.md).
 
 ## AI
 
-Optional, off unless you set a provider and a key in Setup. Three panels, all of them text
+Optional, off unless you set a provider and a key in Setup. Four panels, all of them text
 beside the numbers and never a number of their own:
 
 | Panel | Where | What it does |
 |---|---|---|
 | **WHAT THE NOTES ADD UP TO** | TEAM DETAIL | Reads that team's notes — ours and Lovat's — and names the recurring themes, citing the matches and scouts behind each, and flagging where two scouts disagree. |
+| **HOW TO PLAY IT** | MATCH | Four lines on one match: how the alliances compare, the opposing robot that decides it, who to defend, and the risk that would make the read wrong. |
 | **WHY THIS ORDER** | PICKLIST | One sentence per team explaining the board you already have, then a first-pick and second-pick argument. |
 | **ASK THE DATA** | CREW, in the side column | One question, answered from the team records on this hub. |
 
@@ -333,7 +407,9 @@ enforced in four places rather than merely hoped for:
   say "not enough data" rather than fill a gap, and must report a disagreement between scouts
   rather than resolve it.
 - **The payload is small and labelled.** The hub sends a trimmed per-team record with the block
-  names attached, never the raw entry table.
+  names attached, never the raw entry table. Where a panel needs a total — the alliance
+  projection on a match read — the hub computes it and sends it, rather than leaving the model
+  to add three numbers up in prose where nobody can check the working.
 - **Nothing is written back.** Answers are cached under an `ai:` key as generated text. No AI
   output reaches the solver, the bands, the picklist order or a team record. Read it against the
   panel beside it — that is what the citations are for.
@@ -478,7 +554,7 @@ Everything is JSON over plain HTTP. Useful if you want to drive another display 
 | `/api/config` | GET | Event, which keys are set (booleans only), calibration, server time. |
 | `/api/config` | POST | Hub machine only. |
 | `/api/state` | GET | Schedule, teams, matches, pit data, seats, flags, rankings, EPA. |
-| `/api/analytics` | GET | Per-team aggregates, coverage, score report. `scouts[]` only for the lead. |
+| `/api/analytics` | GET | Per-team aggregates, coverage, score report, and `trend[]` — one row per match per team, the series the charts draw. `scouts[]` only for the lead. |
 | `/api/scout`, `/api/pit` | GET | Raw entries. |
 | `/api/crew`, `/api/seats`, `/api/seatlog` | GET | Who is where. |
 | `/api/diag` | GET | Server diagnostics and event log. |
@@ -486,11 +562,12 @@ Everything is JSON over plain HTTP. Useful if you want to drive another display 
 | `/api/unlock` | POST | Exchange the passcode for a token. |
 | `/api/sync` | POST | What phones send. Last-write-wins on `updatedAt`. |
 | `/api/import` / `/api/export` | POST / GET | Whole-event JSON, idempotent. |
-| `/api/export.csv?table=` | GET | `teams`, `scout` or `pit`. |
+| `/api/export.csv?table=` | GET | `teams`, `lovat`, `scout` or `pit`. |
 | `/api/seat`, `/api/unseat`, `/api/matchstart` | POST | Station claims and the shared clock. |
 | `/api/photo/<id>`, `/api/photos` | GET | Pit photos. |
 | `/api/refresh`, `/api/resolve` | POST | Force a poll, or re-solve one match. |
 | `/api/ai/notes/<team>` | POST | Note digest. `{"peek":true}` reads the cache without generating; `{"force":true}` regenerates. |
+| `/api/ai/match/<matchKey>` | POST | Strategy read of one match. Same `peek` / `force`. |
 | `/api/ai/picklist` | POST | Rationale for an order you send as `{"order":[team,…]}`. Same `peek` / `force`. |
 | `/api/ai/ask` | POST | `{"question":"…"}`. Never cached. |
 | `/api/discover` | GET | Every address the hub is reachable on. |
