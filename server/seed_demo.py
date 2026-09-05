@@ -3,6 +3,8 @@
     python3 server/seed_demo.py [--db data/test.db] [--event 2026demo]
 """
 import argparse
+import csv
+import io
 import json
 import os
 import random
@@ -12,6 +14,7 @@ import time
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 
+import lovat as lovat_report
 import rules
 from store import Store
 
@@ -32,6 +35,80 @@ NOTES = [
     "fed their partner instead of shooting",
     "brownout after the climb",
 ]
+
+
+#: Lovat's export columns, in the order its exporter writes them. The demo
+#: builds this file and hands it to the same parser a real key feeds, so a
+#: column that gets renamed upstream breaks here as loudly as it would there.
+LOVAT_COLUMNS = [
+    "match", "teamNumber", "totalPoints", "teleopPoints", "autoPoints", "driverAbility",
+    "fuelPerSecond", "accuracy", "volleysPerMatch", "l1StartTime", "l2StartTime",
+    "l3StartTime", "autoClimbStartTime", "contactDefenseTime", "defenseEffectiveness",
+    "campingDefenseTime", "totalDefenseTime", "timeFeeding", "feedingRate", "feedsPerMatch",
+    "totalFuelOutputted", "totalBallThroughput", "totalBallsFed", "outpostIntakes",
+    "robotRoles", "fieldTraversal", "endgameClimb", "beached", "scoresWhileMoving",
+    "disrupts", "autoClimb", "feederTypes", "intakeType", "scouter", "notes",
+]
+
+LOVAT_SCOUTERS = ["8033-ana", "8033-ben", "1114-cy", "254-dee"]
+
+
+def _lovat_row(rng, team, match_no, profile, fuel, defends, breakdown, alliance, idx):
+    """One row of somebody else's scouting for one robot in one match.
+
+    Their number for the same robot, not ours: a scout counting by eye lands
+    within about a fifth of the truth, which is exactly the spread that makes
+    the two sources worth showing side by side rather than averaging.
+    """
+    seen = round(fuel * rng.uniform(0.8, 1.2), 1) if fuel else None
+    climb = breakdown[alliance]["endgameTower"][idx] if breakdown else "None"
+    # Lovat times the climb, in one column per level and blank in the others.
+    starts = {"l1StartTime": "", "l2StartTime": "", "l3StartTime": ""}
+    if climb and climb.startswith("Level"):
+        starts[f"l{climb[-1]}StartTime"] = round(rng.uniform(108, 142), 1)
+    defence = round(rng.uniform(6, 25), 1) if defends else (
+        round(rng.uniform(3, 12), 1) if rng.random() < 0.08 else 0)
+    roles = ["Scorer"] + (["Defender"] if defends else []) + (
+        ["Feeder"] if rng.random() < 0.2 else [])
+    return {
+        "match": f"Q{match_no}",
+        "teamNumber": team,
+        # A column their scout left blank has to survive as blank all the way
+        # to the dashboard, so some of these are deliberately empty.
+        "totalPoints": round(rng.uniform(40, 180)) if rng.random() < 0.9 else "",
+        "teleopPoints": round(rng.uniform(30, 140)),
+        "autoPoints": round(rng.uniform(0, 40)),
+        "driverAbility": rng.randint(1, 5),
+        "fuelPerSecond": round(profile["rate"] * rng.uniform(0.7, 1.3), 2),
+        "accuracy": round(rng.uniform(0.5, 0.95), 2) if rng.random() < 0.85 else "",
+        "volleysPerMatch": rng.randint(2, 9),
+        **starts,
+        "autoClimbStartTime": round(rng.uniform(12, 15), 1) if rng.random() < 0.05 else "",
+        "contactDefenseTime": defence,
+        "defenseEffectiveness": rng.randint(0, 5) if defence else 0,
+        "campingDefenseTime": 0,
+        "totalDefenseTime": defence,
+        "timeFeeding": round(rng.uniform(0, 20), 1),
+        "feedingRate": round(rng.uniform(0, 1.4), 2),
+        "feedsPerMatch": rng.randint(0, 3),
+        "totalFuelOutputted": seen if seen is not None else "",
+        "totalBallThroughput": round(seen * rng.uniform(1.0, 1.2), 1) if seen else "",
+        "totalBallsFed": rng.randint(0, 14),
+        "outpostIntakes": rng.randint(0, 4) if rng.random() < 0.7 else "",
+        "robotRoles": "|".join(roles),
+        "fieldTraversal": "TRUE" if rng.random() < 0.7 else "FALSE",
+        "endgameClimb": climb or "None",
+        "beached": "TRUE" if rng.random() < 0.05 else "FALSE",
+        "scoresWhileMoving": "TRUE" if rng.random() < 0.4 else "FALSE",
+        "disrupts": "TRUE" if rng.random() < 0.12 else "FALSE",
+        "autoClimb": "FALSE",
+        "feederTypes": "Human" if rng.random() < 0.5 else "",
+        "intakeType": rng.choice(["Ground", "Chute", "Both"]),
+        "scouter": rng.choice(LOVAT_SCOUTERS),
+        # Their notes, in their words. Lovat's exporter replaces commas with
+        # semicolons on the way out, and that is not reversible.
+        "notes": rng.choice(NOTES).replace(",", ";") if rng.random() < 0.15 else "",
+    }
 
 
 def main():
@@ -80,6 +157,12 @@ def main():
     def bucket(r):
         return "trickle" if r < 2.2 else ("steady" if r < 6.5 else "dumping")
 
+    # Lovat only has robots somebody else bothered to scout, so it covers most
+    # of the field and not all of it. A team missing from Lovat is a blank
+    # column on the dashboard, not a zero, and the demo should show that.
+    lovat_teams = set(rng.sample(numbers, int(len(numbers) * 0.75)))
+    lovat_rows = []
+
     played = 0
     nexus_matches = []
     for mi in range(1, args.matches + 1):
@@ -106,6 +189,7 @@ def main():
             "blue" if auto_fuel["blue"] > auto_fuel["red"] else None)
 
         windows = {"red": {}, "blue": {}}
+        robot_fuel = {}
         for alliance, lineup in (("red", red), ("blue", blue)):
             for ph in rules.PHASES:
                 pid = ph["id"]
@@ -125,6 +209,7 @@ def main():
                         budget -= d
                         r = max(0.2, p["rate"] * rng.uniform(0.8, 1.2))
                         total += d * r
+                        robot_fuel[t] = robot_fuel.get(t, 0.0) + d * r
                         od = max(0.3, d + rng.gauss(0, 0.4))
                         b = bucket(r)
                         if rng.random() < 0.15:
@@ -225,12 +310,32 @@ def main():
                     },
                 })
 
+                # ---- what another team's scouts, uploading to Lovat, saw.
+                # Deliberately NOT a copy of our row: a different pair of eyes
+                # on the same robot, missing some matches entirely and some
+                # columns within a match. That is what makes the "where the
+                # sources disagree" chart show anything, and what keeps the
+                # null-safety honest - a blank must read as unknown, never zero.
+                if t in lovat_teams and rng.random() < 0.85:
+                    lovat_rows.append(_lovat_row(rng, t, mi, p, robot_fuel.get(t, 0.0),
+                                                 defends, breakdown, alliance, idx))
+
     if args.via_nexus:
         import hub as hub_mod
         h = hub_mod.Hub(st)
         h.apply_nexus_event({"eventKey": ek, "dataAsOfTime": time.time(),
                              "matches": nexus_matches})
         print(f"  schedule ingested through the Nexus path ({len(nexus_matches)} matches)")
+
+    # ---- lovat, through the real importer rather than as a hand-built dict, so
+    # the demo exercises the CSV parsing that a real event depends on.
+    if lovat_rows:
+        buf = io.StringIO()
+        w = csv.DictWriter(buf, fieldnames=LOVAT_COLUMNS, lineterminator="\n")
+        w.writeheader()
+        w.writerows(lovat_rows)
+        parsed = lovat_report.parse_report_csv(buf.getvalue(), ek) or {}
+        st.set(f"lovat:{ek}", {str(t): rec for t, rec in parsed.items()})
 
     # ---- pit map: the real example response from frc.nexus/api/v1/docs, with the
     # fixture's placeholder team numbers remapped onto this event's teams.
@@ -301,6 +406,9 @@ def main():
 
     print(f"seeded {ek}: {len(numbers)} teams, {args.matches} matches ({played} played)")
     print(f"  rankings + statbotics epa seeded for {len(numbers)} teams (no keys needed)")
+    lv = st.get(f"lovat:{ek}") or {}
+    print(f"  lovat: {len(lovat_rows)} rows for {len(lv)} of {len(numbers)} teams "
+          f"(other teams' scouting, built as CSV and read back through the importer)")
     sz = pit_map.get("size", {})
     print(f"  pit map {sz.get('x')}x{sz.get('y')} from the real Nexus example "
           f"({len(pit_map.get('pits', {}))} pits, {len(addrs)} assigned, "

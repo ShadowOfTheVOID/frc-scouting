@@ -20,7 +20,9 @@
       <div class="seg" id="tabs">
         <button data-tab="crew" class="on">CREW</button>
         <button data-tab="live">LIVE</button>
+        <button data-tab="match">MATCH</button>
         <button data-tab="teams">TEAMS</button>
+        <button data-tab="graphs">GRAPHS</button>
         <button data-tab="picklist">PICKLIST</button>
         <button data-tab="health">HEALTH</button>
         <button data-tab="seats">SEATS</button>
@@ -120,6 +122,49 @@
     </div>
   </div>
 
+  <!-- ═══════════════════════════════════════════════════════ GRAPHS ═══ -->
+  <div class="cols hide" id="t-graphs" style="grid-template-columns:1fr 300px">
+    <div class="pane mid">
+      <div>
+        <div class="eyebrow">TEAMS ON THESE CHARTS</div>
+        <div class="hint" style="margin:4px 0 8px">Up to six. A team keeps its colour while it
+          is on, so the legend does not move under you.</div>
+        <div class="picker" id="gPick"></div>
+      </div>
+      <div class="tbl">
+        <div class="cap"><span class="t">FUEL BY MATCH</span>
+          <span class="n">our solver, <b>estimated</b> — a gap is a match this robot did not play</span></div>
+        <div style="padding:12px 16px 16px" id="gFuel"></div>
+      </div>
+      <div class="tbl">
+        <div class="cap"><span class="t">DEFENCE — PLAYED AND FACED</span>
+          <span class="n">seconds per match, from our scouts and from Lovat</span></div>
+        <div style="padding:12px 16px 16px" id="gDefense"></div>
+      </div>
+      <div class="tbl">
+        <div class="cap"><span class="t">WHERE THE SOURCES DISAGREE</span>
+          <span class="n">one dot per team — the far ones are the robots worth a second look</span></div>
+        <div style="padding:12px 16px 16px;display:grid;grid-template-columns:1fr 1fr;gap:18px">
+          <div id="gVsLovat"></div>
+          <div id="gVsEpa"></div>
+        </div>
+      </div>
+    </div>
+    <div class="pane">
+      <div class="eyebrow">WHAT IS PLOTTED</div>
+      <div class="hint">Every line is one source, kept in that source's own terms. Nothing here
+        averages them together — where two sources disagree about a robot, that disagreement is
+        the finding, not an error to smooth out.</div>
+      <div class="list" id="gSources"></div>
+      <div class="eyebrow" style="margin-top:8px">DEFENCE THIS EVENT</div>
+      <div id="gDefSummary"></div>
+      <div class="eyebrow" style="margin-top:8px">CLIMB TIMING</div>
+      <div class="hint">Lovat times the climb; our scouts cannot. Seconds into the match that a
+        robot left to go and climb.</div>
+      <div class="list" id="gClimbTiming"></div>
+    </div>
+  </div>
+
   <!-- ═════════════════════════════════════════════════════ PICKLIST ═══ -->
   <div class="cols hide" id="t-picklist" style="grid-template-columns:1fr 290px">
     <div class="pane mid">
@@ -193,6 +238,23 @@
 
   <!-- ══════════════════════════════════════════════════ MATCH PREVIEW ═══ -->
   <div class="cols hide" id="t-match" style="grid-template-columns:1fr 1fr">
+    <div class="pane mid" style="grid-column:1/-1">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <span class="eyebrow">MATCH</span>
+        <select id="mvPick" style="padding:7px 10px;border-radius:8px;background:var(--row);
+          border:1px solid var(--btn);color:var(--t1);font:600 12px Barlow,sans-serif"></select>
+        <span class="hint" id="mvHint"></span>
+      </div>
+      <div class="tbl">
+        <div class="cap"><span class="t">HOW TO PLAY IT</span>
+          <span class="n">generated — it reads the numbers below, it does not add to them</span></div>
+        <div style="padding:6px 16px 12px" id="aiMatchBody"></div>
+        <div style="padding:0 16px 12px"><button id="aiMatchGo"
+          style="padding:8px 12px;border-radius:8px;background:transparent;border:1px solid var(--btn);
+          color:var(--t4);font:700 10.5px Barlow,sans-serif;letter-spacing:.12em;cursor:pointer"
+          >READ THIS MATCH</button></div>
+      </div>
+    </div>
     <div class="pane mid" id="mvRed"></div>
     <div class="pane mid" id="mvBlue"></div>
   </div>

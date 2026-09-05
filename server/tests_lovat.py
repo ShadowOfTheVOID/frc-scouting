@@ -79,6 +79,64 @@ def test_parse_fixture():
     return ok
 
 
+def test_per_match_rows():
+    """The chart needs one row per match, not one average per team.
+
+    An average hides the shape, and the shape is the reason to walk to a pit:
+    a robot that put up 40 then 120 averages the same as one that put up 80
+    twice.
+    """
+    ok = True
+    with open(FIXTURE, encoding="utf-8") as fh:
+        teams = lovat.parse_report_csv(fh.read(), EK)
+    t = teams[6059]
+    rows = t["perMatch"]
+    ok &= check("one row per match, playoff rows included", len(rows) == t["matches"] == 4,
+                f"({len(rows)})")
+    ok &= check("a qual row carries the match key we join on",
+                rows[0]["matchKey"] == f"{EK}_qm12" and rows[0]["match"] == "Q12",
+                f"({rows[0]['matchKey']})")
+    ok &= check("a playoff row keeps its label and no key, rather than being dropped",
+                rows[3]["match"] == "SF2-1" and rows[3]["matchKey"] is None,
+                f"({rows[3]['match']}, {rows[3]['matchKey']})")
+    ok &= check("fuel and defence come through per match",
+                [r["fuel"] for r in rows[:2]] == [88.0, 80.0]
+                and rows[2]["defenseSecs"] == 4.5,
+                f"({[r['fuel'] for r in rows]})")
+    ok &= check("a blank cell is unknown per match too, never a zero",
+                rows[2]["fuel"] is None, f"({rows[2]['fuel']})")
+    return ok
+
+
+def test_climb_timing():
+    """The one thing Lovat has that our own scouting cannot produce.
+
+    A scout with two thumbs cannot time a climb. Lovat records the second it
+    started, in one column per level, and that answers the question every
+    alliance captain asks: how long before the buzzer does this robot leave?
+    """
+    ok = True
+    with open(FIXTURE, encoding="utf-8") as fh:
+        teams = lovat.parse_report_csv(fh.read(), EK)
+    t = teams[6059]
+    ok &= check("the filled level column names the level as well as the time",
+                t["climbStart"] == {"Level2": 119.0, "Level3": 128.5}, f"({t['climbStart']})")
+    ok &= check("and pools into one number for the team",
+                t["climbStartSecs"] == 126.2, f"({t['climbStartSecs']})")
+    ok &= check("a team nobody timed in auto reads unknown, not zero",
+                t["autoClimbStartSecs"] is None
+                and teams[254]["autoClimbStartSecs"] == 55.0,
+                f"({t['autoClimbStartSecs']}, {teams[254]['autoClimbStartSecs']})")
+    untimed = teams[254]["perMatch"][1]
+    ok &= check("a row with no climb time reads unknown and is left out of the mean",
+                untimed["climbStartSecs"] is None and untimed["climbLevelTimed"] is None
+                and teams[254]["climbStartSecs"] == 120.0,
+                f"({untimed['climbStartSecs']}, {teams[254]['climbStartSecs']})")
+    ok &= check("field traversal joins the other booleans as a rate",
+                t["traversalRate"] == 100.0, f"({t['traversalRate']})")
+    return ok
+
+
 def test_survives_a_bad_file():
     ok = True
     ok &= check("an empty export is unknown, not an empty event",
@@ -95,7 +153,8 @@ def test_survives_a_bad_file():
 
 if __name__ == "__main__":
     ok = True
-    for fn in (test_match_keys, test_parse_fixture, test_survives_a_bad_file):
+    for fn in (test_match_keys, test_parse_fixture, test_per_match_rows,
+               test_climb_timing, test_survives_a_bad_file):
         print("\n" + fn.__name__.replace("test_", "").replace("_", " "))
         ok &= fn()
     print("\n" + ("ALL PASS" if ok else "FAILURES ABOVE"))

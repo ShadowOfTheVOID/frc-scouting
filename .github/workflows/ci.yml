@@ -97,7 +97,23 @@ jobs:
               csv = urllib.request.urlopen(
                   "http://127.0.0.1:8099/api/export.csv?table=teams", timeout=10).read()
               assert csv.count(b"\n") > 2, "csv export is empty"
-              print(f"ok: {len(teams)} teams, fitted from {cfg['multipliersFittedFrom']} windows")
+
+              # The demo seeds a fake Lovat export and reads it back through the
+              # real importer, so this exercises the whole outside-source path
+              # with no key: per-match rows, the charts' series, and its own CSV.
+              lv = urllib.request.urlopen(
+                  "http://127.0.0.1:8099/api/export.csv?table=lovat", timeout=10).read()
+              assert lv.count(b"\n") > 2, "lovat csv export is empty"
+              with_lovat = [t for t in teams if (t.get("lovat") or {}).get("matches")]
+              assert with_lovat, "lovat block never filled in"
+              assert any(r.get("lovatFuel") is not None
+                         for t in teams for r in (t.get("trend") or [])), \
+                  "no lovat fuel reached the per-match series the charts draw"
+              assert any(r.get("fuel") is not None
+                         for t in teams for r in (t.get("trend") or [])), \
+                  "no solved fuel reached the per-match series"
+              print(f"ok: {len(teams)} teams, fitted from {cfg['multipliersFittedFrom']} windows, "
+                    f"lovat on {len(with_lovat)}")
           finally:
               p.terminate()
           PY

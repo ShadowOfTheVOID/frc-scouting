@@ -958,7 +958,8 @@ def _csv_table(h, ek, table):
                   "avgFuel", "fuelBand",
                   "fuelConsistency", "bestClimb", "climbL3Pct", "climbL2Pct", "climbL1Pct",
                   "autoClimbPct", "avgTowerPoints", "avgRP", "stockpilePct", "wastedFuelPct",
-                  "feedPct", "feedSecs", "defenseSecs", "defenseAgainst", "defendedBy",
+                  "feedPct", "feedSecs", "defenseSecs", "defenseFacedSecs",
+                  "defenseFacedMatches", "defenseAgainst", "defendedBy",
                   "startZone", "startZonePct", "autoFailPct", "foulPct", "avgPreload",
                   "driver", "defense", "diedPct", "tippedPct", "noShowPct"]
         # How far the raw scout estimate ran from the official total on the
@@ -988,6 +989,7 @@ def _csv_table(h, ek, table):
                 round(e["climbRate"].get("Level1", 0), 1), e["autoClimbRate"],
                 e["avgTowerPoints"], e["avgRP"], o["stockpileRate"], o["wastedFuelPct"],
                 o["feedRate"], o["feedSecs"], o["defenseSecs"],
+                o.get("defenseFacedSecs"), o.get("defenseFacedMatches"),
                 _counts(o.get("defenseAgainst")), _counts(o.get("defendedBy")),
                 o.get("startZone"), o.get("startZonePct"),
                 o.get("autoFailRate"), o.get("foulRate"), o.get("avgPreload"),
@@ -1014,6 +1016,45 @@ def _csv_table(h, ek, table):
                 bool(p.get("died")), bool(p.get("tipped")), bool(p.get("noShow")),
                 bool(p.get("autoFailed")), bool(p.get("fouls")),
                 (p.get("note") or "").strip(),
+            ])
+        return header, rows
+
+    if table == "lovat":
+        # Kept as its own file rather than as extra columns on the team summary,
+        # for the same reason it is its own block on the dashboard: it is
+        # somebody else's scouting, collected to somebody else's standard, and a
+        # spreadsheet that mixes it into our columns is how it ends up quoted
+        # back as ours. Every column Lovat's export carries is here.
+        summary = analytics.event_summary(h.store, ek)
+        header = ["team", "name", "matches", "scouters", "avgFuel", "fuelPerSec", "throughput",
+                  "accuracy", "volleys", "ballsFed", "feedSecs", "feedingRate", "feedsPerMatch",
+                  "defenseSecs", "contactDefenseSecs", "campingDefenseSecs",
+                  "defenseEffectiveness", "totalPoints", "autoPoints", "teleopPoints",
+                  "driver", "bestClimb", "climbL3Pct", "climbL2Pct", "climbL1Pct",
+                  "autoClimbPct", "climbStartSecs", "autoClimbStartSecs", "beachedPct",
+                  "scoresWhileMovingPct", "disruptPct", "traversalPct", "outpostIntakes",
+                  "roles", "intakeTypes", "unmatchedRows"]
+        rows = []
+        for t in sorted(summary["teams"].values(), key=lambda x: x["team"]):
+            lv = t.get("lovat") or {}
+            if not lv.get("matches"):
+                continue
+            cr = lv.get("climbRate") or {}
+            rows.append([
+                t["team"], t.get("name"), lv.get("matches"), lv.get("scouters"),
+                lv.get("avgFuel"), lv.get("fuelPerSec"), lv.get("throughput"),
+                lv.get("accuracy"), lv.get("volleys"), lv.get("ballsFed"),
+                lv.get("feedSecs"), lv.get("feedingRate"), lv.get("feedsPerMatch"),
+                lv.get("defenseSecs"), lv.get("contactDefenseSecs"),
+                lv.get("campingDefenseSecs"), lv.get("defenseEffectiveness"),
+                lv.get("totalPoints"), lv.get("autoPoints"), lv.get("teleopPoints"),
+                lv.get("driver"), lv.get("bestClimb"),
+                cr.get("Level3"), cr.get("Level2"), cr.get("Level1"),
+                lv.get("autoClimbRate"), lv.get("climbStartSecs"), lv.get("autoClimbStartSecs"),
+                lv.get("beachedRate"), lv.get("scoresWhileMovingRate"), lv.get("disruptRate"),
+                lv.get("traversalRate"), lv.get("outpostIntakes"),
+                _counts(lv.get("roles")), _counts(lv.get("intakeTypes")),
+                " · ".join(lv.get("unmatched") or []) or None,
             ])
         return header, rows
 
@@ -1061,6 +1102,25 @@ that robot, citing the block each number comes from. Then two final lines,
 "First pick:" and "Second pick:", each naming a team already in the list and
 the recorded strength that argues for it."""
 
+AI_MATCH_TASK = """Task: read one upcoming match for the strategy lead.
+
+Write it as four labelled lines and nothing else:
+
+"Reads:" - one sentence on how the two alliances compare, citing the projection
+block and the team numbers behind it.
+"Watch:" - the single robot on the opposing alliance that decides this match,
+and the recorded number that says so.
+"Defence:" - who to put defence on, or that the data does not support putting a
+robot on defence, citing the `defenseHistory` block and the `defenseSecs` behind
+it. If nobody on either alliance has logged defence, say that.
+"Risk:" - the one thing most likely to make this read wrong, from the data
+itself: robots with few matches scouted, a wide band, a died or no-show rate,
+or a lineup nobody has scouted.
+
+The projection block is already summed for you - never add, subtract or
+rescale numbers to make a new one. Where an alliance has unscouted robots, say
+which and treat the projection as incomplete rather than quietly trusting it."""
+
 AI_ASK_TASK = """Task: answer one question from the strategy lead about this event.
 
 Answer in at most four sentences, from the team records supplied and nothing
@@ -1104,6 +1164,35 @@ def _ai_team_payload(rec, rank=None):
     if rank is not None:
         out["rank"] = rank
     return out
+
+
+def _ai_match_payload(summary, match):
+    """The six robots on one match, both projections, and the defence history.
+
+    The projections are computed in analytics.py and travel with the payload so
+    a match read can cite an alliance total instead of adding three numbers up
+    itself, which the ground rules forbid and which a model gets wrong quietly.
+    """
+    teams = summary.get("teams") or {}
+    sides = {}
+    for side in ("red", "blue"):
+        rows = [r for r in (_ai_team_payload(teams.get(t) or teams.get(str(t)))
+                            for t in (match.get(side) or [])) if r]
+        sides[side] = {
+            "projection": analytics.match_projection(teams, match, side),
+            "teams": rows,
+        }
+    return {
+        "match": {"key": match.get("matchKey"), "label": match.get("label"),
+                  "status": match.get("status")},
+        "red": sides["red"],
+        "blue": sides["blue"],
+        "defenseHistory": analytics.defense_history(teams, match),
+        "startZones": {side: {t: ((teams.get(t) or teams.get(str(t)) or {})
+                                  .get("observed") or {}).get("startZone")
+                              for t in (match.get(side) or [])}
+                       for side in ("red", "blue")},
+    }
 
 
 def _ai_notes_payload(rec):
@@ -1450,7 +1539,8 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 header, rows = _csv_table(h, ek, table)
             except KeyError:
-                return self._json({"error": "table must be teams, scout or pit"}, 400)
+                return self._json(
+                    {"error": "table must be teams, lovat, scout or pit"}, 400)
             return self._csv(f"{ek}-{table}.csv", header, rows)
         if p == "/picklist/print":
             return self._file("picklist_print.html")
@@ -1694,6 +1784,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"configured": True, "text": None,
                                    "reason": "no notes typed yet"})
             cache, system, user = (f"ai:notes:{ek}:{team}", AI_NOTES_TASK,
+                                   json.dumps(payload, sort_keys=True))
+        elif kind.startswith("match/"):
+            mk = kind.split("/", 1)[1]
+            match = h.store.match(ek, mk)
+            if not match:
+                return self._json({"configured": True, "text": None,
+                                   "reason": "no such match on this schedule"})
+            lineup = (match.get("red") or []) + (match.get("blue") or [])
+            if not lineup:
+                return self._json({"configured": True, "text": None,
+                                   "reason": "no lineup for that match yet"})
+            payload = _ai_match_payload(summary, match)
+            if not (payload["red"]["teams"] or payload["blue"]["teams"]):
+                return self._json({"configured": True, "text": None,
+                                   "reason": "nothing scouted on either alliance yet"})
+            cache, system, user = (f"ai:match:{ek}:{mk}", AI_MATCH_TASK,
                                    json.dumps(payload, sort_keys=True))
         elif kind == "picklist":
             order = [t for t in (_int(x) for x in (body.get("order") or [])) if t]
