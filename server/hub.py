@@ -876,7 +876,7 @@ class Hub:
                                         f"observation of {t} — left uncorrected")
                     else:
                         ivs = shifted
-                robots.append({"team": t, "intervals": ivs})
+                robots.append({"team": t, "intervals": rules.split_by_phase(ivs)})
             if not robots:
                 continue
             rows = solve.solve_match(info.get("windows") or {}, robots, mult=mult, bootstrap=120)
@@ -962,7 +962,7 @@ class Hub:
                     secs = {b: 0.0 for b in rules.BUCKETS}
                     for t in lineup:
                         payload = entries[t].get("payload") or {}
-                        for iv in payload.get("intervals") or []:
+                        for iv in rules.split_by_phase(payload.get("intervals")):
                             if iv.get("phase") != pid:
                                 continue
                             b = iv.get("intensity", "steady")

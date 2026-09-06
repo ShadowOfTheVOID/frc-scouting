@@ -151,7 +151,7 @@ def score_report(store, event_key, matches=None, entries=None):
                 if not e:
                     continue
                 scouted += 1
-                ivs = [iv for iv in ((e.get("payload") or {}).get("intervals") or [])
+                ivs = [iv for iv in rules.split_by_phase((e.get("payload") or {}).get("intervals"))
                        if rules.hub_active(iv.get("phase"), alliance, auto_winner) is True]
                 scout_fuel += solve.interval_weight(ivs, mult)
                 p = e.get("payload") or {}
@@ -454,7 +454,7 @@ def _team_summary(team, meta, entries, solved, by_match, ranking=None, epa=None,
         m = by_match.get(e["matchKey"])
         auto_winner = ((m or {}).get("breakdown") or {}).get("autoWinner")
         alliance = e.get("alliance")
-        ivs = p.get("intervals") or []
+        ivs = rules.split_by_phase(p.get("intervals"))
 
         waste_s = act_s = 0.0
         for iv in ivs:
@@ -658,7 +658,7 @@ def _scout_reliability(entries, by_match, solved):
         rec["matches"] += 1
         m = by_match.get(e["matchKey"])
         info = ((m or {}).get("breakdown") or {}).get(e.get("alliance"))
-        ivs = (e.get("payload") or {}).get("intervals") or []
+        ivs = rules.split_by_phase((e.get("payload") or {}).get("intervals"))
         if not info:
             continue
         official = sum((info.get("windows") or {}).values())
