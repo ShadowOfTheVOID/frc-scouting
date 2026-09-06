@@ -148,7 +148,9 @@ def _climb_start(row):
 
 def match_key(label, event_key):
     """"Q42" -> "<event>_qm42".  Returns None for anything else."""
-    s = (label or "").strip()
+    if not isinstance(label, str):
+        return None
+    s = label.strip()
     if not (s and event_key):
         return None
     kind, digits = s[0].upper(), s[1:].strip()
@@ -159,7 +161,18 @@ def match_key(label, event_key):
 
 def parse_report_csv(text, event_key):
     """CSV text -> {team: record}.  None if the export is unreadable."""
-    if not text or not text.strip():
+    # "This module never raises" is the contract at the top of the file, and a
+    # caller handing us bytes or a parsed object instead of text is exactly the
+    # sort of drift it exists for.
+    if not isinstance(text, str):
+        if isinstance(text, (bytes, bytearray)):
+            try:
+                text = text.decode("utf-8-sig")
+            except Exception:
+                return None
+        else:
+            return None
+    if not text.strip():
         return None
     try:
         rows = list(csv.DictReader(io.StringIO(text)))

@@ -1023,29 +1023,36 @@ class Hub:
 
     # ---------------------------------------------------------- poller
     def run_poller(self):
-        next_nexus = next_tba = next_stat = next_frc = next_lovat = 0.0
+        """Every source on its own schedule, and its own failure.
+
+        This used to be one try around all five in sequence. One source raising
+        - TBA returning a match shaped differently than its schema says, say -
+        skipped every source queued behind it AND never advanced its own next-due
+        time, so the hub spent the rest of the event retrying that one call every
+        two seconds and never polling Lovat, FRC Events or Statbotics again.
+        Nothing said so; the poll simply stopped being a poll.
+        """
+        every = ((self.poll_nexus, NEXUS_POLL_SECONDS),
+                 (self.poll_tba, TBA_POLL_SECONDS),
+                 (self.poll_frc_events, FRC_EVENTS_POLL_SECONDS),
+                 (self.poll_statbotics, STATBOTICS_POLL_SECONDS),
+                 (self.poll_lovat, LOVAT_POLL_SECONDS))
+        due = [0.0] * len(every)
         while not self.stop_flag.is_set():
             now = time.time()
-            try:
-                if now >= next_nexus:
-                    self.poll_nexus()
-                    next_nexus = now + NEXUS_POLL_SECONDS
-                if now >= next_tba:
-                    self.poll_tba()
-                    next_tba = now + TBA_POLL_SECONDS
-                if now >= next_frc:
-                    self.poll_frc_events()
-                    next_frc = now + FRC_EVENTS_POLL_SECONDS
-                if now >= next_stat:
-                    self.poll_statbotics()
-                    next_stat = now + STATBOTICS_POLL_SECONDS
-                if now >= next_lovat:
-                    self.poll_lovat()
-                    next_lovat = now + LOVAT_POLL_SECONDS
-                self.status["lastUpdate"] = time.time()
-            except Exception as e:  # a poller crash must never take the server down
-                self.note("error", f"poll failed: {e}")
-                sys.stderr.write(f"[poll] {e}\n")
+            for i, (fn, secs) in enumerate(every):
+                if now < due[i]:
+                    continue
+                # Advance before the call, not after: a source that fails every
+                # time still waits its own interval instead of spinning.
+                due[i] = now + secs
+                try:
+                    fn()
+                except Exception as e:
+                    name = getattr(fn, "__name__", "poll")
+                    self.note("error", f"{name} failed: {e}")
+                    sys.stderr.write(f"[poll] {name}: {e}\n")
+            self.status["lastUpdate"] = time.time()
             self.stop_flag.wait(2.0)
 
 
