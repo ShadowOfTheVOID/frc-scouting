@@ -438,6 +438,7 @@ def test_junk_payload_cannot_blank_the_dashboard(L):
     """
     ok = True
     ek = "2026junk"
+    was = L.store.get("eventKey")
     L.store.set("eventKey", ek)
     L.store.put_event(ek)
     L.store.put_match(ek, f"{ek}_qm1", label="Qualification 1", red=[101, 102, 103],
@@ -463,6 +464,7 @@ def test_junk_payload_cannot_blank_the_dashboard(L):
     ok &= check("analytics still answers", code == 200, f"({code})")
     ok &= check("and the match still solved despite the bad row",
                 bool([s for s in L.store.solved(ek) if s["matchKey"] == f"{ek}_qm1"]))
+    L.store.set("eventKey", was)          # this fixture is not the event under test
     return ok
 
 
@@ -477,6 +479,7 @@ def test_clock_correction_never_invents_numbers(L):
     ok = True
     ek = "2026clock"
     mk = f"{ek}_qm1"
+    was = L.store.get("eventKey")
     L.store.set("eventKey", ek)
     L.store.put_event(ek)
     actual = time.time() - 500
@@ -525,6 +528,7 @@ def test_clock_correction_never_invents_numbers(L):
         ok &= check(f"and the {late}s offset is flagged rather than silently applied",
                     any(f["kind"] == "clock-offset" for f in L.store.flags(ek)))
         ok &= check(f"the real allocation survives a {late}s-late tap", got == honest, f"({got})")
+    L.store.set("eventKey", was)          # this fixture is not the event under test
     return ok
 
 
