@@ -187,6 +187,45 @@
           </span>
           <span class="n" id="pkStatus">alliance selection not started</span>
         </div>
+        <!-- A view over the board, never the board itself. Filters hide rows on
+             this screen only: the number beside a team stays the rank it holds
+             on the whole list, and nothing here is saved to the hub. -->
+        <div class="pkf" id="pkFilters">
+          <input id="pkSearch" type="search" placeholder="team or name" autocomplete="off" spellcheck="false">
+          <select id="pkClimb" title="Best climb seen in an official result">
+            <option value="0">ANY CLIMB</option>
+            <option value="1">L1 OR BETTER</option>
+            <option value="2">L2 OR BETTER</option>
+            <option value="3">L3 ONLY</option>
+          </select>
+          <select id="pkRate" title="Fuel per second of active time — how fast it cycles, not how much it ends up with. Estimated, like the fuel it comes from.">
+            <option value="0">ANY RATE</option>
+            <option value="1">1+ FUEL/S</option>
+            <option value="2">2+ FUEL/S</option>
+            <option value="3">3+ FUEL/S</option>
+          </select>
+          <select id="pkMinN" title="Matches our own scouts watched">
+            <option value="0">ANY DATA</option>
+            <option value="3">3+ MATCHES</option>
+            <option value="5">5+ MATCHES</option>
+            <option value="8">8+ MATCHES</option>
+          </select>
+          <select id="pkStart" title="The zone this robot usually starts in — the same habit the match preview warns about when two robots share it">
+            <option value="">ANY START</option>
+            <option value="left">STARTS LEFT</option>
+            <option value="centre">STARTS CENTRE</option>
+            <option value="right">STARTS RIGHT</option>
+          </select>
+          <button data-f="hideTaken" title="Hide teams already picked into an alliance">HIDE TAKEN</button>
+          <button data-f="hideDnp" title="Hide teams flagged do-not-pick">HIDE DNP</button>
+          <button data-f="reliable" title="Died or no-showed in under a tenth of its scouted matches">RELIABLE</button>
+          <button data-f="autoWorks" title="Auto did nothing in under a fifth of its scouted matches">AUTO WORKS</button>
+          <button data-f="noClash" id="pkNoClash" title="Hide robots that habitually start where ours does">NO AUTO CLASH</button>
+          <button data-f="defends" title="Rated 3 or better on defence, or has actually spent seconds playing it">DEFENDS</button>
+          <button data-f="stockpiles" title="Stockpiled in at least half its scouted matches">STOCKPILES</button>
+          <span class="c" id="pkFilterCount"></span>
+          <button id="pkFilterClear" class="clear hide">CLEAR</button>
+        </div>
         <div id="pkFull"></div>
       </div>
     </div>

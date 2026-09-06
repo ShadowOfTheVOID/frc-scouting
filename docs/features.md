@@ -240,6 +240,30 @@ you see it so new match data stops reordering it under you, and **RESET TO COMPU
 back. Teams are crossed off automatically as they are picked. **DNP** flags a team as
 do-not-pick.
 
+A row of filters sits over the board: free text against team number and name, a minimum climb,
+a minimum **fuel per second**, a minimum number of matches our scouts watched, the start zone a
+robot habitually uses, and chips for HIDE TAKEN, HIDE DNP, RELIABLE (died or no-showed in under
+a tenth of its matches), AUTO WORKS (auto did nothing in under a fifth of them), NO AUTO CLASH,
+DEFENDS (rated 3+ or has actually spent seconds on it) and STOCKPILES (in at least half its
+matches).
+
+Fuel per second is `estimated.cycleRate` — fuel over active seconds, the rate behind the volume.
+It is estimated, because it divides a solved number, so it sits beside the fuel it came from on
+each row and never above an exact field. A robot nobody could time never clears a floor: no
+measured rate is not a fast rate.
+
+NO AUTO CLASH hides robots whose habitual start zone is our own team's, using the same
+`observed.startZone` the match preview's auto-clash callout reads, so the two cannot disagree.
+It needs OUR TEAM set and scouted; without that the chip is disabled and says why, and the
+filter is inert rather than guessing.
+
+They are a view and nothing more.
+Rank, score, hand order, the rationale below and the printed sheet are all computed over the
+whole board, so a filtered list is the same list with rows hidden — the number beside a team
+stays the rank it holds among everyone. Filters are per-browser (`localStorage`), deliberately
+not hub state: the order has to be shared, but one reader's narrowing must never reach the
+laptop running alliance selection.
+
 Anyone may look. Changing it needs the strategy passcode.
 
 **WHY THIS ORDER** sits above the board and is generated (see [AI](#ai) below). It explains the
@@ -298,7 +322,8 @@ it doing arithmetic, and an alliance total it worked out itself is a number nobo
 
 ### TEAM DETAIL
 
-Reached by clicking a team. Fuel, climb, tower points, reliability, EPA and OPR as tiles; then
+Reached by clicking a team. Fuel — with its band and, where we could time it, fuel per second —
+climb, tower points, reliability, EPA and OPR as tiles; then
 what scouts saw — stockpiling, wasted fuel, feeding, defence in **both** directions (who this
 robot defends, and who defends it), usual start zone, auto failures, fouls, driver rating,
 average preload — then two charts, then **FROM LOVAT** if other teams scouted them, then **WHAT
@@ -529,11 +554,20 @@ Entered at `/` on the hub laptop. All keys are free and all are optional.
 ### Command line
 
 ```
-python3 server/hub.py [--port 8080] [--db data/scouting.db] [--no-mdns] [--allow-remote-config]
+python3 server/hub.py [--port 6059] [--db data/scouting.db] [--no-mdns] [--no-poll]
+                      [--allow-remote-config]
 ```
 
 `--no-mdns` skips answering to `scout.local`. `--allow-remote-config` lets any device on the
 network change hub settings — off by default, and rarely what you want.
+
+`--no-poll` stops the hub reaching out to Nexus, TBA, FRC Events, Statbotics or Lovat; it still
+serves everything already in the database. Use it to look at a saved event without touching the
+network. Statbotics is the reason the flag earns its place: it needs no key, so a hub that is
+online will ask about whatever event key it holds, and for an event that does not exist — a
+demo, a restored snapshot under a placeholder key — it gets a truthful "nothing" back and stores
+that over what was there. The hub notes in its log when polling is off, because a source that is
+silent and a source that is down must not look the same.
 
 ```
 python3 server/seed_demo.py [--db data/demo.db] [--event 2026demo] [--teams 31] [--matches 40] [--via-nexus]

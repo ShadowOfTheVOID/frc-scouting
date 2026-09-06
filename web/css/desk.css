@@ -147,6 +147,23 @@ a:hover{color:var(--red-label)}
 .pk .x{font:700 10px Barlow,sans-serif;letter-spacing:.1em;color:var(--t5);cursor:pointer;
   border:1px solid var(--btn);border-radius:5px;padding:3px 6px;background:transparent}
 
+/* Filters over the draft board. One row, directly above what it scopes - the
+   same rule the graph tab's team chips follow. An active filter wears the red
+   the board uses for "this is doing something", so a list that is hiding rows
+   can never look like the whole list. */
+.pkf{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:9px 16px;
+  background:var(--thead);border-bottom:1px solid var(--line)}
+.pkf input,.pkf select{background:var(--raised);border:1px solid var(--btn);border-radius:7px;
+  padding:5px 8px;color:var(--t0);font:600 11px Barlow,sans-serif}
+.pkf input{width:132px}
+.pkf input::placeholder{color:var(--t6);font-weight:500}
+.pkf select{color:var(--t2);letter-spacing:.06em;color-scheme:dark;cursor:pointer}
+.pkf button{padding:5px 9px;border-radius:7px;background:transparent;cursor:pointer;
+  border:1px solid var(--btn);color:var(--t4);font:700 10.5px Barlow,sans-serif;letter-spacing:.06em}
+.pkf button.on{border-color:var(--red-ring);background:rgba(225,29,43,.1);color:var(--red-soft)}
+.pkf .c{margin-left:auto;white-space:nowrap;font:500 11px Barlow,sans-serif;color:var(--t5)}
+.pkf button.clear{color:var(--t5)}
+
 .wt{display:flex;flex-direction:column;gap:3px}
 .wt .lb{display:flex;justify-content:space-between;font:600 10.5px Barlow,sans-serif;
   letter-spacing:.1em;color:var(--t4)}

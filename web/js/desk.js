@@ -19,6 +19,8 @@ const WEIGHTS = { climb: 30, reliability: 25, stockpile: 15, fuel: 20, defense: 
 const WEIGHTS2 = { climb: 15, reliability: 30, stockpile: 20, fuel: 15, defense: 35 };
 let PICK_MODE = 'first';
 const activeWeights = () => (PICK_MODE === 'first' ? WEIGHTS : WEIGHTS2);
+// Climb levels in order, for anything that has to compare two of them.
+const CLIMB_RANK = { Level3: 3, Level2: 2, Level1: 1, None: 0 };
 
 const RANK_COLS = '56px minmax(120px,1fr) 84px 74px 52px 44px 86px';
 const ALL_COLS  = '62px 56px minmax(160px,1fr) 84px 74px 62px 60px 62px 62px 56px 52px 70px 64px';
@@ -229,7 +231,7 @@ function sortVal(t, k) {
     case 'epa': return t.epa.epa ?? -1;
     case 'team': return t.team; case 'name': return 0;
     case 'fuel': return t.estimated.avgFuel;
-    case 'climb': return { Level3: 3, Level2: 2, Level1: 1, None: 0 }[t.exact.bestClimb] || 0;
+    case 'climb': return CLIMB_RANK[t.exact.bestClimb] || 0;
     case 'tower': return t.exact.avgTowerPoints;
     case 'stock': return t.observed.stockpileRate;
     case 'waste': return -(t.observed.wastedFuelPct ?? 999);
@@ -354,6 +356,122 @@ function moveInOrder(team, before) {
   setActiveOrder(order);
   savePicklist();
 }
+// ------------------------------------------------------------- filters
+//
+// A view over the board, never the board. Filters only decide which rows this
+// screen draws: the score, the saved order and the rank beside each team are
+// all computed against the whole list, so a filtered board is the same board
+// with rows hidden - not a shorter one that has been renumbered.
+//
+// They live in localStorage rather than on the hub on purpose. The order is
+// shared because everyone has to be reading the same list; who is squinting at
+// the L3 climbers right now is nobody else's business, and a filter somebody
+// forgot to clear must never travel to the laptop running alliance selection.
+const FILTER_OFF = { q: '', climb: 0, rate: 0, minMatches: 0, start: '',
+                     hideTaken: false, hideDnp: false, reliable: false,
+                     autoWorks: false, noClash: false, defends: false, stockpiles: false };
+const FILTERS = { ...FILTER_OFF, ...readFilters() };
+
+function readFilters() {
+  try { return JSON.parse(localStorage.getItem('pkFilters') || '{}'); } catch { return {}; }
+}
+function saveFilters() {
+  try { localStorage.setItem('pkFilters', JSON.stringify(FILTERS)); } catch { /* private mode */ }
+}
+/**
+ * The zone our own robot usually starts in, or null if nobody has scouted us.
+ *
+ * Alliance selection is where auto compatibility gets settled, and the match
+ * preview already warns when two robots share a zone. NO AUTO CLASH is that
+ * warning moved a day earlier - the point at which you can still pick someone
+ * else. Without OUR TEAM set there is nothing to clash with, so the filter is
+ * inert rather than wrong.
+ */
+function ourStartZone() {
+  const t = ourTeam && ANALYTICS && ANALYTICS.teams[ourTeam];
+  return (t && t.observed.startZone) || null;
+}
+const filtersOn = () => Object.keys(FILTER_OFF).some((k) =>
+  FILTERS[k] !== FILTER_OFF[k] && !(k === 'noClash' && !ourStartZone()));
+
+/** Does this team survive the current filters? `taken` and `ourZone` are passed
+    in so a render works each of them out once for the whole board. */
+function passesFilters(t, taken, ourZone) {
+  const f = FILTERS, o = t.observed, s = t.estimated;
+  if (f.hideTaken && taken.has(t.team)) return false;
+  if (f.hideDnp && DNP.has(t.team)) return false;
+  if (f.minMatches && t.matchesScouted < f.minMatches) return false;
+  if (f.climb && (CLIMB_RANK[t.exact.bestClimb] || 0) < f.climb) return false;
+  // Fuel per second of active time: volume says how much a robot ends a match
+  // with, this says how fast it gets there, and a picklist wants both. It is
+  // estimated - it divides a solved number - so it belongs beside the fuel it
+  // came from and never above an exact field. No measured rate is not a fast
+  // rate, so a robot we cannot time never clears a floor.
+  if (f.rate && !(s.cycleRate >= f.rate)) return false;
+  if (f.start && o.startZone !== f.start) return false;
+  // Broke down or never turned up. Both end the same way for an alliance.
+  if (f.reliable && (o.diedRate + o.noShowRate) > 10) return false;
+  if (f.autoWorks && (o.autoFailRate || 0) >= 20) return false;
+  if (f.noClash && ourZone && o.startZone === ourZone) return false;
+  // A rating is a scout's opinion and seconds are a count; either is enough to
+  // say this robot will play defence if you ask it to.
+  if (f.defends && !((o.defense || 0) >= 3 || (o.defenseSecs || 0) > 0)) return false;
+  if (f.stockpiles && (o.stockpileRate || 0) < 50) return false;
+  const q = f.q.trim().toLowerCase();
+  if (q && !String(t.team).includes(q) && !String(t.name || '').toLowerCase().includes(q)) return false;
+  return true;
+}
+
+/** Wired once, at startup: the bar is static markup, so re-rendering the board
+    under a lead who is mid-word in the search box never takes the caret away. */
+function wireFilters() {
+  const q = $('#pkSearch');
+  if (!q) return;
+  q.oninput = () => { FILTERS.q = q.value; saveFilters(); renderPicklist(); };
+  for (const [sel, key] of [['#pkClimb', 'climb'], ['#pkRate', 'rate'], ['#pkMinN', 'minMatches']]) {
+    const el = $(sel);
+    el.onchange = () => { FILTERS[key] = Number(el.value); saveFilters(); renderPicklist(); };
+  }
+  const zone = $('#pkStart');
+  zone.onchange = () => { FILTERS.start = zone.value; saveFilters(); renderPicklist(); };
+  for (const b of $$('#pkFilters [data-f]')) {
+    b.onclick = () => { FILTERS[b.dataset.f] = !FILTERS[b.dataset.f]; saveFilters(); renderPicklist(); };
+  }
+  $('#pkFilterClear').onclick = () => {
+    Object.assign(FILTERS, FILTER_OFF);
+    saveFilters();
+    renderPicklist();
+  };
+  syncFilterBar();
+}
+
+function syncFilterBar(shown, total) {
+  const q = $('#pkSearch');
+  if (!q) return;
+  if (q.value !== FILTERS.q) q.value = FILTERS.q;
+  $('#pkClimb').value = String(FILTERS.climb);
+  $('#pkRate').value = String(FILTERS.rate);
+  $('#pkMinN').value = String(FILTERS.minMatches);
+  $('#pkStart').value = FILTERS.start;
+  for (const b of $$('#pkFilters [data-f]')) b.classList.toggle('on', !!FILTERS[b.dataset.f]);
+  // Nothing to clash with until somebody has scouted our own robot, so the chip
+  // says which zone it is working from rather than filtering on a guess.
+  const ourZone = ourStartZone();
+  const clash = $('#pkNoClash');
+  clash.disabled = !ourZone;
+  clash.style.opacity = ourZone ? '' : '.45';
+  clash.title = ourZone
+    ? `Hide robots that usually start ${ourZone}, where ${ourTeam} does`
+    : 'Needs OUR TEAM set on the hub settings page, and a scouted start zone for it';
+  const on = filtersOn();
+  $('#pkFilterClear').classList.toggle('hide', !on);
+  // Say the rank is the board's, not the visible list's, wherever rows are
+  // hidden - a "3" against the fourth visible row is otherwise a misreading
+  // waiting to happen in the ten minutes it matters most.
+  $('#pkFilterCount').textContent = on && total != null
+    ? `${shown} of ${total} shown \u00b7 numbers are board ranks` : '';
+}
+
 function renderPickMini() {
   const taken = takenTeams();
   $('#pkMini').innerHTML = ranked().slice(0, 8).map(({ t, s }, i) => `
@@ -434,6 +552,18 @@ async function savePicklist() {
   } catch { /* stays local until the hub is back */ }
 }
 
+// Both of these are filterable, so both have to be readable on the row - a
+// board that hides teams on a number it never shows is a board you cannot
+// argue with. Absent means nobody has measured it, which is not a zero.
+function rateBit(t) {
+  const r = t.estimated.cycleRate;
+  return r ? ` · ${r}/s` : '';
+}
+function startBit(t) {
+  const z = t.observed.startZone;
+  return z ? ` · starts ${esc(z)}` : '';
+}
+
 function driftCell(was, i) {
   // Only meaningful once the board is hand-ordered; before that `was` is `i+1`.
   // Moving one team shifts everyone it passed by a place, and marking all of
@@ -490,15 +620,24 @@ function renderPicklist() {
     ? `${taken.size} team${taken.size > 1 ? 's' : ''} already taken — crossed off live`
     : (activeOrder().length ? 'hand-ordered — new data no longer reorders the board'
                             : 'alliance selection not started');
-  $('#pkFull').innerHTML = ranked().map(({ t, s, was }, i) => `
-    <div class="pk ${i === 0 ? 'top' : ''} ${taken.has(t.team) ? 'taken' : ''} ${DNP.has(t.team) ? 'dnp' : ''}"
+  // `at` is the row's place on the whole board and it travels with the row, so
+  // hiding teams never renumbers the ones still showing - and a drag drops
+  // against the real order, hidden teams included.
+  const board = ranked().map((r, i) => ({ ...r, at: i }));
+  const ourZone = ourStartZone();
+  const rows = board.filter(({ t }) => passesFilters(t, taken, ourZone));
+  syncFilterBar(rows.length, board.length);
+  $('#pkFull').innerHTML = rows.map(({ t, s, was, at }) => `
+    <div class="pk ${at === 0 ? 'top' : ''} ${taken.has(t.team) ? 'taken' : ''} ${DNP.has(t.team) ? 'dnp' : ''}"
          style="margin:0;border-bottom:1px solid var(--row)"
          data-team="${t.team}"${CAN_EDIT ? ' draggable="true"' : ''}>
-      <span class="i">${i + 1}</span><span class="n">${t.team}</span>
-      <span class="nm">${esc(t.name || '')} — ${climbCell(t)} · ${t.estimated.avgFuel}±${t.estimated.band} fuel · stock ${Math.round(t.observed.stockpileRate)}%${driftCell(was, i)}</span>
+      <span class="i">${at + 1}</span><span class="n">${t.team}</span>
+      <span class="nm">${esc(t.name || '')} — ${climbCell(t)} · ${t.estimated.avgFuel}±${t.estimated.band} fuel${rateBit(t)} · stock ${Math.round(t.observed.stockpileRate)}%${startBit(t)}${driftCell(was, at)}</span>
       <span class="s">${Math.round(s)}</span>
       ${CAN_EDIT ? `<button class="x" data-dnp="${t.team}">${DNP.has(t.team) ? 'UN-DNP' : 'DNP'}</button>` : ''}
-    </div>`).join('') || '<div class="empty">Nothing to rank yet.</div>';
+    </div>`).join('')
+    || (board.length ? '<div class="empty">No team on the board matches these filters.</div>'
+                     : '<div class="empty">Nothing to rank yet.</div>');
   if (CAN_EDIT) wireDrag();
   for (const b of $$('[data-dnp]')) b.onclick = () => {
     const n = Number(b.dataset.dnp);
@@ -510,8 +649,9 @@ function renderPicklist() {
   $('#dnpList').innerHTML = [...DNP].length
     ? [...DNP].map((n) => `<div class="kv"><span>${n}</span><b>do not pick</b></div>`).join('')
     : '<div class="hint">nobody flagged</div>';
-  // The order is the board's; this only ever explains it.
-  const order = ranked().slice(0, 10).map(({ t }) => t.team);
+  // The order is the board's; this only ever explains it - and it explains the
+  // whole board, not whatever one reader has filtered down to.
+  const order = board.slice(0, 10).map(({ t }) => t.team);
   peekAi('#pkWhyBody', 'picklist', { order }, 'Not written yet.');
   wireAi('#pkWhyGo', '#pkWhyBody', 'picklist', () => ({ order }), 'Not written yet.');
 
@@ -975,7 +1115,8 @@ function renderTeamDetail() {
         <div class="hint">${t.matchesScouted} matches scouted · ${e.matchesWithOfficial} with official results${recordLine(e)}</div></div>
     </div>
     <div class="tiles" style="grid-template-columns:repeat(3,1fr)">
-      ${tile('FUEL / MATCH', es.avgFuel, `± ${es.band} · estimated`)}
+      ${tile('FUEL / MATCH', es.avgFuel,
+             `± ${es.band}${es.cycleRate ? ` · ${es.cycleRate}/s` : ''} · estimated`)}
       ${tile('BEST CLIMB', e.bestClimb === 'None' ? '—' : e.bestClimb.replace('Level', 'L'),
              `${Math.round(e.climbRate[e.bestClimb] || 0)}% of matches · exact`)}
       ${tile('TOWER PTS', e.avgTowerPoints, `auto climb ${e.autoClimbRate ?? 0}%`)}
@@ -1469,6 +1610,7 @@ async function main() {
   for (const b of $$('#tabs button')) b.onclick = () => goTab(b.dataset.tab);
 
   renderWeights();
+  wireFilters();
   $('#pinLock').onclick = async () => {
     localStorage.removeItem('strategyToken');
     await loadPicklistState();

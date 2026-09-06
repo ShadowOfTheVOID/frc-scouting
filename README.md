@@ -48,12 +48,12 @@ A black window appears and prints something like this:
 ```
   FRC 2026 REBUILT scouting server
   ----------------------------------------------------
-    http://192.168.1.120:8080  <- try this first
+    http://192.168.1.120:6059  <- try this first
 
-  Scouts:    open  http://192.168.1.120:8080/scout
-  Dashboard: open  http://192.168.1.120:8080/dashboard
-  Join QR:   open  http://localhost:8080/join   on this screen and let scouts scan it
-  Settings:  open  http://localhost:8080/       on this screen (API keys live here)
+  Scouts:    open  http://192.168.1.120:6059/scout
+  Dashboard: open  http://192.168.1.120:6059/dashboard
+  Join QR:   open  http://localhost:6059/join   on this screen and let scouts scan it
+  Settings:  open  http://localhost:6059/       on this screen (API keys live here)
 ```
 
 **Leave that black window open.** Closing it stops the server. Minimise it instead.
@@ -64,7 +64,7 @@ A black window appears and prints something like this:
 
 ### 4. Add your API keys
 
-On the **laptop itself**, open a browser and go to **http://localhost:8080/**
+On the **laptop itself**, open a browser and go to **http://localhost:6059/**
 
 > Keys can only be entered here, on the hub laptop. Open that address from a phone and it will
 > politely tell you to go to the laptop. That is on purpose — nobody on the venue wifi can
@@ -103,7 +103,7 @@ It is free, and it takes about ten minutes the first time. Do it at home, not at
 3. Open the **Lovat Dashboard** → **Settings** → **API keys** → **Add key**. Name it something
    you will recognise later, like `6059 scouting hub`.
 4. **Copy the key immediately.** It starts with `lvt-` and Lovat will not show it to you again.
-5. Paste it into the **Lovat** box at http://localhost:8080/ on the hub laptop, set the event
+5. Paste it into the **Lovat** box at http://localhost:6059/ on the hub laptop, set the event
    key beside it, and click **SAVE & REFRESH**.
 6. Check it worked on the dashboard's **SERVER** tab: the `lovat` service goes green, and the
    **GRAPHS** tab starts counting teams under `teams lovat has`.
@@ -162,8 +162,8 @@ Practice with a fake event before you are standing in a venue. See
    - Mac: System Settings → General → Sharing → **Internet Sharing** → on
 2. **Connect all six scout phones to that hotspot.**
 3. **Start the server** (double-click the launcher as before).
-4. **Check the event key is right** at http://localhost:8080/ — it changes every competition.
-5. **Open http://localhost:8080/join on the laptop screen.** It shows a big QR code.
+4. **Check the event key is right** at http://localhost:6059/ — it changes every competition.
+5. **Open http://localhost:6059/join on the laptop screen.** It shows a big QR code.
 6. **Each scout points their normal camera at the QR** and taps the link that pops up. Not a
    scanner app — the camera app they already have.
 7. **Each scout picks the station matching the sign above their chair.** RED 2 means tap RED 2.
@@ -202,7 +202,7 @@ safe either way, but the page will not load again until they are back in range.
 
 ## For the scout lead
 
-Open the dashboard on your laptop — `http://<the address the server printed>:8080/dashboard` —
+Open the dashboard on your laptop — `http://<the address the server printed>:6059/dashboard` —
 and stay on the **CREW** tab. It answers the only question you have during quals: *is data
 coming in, and if not, who do I go talk to?*
 
@@ -255,6 +255,23 @@ not breaking down count for more down there. Each has its own weights and its ow
 
 Drag a row to move a team by hand. The first time you do, the board freezes as you see it, so
 new match data stops reordering it under you; **RESET TO COMPUTED** hands it back to the score.
+
+**Filters narrow what you are looking at, never the board.** Above the rows: search by team
+number or name, a minimum climb, a minimum **fuel per second**, a minimum number of matches
+scouted, the zone a robot usually starts in, and chips for HIDE TAKEN, HIDE DNP, RELIABLE,
+AUTO WORKS, NO AUTO CLASH, DEFENDS and STOCKPILES.
+
+Fuel per second is the rate behind the volume — how fast a robot cycles rather than how much it
+finishes with — and it now reads on every row and on the team page. **NO AUTO CLASH** hides
+robots that habitually start where ours does, which is the auto argument the match preview has
+always had, moved to the day you can still pick somebody else; it needs OUR TEAM set and
+scouted, and says so when it is not.
+
+Hiding rows does not renumber the ones left — the
+number beside a team is always its rank on the whole board — and it changes nothing else: not
+the score, not the saved order, not the printed sheet, not what a drag does. Filters stay in
+the browser you set them in rather than on the hub, so the laptop running alliance selection
+can never inherit one somebody upstairs forgot to clear. **CLEAR** puts them all back.
 
 **Print it before alliance selection.** The SERVER tab has PRINTABLE PICKLIST (and one for the
 second-pick board). One laptop is one laptop, and this is the ten minutes where it cannot fail.
@@ -326,9 +343,9 @@ the fuel column.
 |---|---|---|
 | Phones cannot connect at all | Windows Firewall blocked it | Restart the server, click **Allow access** on **Private networks** |
 | A phone says it cannot reach the hub | out of range, or the laptop moved networks | Walk back toward the laptop. Data is safe; it sends itself |
-| An AI panel says "the model could not be reached" | no internet, or the key is wrong | it is safe to ignore — nothing else depends on it. Re-check the key at http://localhost:8080/ |
+| An AI panel says "the model could not be reached" | no internet, or the key is wrong | it is safe to ignore — nothing else depends on it. Re-check the key at http://localhost:6059/ |
 | The LOVAT column is empty | no Lovat key, or nobody uploaded that robot | not a fault: blank means nobody scouted it there, which is not a zero |
-| Scouts see an old event's teams | event key not changed | http://localhost:8080/ on the laptop, set the new event key |
+| Scouts see an old event's teams | event key not changed | http://localhost:6059/ on the laptop, set the new event key |
 | Fuel numbers look wrong for one team | a scout was on their own clock, or missed matches | Check the **HEALTH** tab — flagged matches are listed with the reason |
 | Every team's fuel looks too high, or too low | scouts are calling shooting harder or softer than it scores | **HEALTH** tab, ACCURACY panel — it says `running N% hot` or `cold`. Worth a word about the rate ladder; the solver corrects for it either way |
 | Nothing at all loads | the black window got closed | Double-click the launcher again |
