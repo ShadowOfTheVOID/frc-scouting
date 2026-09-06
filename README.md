@@ -102,11 +102,9 @@ scouting cannot produce — the second on the clock each robot left to go and cl
 It is free, and it takes about ten minutes the first time. Do it at home, not at the venue.
 
 1. **Make an account** at [lovat.app](https://lovat.app) and **verify the email** they send.
-   Skipping this is the single most common reason a key comes back empty: an unverified account
-   gets a polite `403` and no data.
-2. **Join or create your team** on Lovat, and get the team **verified**. Verification is a
-   person at Lovat checking that you are who you say you are; it is not instant, so do not
-   leave it until the Thursday before a competition.
+2. **Join or create your team** on Lovat, and get *the team* **verified**. This is a second,
+   separate verification — a person at Lovat checking that you are who you say you are. It is
+   not instant, so do not leave it until the Thursday before a competition.
 3. Open the **Lovat Dashboard** → **Settings** → **API keys** → **Add key**. Name it something
    you will recognise later, like `6059 scouting hub`.
 4. **Copy the key immediately.** It starts with `lvt-` and Lovat will not show it to you again.
@@ -114,6 +112,15 @@ It is free, and it takes about ten minutes the first time. Do it at home, not at
    key beside it, and click **SAVE & REFRESH**.
 6. Check it worked on the dashboard's **SERVER** tab: the `lovat` service goes green, and the
    **GRAPHS** tab starts counting teams under `teams lovat has`.
+
+> **Cannot find the API keys section at all?** That is step 2, not you. Lovat's key endpoints
+> sit behind a verified-*team* check, so until your team is registered and verified there is
+> nothing for that page to show. Their server answers `No team` if your account has not joined
+> a team yet and `Your team has not been verified yet` if it has but the team is still pending —
+> two different problems with the same symptom. Verifying only your own email is not enough, and
+> a key cannot be created from another key, so it has to be done signed in to the site.
+> (Checked against their server, which is open source:
+> [HighlanderRobotics/lovat-server](https://github.com/HighlanderRobotics/lovat-server).)
 
 **Some things worth knowing before you rely on it.**
 
