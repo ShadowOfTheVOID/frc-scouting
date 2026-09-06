@@ -53,10 +53,23 @@ NUMERIC = {
     "outpostIntakes": "outpostIntakes",
 }
 
-#: Booleans we count as a rate over the matches that answered.
+#: Rates over the matches that answered.  Only two of these are booleans in
+#: Lovat's schema; the other three are enums, and reading them with _bool gave
+#: None for every row, so autoClimbRate, beachedRate and traversalRate were
+#: permanently blank on the dashboard and nothing said why.
 FLAGS = {"autoClimb": "autoClimbRate", "beached": "beachedRate",
          "scoresWhileMoving": "scoresWhileMovingRate", "disrupts": "disruptRate",
          "fieldTraversal": "traversalRate"}
+
+#: column -> (values that mean yes, values that mean no).  Anything outside both
+#: sets stays unknown rather than being guessed at - the same rule the rest of
+#: this file follows.  TRUE/FALSE is still accepted first, because Lovat has
+#: written these columns both ways and an older export must keep working.
+ENUM_FLAGS = {
+    "autoClimb": ({"SUCCEEDED"}, {"NOT_ATTEMPTED", "FAILED"}),
+    "beached": ({"ON_FUEL", "ON_BUMP", "BOTH"}, {"NEITHER"}),
+    "fieldTraversal": ({"TRENCH", "BUMP", "BOTH"}, {"NONE", "N/A"}),
+}
 
 #: Lovat records a climb by the second it STARTED, in one column per level, and
 #: fills only the level the robot actually used.  That is the one thing in this
@@ -65,8 +78,13 @@ FLAGS = {"autoClimb": "autoClimbRate", "beached": "beachedRate",
 #: robot that says it climbs: how long before the buzzer does it have to leave?
 CLIMB_START = {"l1StartTime": "Level1", "l2StartTime": "Level2", "l3StartTime": "Level3"}
 
-#: Pipe-joined list columns, tallied.
-LISTS = {"robotRoles": "roles", "feederTypes": "feederTypes", "intakeType": "intakeTypes"}
+#: Pipe-joined list columns, tallied.  The last three are single-valued enums
+#: rather than lists, and are tallied for the same reason: "beached on the fuel"
+#: and "beached on the bump" are different problems, and the rate above cannot
+#: tell them apart.
+LISTS = {"robotRoles": "roles", "feederTypes": "feederTypes", "intakeType": "intakeTypes",
+         "beached": "beachedKinds", "fieldTraversal": "traversalKinds",
+         "autoClimb": "autoClimbResults"}
 
 #: The columns kept per row rather than only averaged, so the dashboard can
 #: draw Lovat's fuel and defence match by match beside our own instead of one
@@ -106,6 +124,20 @@ def _bool(v):
     return None
 
 
+def _flag(col, v):
+    """"Did it happen" for one column, however Lovat spelled it this season."""
+    b = _bool(v)
+    if b is not None:
+        return b
+    s = (v or "").strip().upper()
+    yes, no = ENUM_FLAGS.get(col, (frozenset(), frozenset()))
+    if s in yes:
+        return True
+    if s in no:
+        return False
+    return None
+
+
 def _mean(xs, places=1):
     return round(st.mean(xs), places) if xs else None
 
@@ -122,7 +154,12 @@ def _climb_level(v):
     if not s:
         return None
     low = s.lower()
-    if low in ("none", "no", "nothing", "n/a"):
+    # NOT_ATTEMPTED and FAILED are Lovat's own words for "ended the match on the
+    # floor". Reading them as unknown left climbRate counting only the successes,
+    # so a robot that tried ten times and fell ten times looked like no data
+    # instead of a robot that does not climb.
+    if low in ("none", "no", "nothing", "n/a", "not_attempted", "not attempted",
+               "failed", "fail", "attempted"):
         return "None"
     for d in ("3", "2", "1"):
         if d in s:
@@ -172,6 +209,13 @@ def parse_report_csv(text, event_key):
                 return None
         else:
             return None
+    # Lovat's exporter passes bom:true to csv-stringify, so the real export
+    # starts with a byte-order mark. Decoded as plain utf-8 that becomes part of
+    # the FIRST column name - "match" - so every row's label read as empty and
+    # every matchKey came back None: none of Lovat's per-match data could be
+    # joined to our schedule at all. The bundled fixture has no BOM, which is
+    # why nothing here ever noticed.
+    text = text.lstrip("\ufeff")
     if not text.strip():
         return None
     try:
@@ -206,7 +250,7 @@ def _team_record(team, rows, event_key):
         rec[name] = _mean([v for v in (_num(r.get(col)) for r in rows) if v is not None])
 
     for col, name in FLAGS.items():
-        seen = [b for b in (_bool(r.get(col)) for r in rows) if b is not None]
+        seen = [b for b in (_flag(col, r.get(col)) for r in rows) if b is not None]
         rec[name] = round(sum(seen) / len(seen) * 100.0, 1) if seen else None
 
     for col, name in LISTS.items():

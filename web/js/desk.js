@@ -260,6 +260,20 @@ function teamRoles(map) {
   if (!rows.length) return '—';
   return rows.slice(0, 3).map(([r, n]) => `${esc(r)}${n > 1 ? ` \u00d7${n}` : ''}`).join(' · ');
 }
+/** The interesting half of a yes/no rate: which kind, when it was a yes.
+ *
+ * "beached 40%" tells a strategist nothing they can act on; "beached 40% - on
+ * the bump" tells them to send the robot the long way round. `skip` is that
+ * column's word for "it did not happen", which the rate beside this already
+ * says.
+ */
+function kinds(map, skip) {
+  const rows = Object.entries(map || {}).filter(([k]) => k !== skip && k !== 'N/A');
+  if (!rows.length) return '';
+  rows.sort((a, b) => b[1] - a[1]);
+  return ` <span class="band">${rows.slice(0, 3).map(([k]) => esc(k.toLowerCase().replace(/_/g, ' '))).join(', ')}</span>`;
+}
+
 function lovatCell(t) {
   if (!lovatN(t) || t.lovat.avgFuel == null) return '<span class="band">—</span>';
   return `${Math.round(t.lovat.avgFuel)} <span class="band">n${lovatN(t)}</span>`;
@@ -1176,9 +1190,11 @@ function renderTeamDetail() {
         <div class="kv"><span>scores while moving</span><b>${lv.scoresWhileMovingRate == null
           ? '—' : Math.round(lv.scoresWhileMovingRate) + '%'}</b></div>
         <div class="kv"><span>crosses the field</span><b>${lv.traversalRate == null
-          ? '—' : Math.round(lv.traversalRate) + '%'}</b></div>
+          ? '—' : Math.round(lv.traversalRate) + '%'}${
+          kinds(lv.traversalKinds, 'NONE')}</b></div>
         <div class="kv"><span>gets beached</span><b>${lv.beachedRate == null
-          ? '—' : Math.round(lv.beachedRate) + '%'}</b></div>
+          ? '—' : Math.round(lv.beachedRate) + '%'}${
+          kinds(lv.beachedKinds, 'NEITHER')}</b></div>
         <div class="kv"><span>disrupts</span><b>${lv.disruptRate == null
           ? '—' : Math.round(lv.disruptRate) + '%'}</b></div>
         <div class="kv"><span>outpost intakes</span><b>${lv.outpostIntakes ?? '—'}</b></div>

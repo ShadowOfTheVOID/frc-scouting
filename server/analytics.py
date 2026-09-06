@@ -581,6 +581,10 @@ def _team_summary(team, meta, entries, solved, by_match, ranking=None, epa=None,
             "disruptRate", "traversalRate", "outpostIntakes",
             "climbStart", "climbStartSecs", "autoClimbStartSecs",
             "roles", "intakeTypes", "feederTypes",
+            # Which kind, not just how often: "beached on the bump" is a route
+            # you can send a robot around, "beached 40%" is not.
+            "beachedKinds", "traversalKinds", "autoClimbResults",
+            "climbsRead",
             "scouters", "notes", "unmatched")},
         "notes": sorted(notes, key=lambda x: -(x.get("at") or 0)),
     }

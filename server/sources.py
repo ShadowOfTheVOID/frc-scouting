@@ -68,7 +68,9 @@ def _request(url, headers=None, timeout=12, use_etag=False, method="GET", data=N
             if res.headers.get("Content-Encoding") == "gzip":
                 data_bytes = gzip.GzipFile(fileobj=io.BytesIO(data_bytes)).read()
             if raw:
-                body = data_bytes.decode("utf-8", "replace") if data_bytes else None
+                # utf-8-sig, not utf-8: Lovat's CSV export leads with a BOM,
+                # and left in place it becomes part of the first column's name.
+                body = data_bytes.decode("utf-8-sig", "replace") if data_bytes else None
             else:
                 body = json.loads(data_bytes.decode("utf-8")) if data_bytes else None
             if use_etag:
