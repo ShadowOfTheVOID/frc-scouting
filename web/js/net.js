@@ -78,7 +78,14 @@ async function reachable(base, ms = 2500) {
  */
 async function sweepSubnet(port) {
   const saved = localStorage.getItem(LS_BASE) || '';
-  const m = saved.match(/^https?:\/\/(\d+)\.(\d+)\.(\d+)\.\d+(?::(\d+))?/);
+  let u = null;
+  try { u = new URL(saved); } catch { /* nothing saved yet, or not a URL */ }
+  // The /24 can only come from an address that IS one. The port can come from
+  // any of them, and used to be read out of the same IP-shaped match: a phone
+  // whose last good address was `http://scout.local:7000` swept for 6059 and
+  // could never find a hub the lead had started on --port 7000, which is the
+  // one case the port is remembered for.
+  const m = u && u.hostname.match(/^(\d+)\.(\d+)\.(\d+)\.\d+$/);
   const nets = [];
   if (m) nets.push(`${m[1]}.${m[2]}.${m[3]}`);
   for (const n of ['192.168.137', '192.168.1', '192.168.0', '10.0.0']) {
@@ -86,7 +93,7 @@ async function sweepSubnet(port) {
   }
   // The port we last reached a hub on wins: a lead who runs --port keeps
   // working. Only a phone that has never seen one falls back to the default.
-  const p = port || (m && m[4]) || PORT;
+  const p = port || (u && u.port) || PORT;
 
   for (const net of nets.slice(0, 2)) {      // two subnets is already 508 probes
     const tries = [];
