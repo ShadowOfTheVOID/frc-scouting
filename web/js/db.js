@@ -139,13 +139,27 @@ export async function dropQueued(qids) {
 /**
  * Collapse the queue to the newest record per (kind,id) before sending.
  * A scout who edits one match ten times should cost one row, not ten.
+ *
+ * Each returned item carries `qids`: every queue row it stands for, not just
+ * the newest one. The caller drops all of them once the send lands. It used to
+ * return the winner alone, so a flush deleted one row and left the superseded
+ * copies queued - the queue drained one row per flush, the scout's "waiting"
+ * count stayed high for the rest of the day, and every flush re-sent a stale
+ * copy for the hub to reject. Measured: twelve edits of one match left twelve
+ * rows, and three flushes cleared three of them.
  */
 export function collapse(items) {
   const best = new Map();
   for (const it of items) {
     const k = `${it.kind}|${it.record.id}`;
     const prev = best.get(k);
-    if (!prev || it.record.updatedAt >= prev.record.updatedAt) best.set(k, it);
+    if (!prev) {
+      best.set(k, { ...it, qids: [it.qid] });
+      continue;
+    }
+    const qids = prev.qids.concat(it.qid);
+    const newer = (it.record.updatedAt || 0) >= (prev.record.updatedAt || 0);
+    best.set(k, newer ? { ...it, qids } : { ...prev, qids });
   }
   return [...best.values()];
 }

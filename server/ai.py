@@ -125,10 +125,21 @@ def catalogue():
             for i, p, lb, pr, _, _ in MODELS]
 
 
+def _text(v):
+    """Whatever the settings row holds, as a stripped string.
+
+    These three come out of the kv store, which takes what /api/config was
+    given. A value that was not a string used to raise in this constructor -
+    and Client is built inside diag(), so the diagnostics endpoint stopped
+    answering and the dashboard's SERVER tab went stale for the event.
+    """
+    return v.strip() if isinstance(v, str) else ("" if v is None else str(v).strip())
+
+
 class Client:
     def __init__(self, provider, key, model=None):
-        stored = (provider or "").strip().lower()
-        self.model = (model or "").strip()
+        stored = _text(provider).lower()
+        self.model = _text(model)
         # Never chosen falls back to the default; chosen "none" stays off, even
         # with a key sitting there. Those are different states and conflating
         # them would either ignore the off switch or leave a keyed hub inert.
@@ -138,7 +149,7 @@ class Client:
         # what the request is actually built for.
         self.provider = ((provider_for(self.model) if self.model else None)
                          or stored or OFF)
-        self.key = (key or "").strip()
+        self.key = _text(key)
         self.down_until = 0.0
 
     @property

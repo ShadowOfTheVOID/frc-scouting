@@ -15,6 +15,7 @@ import hmac
 import secrets
 import io
 import json
+import math
 import mimetypes
 import os
 import posixpath
@@ -91,6 +92,20 @@ class Hub:
         self._recal_pending = False
         self.writes = []          # timestamps, for writes/min
         self.log = []             # ring buffer for the event log panel
+
+    WRITES_KEPT = 1000        # five minutes of writes is all writes/min needs
+
+    def record_writes(self, n):
+        """One timestamp per applied row, for the diagnostics panel's writes/min.
+
+        Trimmed on the way in rather than only in diag(): a hub nobody has the
+        dashboard open on still takes writes all day, and this was the one list
+        here with no ceiling on it.
+        """
+        now = time.time()
+        keep = [t for t in self.writes if now - t < 300]
+        keep.extend([now] * max(0, min(int(n), self.WRITES_KEPT)))
+        self.writes = keep[-self.WRITES_KEPT:]
 
     def note(self, level, msg):
         self.log.append({"at": time.time(), "level": level, "msg": msg})
@@ -232,6 +247,8 @@ class Hub:
             cutoff = time.time() - 12 * 3600
             return {k: v for k, v in devs.items() if v.get("at", 0) > cutoff}, None
         self.store.mutate("devices", apply, {})
+        # Hearing from the phone is also the chair reporting in - see keep_seat_warm.
+        self.keep_seat_warm(who["deviceId"])
 
     def crew(self):
         """One row per station: who is on it, are they live, are they behind."""
@@ -282,7 +299,10 @@ class Hub:
         """Nexus live event status, from push or poll.  Ordering guarded by dataAsOfTime."""
         if not payload:
             return False
-        as_of = float(payload.get("dataAsOfTime") or 0)
+        try:
+            as_of = float(payload.get("dataAsOfTime") or 0)
+        except (TypeError, ValueError):
+            as_of = 0.0
         if as_of and as_of <= self.last_nexus_at:
             return False  # Nexus warns updates can arrive out of order
         self.last_nexus_at = as_of or time.time()
@@ -297,9 +317,20 @@ class Hub:
                 continue
             red = [_int(t) for t in (m.get("redTeams") or [])]
             blue = [_int(t) for t in (m.get("blueTeams") or [])]
+            # A qualification's number IS its place in the schedule. This used
+            # to take the index within the payload, which is only the same
+            # thing when the payload is the whole schedule - a live feed
+            # carrying just the next few matches renumbered them from zero and
+            # sent them to the front of everyone's schedule. Measured: pushing
+            # Q14-Q16 reordered a 20-match event to Q14 Q1 Q15 Q16 Q2 Q3, which
+            # is what pickCurrentMatch reads to tell a scout which robot to
+            # watch. Playoffs have no number of their own, so they keep the
+            # index, offset to sort after every qual.
+            qual = _QUAL_LABEL.match(str(label))
             self.store.put_match(
                 ek, resolve_match_key(self.store, ek, label, red, blue),
-                label=label, play_order=i, red=red, blue=blue,
+                label=label, play_order=int(qual.group(1)) if qual else 10000 + i,
+                red=red, blue=blue,
                 status=m.get("status"), times=m.get("times"))
         self.store.set("nexusLive", {
             "nowQueuing": payload.get("nowQueuing"),
@@ -604,19 +635,57 @@ class Hub:
         return (self.store.get("matchClocks") or {}).get(match_key)
 
     # ------------------------------------------------------------- seats
+    STATIONS = ("red1", "red2", "red3", "blue1", "blue2", "blue3")
+    SEAT_TTL = 3 * 3600            # seconds a chair survives with nobody reporting
+
+    @staticmethod
+    def normalize_seat(seat):
+        """`red2` from whatever was sent, or None if it is not a real station."""
+        s = str(seat or "").strip().lower()
+        return s if s in Hub.STATIONS else None
+
+    @classmethod
+    def seat_key(cls, alliance, station):
+        """One canonical key from an alliance and a station number.
+
+        Unvalidated input used to be pasted straight into the key, so a phone
+        that posted `station: 0` - or none at all - left a `red0` chair sitting
+        in the map. Nothing on the crew board can show a chair that is not one
+        of the six, so nothing could free it either, and the SEATS tab counted
+        it: "7 of 6 stations claimed".
+        """
+        try:
+            n = int(str(station).strip())
+        except (TypeError, ValueError):
+            return None
+        return cls.normalize_seat(f"{str(alliance or '').strip().lower()}{n}")
+
+    def _live_seats(self, seats):
+        cutoff = time.time() - self.SEAT_TTL
+        return {k: v for k, v in (seats or {}).items()
+                if k in self.STATIONS and (v or {}).get("at", 0) > cutoff}
+
     def seat_history(self, limit=12):
         return (self.store.get("seatLog") or [])[-limit:][::-1]
 
+    def _log_seat(self, entry):
+        self.store.mutate("seatLog", lambda log: ((list(log or []) + [entry])[-60:], None), [])
+
     def claim_seat(self, alliance, station, scout_id, device_id):
-        """Record who is sitting where. Returns the full seat map.
+        """Record who is sitting where. Returns the full seat map, or None if
+        the claim was not one a scout could have made.
 
         Not enforced - a scout who really is in that chair must always win.
         The point is that the phone can SHOW the clash before it costs a match.
         """
-        key = f"{alliance}{station}"
+        key = self.seat_key(alliance, station)
+        scout_id = str(scout_id or "").strip().upper()[:4]
+        device_id = str(device_id or "").strip()
+        if not key or not scout_id or not device_id:
+            return None
 
         def apply(seats):
-            seats = dict(seats or {})
+            seats = self._live_seats(seats)
             prev = seats.get(key)
             seats[key] = {"scoutId": scout_id, "deviceId": device_id, "at": time.time()}
             # one device sits in exactly one seat
@@ -628,15 +697,23 @@ class Hub:
             return seats, (seats, prev, vacated)
         seats, prev, vacated = self.store.mutate("seats", apply, {})
 
+        self.touch({"deviceId": device_id, "scoutId": scout_id, "seat": key}, "seated")
+
+        # Phones re-assert the chair they are already sitting in whenever they
+        # find the hub again, so only a real change is news. Logging every
+        # re-assert filled the lead's swap list with "AK -> AK".
+        if (prev and prev.get("scoutId") == scout_id
+                and prev.get("deviceId") == device_id and not vacated):
+            return seats
+
         # A phone that has just been displaced must be told, or two scouts keep
         # logging the same robot and neither knows.
         displaced = None
         if prev and prev.get("deviceId") and prev["deviceId"] != device_id:
             displaced = prev["deviceId"]
 
-        entry = {"at": time.time(), "seat": key, "scoutId": scout_id,
-                 "from": (prev or {}).get("scoutId"), "vacated": vacated}
-        self.store.mutate("seatLog", lambda log: ((list(log or []) + [entry])[-60:], None), [])
+        self._log_seat({"at": time.time(), "seat": key, "scoutId": scout_id,
+                        "from": (prev or {}).get("scoutId"), "vacated": vacated})
         self.note("info", f"{scout_id} took {key}"
                           + (f" from {prev['scoutId']}" if prev and prev.get("scoutId") else ""))
 
@@ -644,17 +721,69 @@ class Hub:
                                  "scoutId": scout_id})
         return seats
 
-    def seats(self):
-        cutoff = time.time() - 3 * 3600
+    def free_seat(self, key, device_id=None):
+        """Release a chair from the crew board. Returns the full seat map.
+
+        `device_id` is the phone the lead was looking at when they clicked. The
+        click frees that phone or nobody, so a FREE aimed at the scout who
+        walked off cannot land on the one who has just sat down in their place.
+        """
+        def apply(seats):
+            seats = self._live_seats(seats)
+            prev = seats.get(key)
+            if not prev or (device_id and prev.get("deviceId") != device_id):
+                return seats, (seats, None)
+            del seats[key]
+            return seats, (seats, prev)
+        seats, prev = self.store.mutate("seats", apply, {})
+        if not prev:
+            return seats
+
+        self._log_seat({"at": time.time(), "seat": key, "scoutId": None,
+                        "from": prev.get("scoutId"), "freed": True, "vacated": []})
+        self.note("info", f"{prev.get('scoutId') or 'someone'} was freed from {key}")
+        # Same envelope as a claim, and it names the phone that has to stop.
+        # Freeing a chair used to be silent: that phone kept scouting, the lead
+        # saw an empty station and sat someone else on the same robot, which is
+        # exactly the double-scouting the bump screen exists to prevent.
+        self.broadcast("seats", {"seats": seats, "displaced": prev.get("deviceId"),
+                                 "seat": key, "scoutId": None, "freed": True})
+        return seats
+
+    def keep_seat_warm(self, device_id):
+        """A chair belongs to whoever is sitting in it, for as long as they are.
+
+        `seats()` ages claims out, but `at` was only ever written at the moment
+        of the claim. A scout who sat down at nine and never opened the seat
+        screen again dropped off the crew board three hours later, and the lead
+        was told six robots were unwatched while six people watched them.
+        """
+        now = time.time()
 
         def apply(seats):
-            seats = seats or {}
-            live = {k: v for k, v in seats.items() if v.get("at", 0) > cutoff}
-            return (live if live != seats else None), live
+            seats = self._live_seats(seats)
+            touched = False
+            for k, v in list(seats.items()):
+                if v.get("deviceId") == device_id and now - v.get("at", 0) > 60:
+                    seats[k] = {**v, "at": now}
+                    touched = True
+            return (seats if touched else None), None
+        self.store.mutate("seats", apply, {})
+
+    def seats(self):
+        def apply(seats):
+            live = self._live_seats(seats)
+            return (live if live != (seats or {}) else None), live
         return self.store.mutate("seats", apply, {})
 
     # ---------------------------------------------------------- solving
-    CLOCK_FIX_LIMIT = 180          # seconds; beyond this it is not a late tap
+    # Beyond this it is not a late tap. It used to be a flat 180s, which is
+    # longer than a match: an offset that large shifts every observation past
+    # the final buzzer, every interval loses its window, and the solver falls
+    # back to an even split - the fabricated 40/40/40 the solver tests exist to
+    # catch, reported with no flag on it. A correction cannot be longer than
+    # the thing it is correcting.
+    CLOCK_FIX_LIMIT = rules.MATCH_SECONDS
 
     def clock_offset(self, m):
         """How far the scouts' shared clock was from the real match start.
@@ -681,16 +810,24 @@ class Hub:
         The scouts' raw observations are never mutated; correction happens at
         solve time so it can be redone if TBA revises the match.
         """
-        out = []
+        out, lost = [], 0
         for iv in intervals or []:
-            start = float(iv["start"]) + offset
+            try:
+                start = float(iv["start"]) + offset
+                end = float(iv.get("end", iv["start"])) + offset
+            except (TypeError, ValueError, KeyError):
+                continue
             ph = rules.phase_at(start)
+            if ph is None:
+                # Shifted off the end of the match: this observation no longer
+                # belongs to any window and stops counting for anyone.
+                lost += 1
             j = dict(iv)
             j["start"] = start
-            j["end"] = float(iv.get("end", iv["start"])) + offset
+            j["end"] = end
             j["phase"] = ph["id"] if ph else None
             out.append(j)
-        return out
+        return out, lost
 
     def solve_match(self, match_key):
         """Allocate official per-window fuel across the three robots that scouts watched."""
@@ -720,14 +857,26 @@ class Hub:
             robots = []
             for t in lineup:
                 e = by_team.get(t)
-                payload = (e or {}).get("payload", {})
-                ivs = payload.get("intervals") or []
+                payload = (e or {}).get("payload")
+                payload = payload if isinstance(payload, dict) else {}
+                ivs = payload.get("intervals")
+                ivs = ivs if isinstance(ivs, list) else []
                 # Only re-anchor phones that were on the shared clock. A phone
                 # that fell back to its own timeline has a different origin, and
                 # shifting it by someone else's offset makes it worse, not better.
                 if offset and payload.get("clockShared"):
-                    ivs = self._rephase(ivs, offset)
-                robots.append({"team": t, "intervals": ivs})
+                    shifted, lost = self._rephase(ivs, offset)
+                    # A correction that empties a robot out is not a correction.
+                    # Silently it hands that robot's fuel to the other two and
+                    # reports a number nobody observed, so keep what the scout
+                    # actually saw and say so instead.
+                    if ivs and lost == len(ivs):
+                        self.store.flag(ek, match_key, "clock-offset",
+                                        f"a {offset:+.0f}s correction would have thrown away every "
+                                        f"observation of {t} — left uncorrected")
+                    else:
+                        ivs = shifted
+                robots.append({"team": t, "intervals": rules.split_by_phase(ivs)})
             if not robots:
                 continue
             rows = solve.solve_match(info.get("windows") or {}, robots, mult=mult, bootstrap=120)
@@ -746,7 +895,8 @@ class Hub:
             self.broadcast("solved", {"matchKey": match_key,
                                       "teams": sorted(r["team"] for r in out_rows)})
         if offset:
-            shared = sum(1 for e in entries if (e.get("payload") or {}).get("clockShared"))
+            shared = sum(1 for e in entries
+                         if isinstance(e.get("payload"), dict) and e["payload"].get("clockShared"))
             fix = {"offset": round(offset, 2), "corrected": shared, "of": len(entries)}
             self.store.mutate("clockFixes",
                               lambda f: ({**(f or {}), match_key: fix}, None), {})
@@ -792,20 +942,33 @@ class Hub:
                 info = bd.get(alliance)
                 if not info:
                     continue
+                # Every robot on the alliance, or none of them. The official
+                # total for a window covers all three; the seconds we can see
+                # cover only the robots somebody was watching. Fitting one
+                # against the other taught the model that a scouted robot
+                # produces the whole alliance's fuel. Measured against a known
+                # truth: fully-scouted windows recover it to 0.1%, and letting
+                # in windows where a third had only one robot watched put the
+                # multipliers 44.6% out - and these multipliers are behind every
+                # fuel number the solver produces for the rest of the event.
+                # It is the same rule the score report and solve_match already
+                # apply; calibration was the one place it was missing.
+                lineup = [t for t in (m.get(alliance) or []) if t]
+                if not lineup or any(t not in entries for t in lineup):
+                    continue
                 for pid, total in (info.get("windows") or {}).items():
                     if not total:
                         continue
                     secs = {b: 0.0 for b in rules.BUCKETS}
-                    seen = False
-                    for t in (m.get(alliance) or []):
-                        e = entries.get(t)
-                        for iv in (e or {}).get("payload", {}).get("intervals") or []:
+                    for t in lineup:
+                        payload = entries[t].get("payload") or {}
+                        for iv in rules.split_by_phase(payload.get("intervals")):
                             if iv.get("phase") != pid:
                                 continue
-                            seen = True
-                            secs[iv.get("intensity", "steady")] = secs.get(iv.get("intensity", "steady"), 0.0) + \
-                                max(0.0, float(iv.get("end", iv["start"])) - float(iv["start"]))
-                    if seen:
+                            b = iv.get("intensity", "steady")
+                            if b in secs:          # an intensity we do not model
+                                secs[b] += rules.interval_secs(iv)
+                    if any(secs.values()):
                         rows.append((secs, total))
         fit = solve.calibrate_multipliers(rows)
         if fit:
@@ -858,6 +1021,14 @@ class Hub:
         if moved:
             # anything derived from the old key is now stale
             self.store.set("clockFixes", {})
+            # Solved rows most of all. The canonical key was very likely solved
+            # already, on nothing - that is the even three-way split this whole
+            # migration exists to undo - and reconcile() treats a match with any
+            # solved row as already done. Leaving them meant the scouting moved
+            # across correctly and the fabricated numbers stayed on screen
+            # anyway, which is the bug surviving its own repair.
+            for _, new_key in moved:
+                self.store.drop_solved(ek, new_key)
             clocks = self.store.get("matchClocks") or {}
             for old, new in moved:
                 if old in clocks:
@@ -888,30 +1059,52 @@ class Hub:
 
     # ---------------------------------------------------------- poller
     def run_poller(self):
-        next_nexus = next_tba = next_stat = next_frc = next_lovat = 0.0
+        """Every source on its own schedule, and its own failure.
+
+        This used to be one try around all five in sequence. One source raising
+        - TBA returning a match shaped differently than its schema says, say -
+        skipped every source queued behind it AND never advanced its own next-due
+        time, so the hub spent the rest of the event retrying that one call every
+        two seconds and never polling Lovat, FRC Events or Statbotics again.
+        Nothing said so; the poll simply stopped being a poll.
+        """
+        every = ((self.poll_nexus, NEXUS_POLL_SECONDS),
+                 (self.poll_tba, TBA_POLL_SECONDS),
+                 (self.poll_frc_events, FRC_EVENTS_POLL_SECONDS),
+                 (self.poll_statbotics, STATBOTICS_POLL_SECONDS),
+                 (self.poll_lovat, LOVAT_POLL_SECONDS))
+        due = [0.0] * len(every)
         while not self.stop_flag.is_set():
             now = time.time()
-            try:
-                if now >= next_nexus:
-                    self.poll_nexus()
-                    next_nexus = now + NEXUS_POLL_SECONDS
-                if now >= next_tba:
-                    self.poll_tba()
-                    next_tba = now + TBA_POLL_SECONDS
-                if now >= next_frc:
-                    self.poll_frc_events()
-                    next_frc = now + FRC_EVENTS_POLL_SECONDS
-                if now >= next_stat:
-                    self.poll_statbotics()
-                    next_stat = now + STATBOTICS_POLL_SECONDS
-                if now >= next_lovat:
-                    self.poll_lovat()
-                    next_lovat = now + LOVAT_POLL_SECONDS
-                self.status["lastUpdate"] = time.time()
-            except Exception as e:  # a poller crash must never take the server down
-                self.note("error", f"poll failed: {e}")
-                sys.stderr.write(f"[poll] {e}\n")
+            for i, (fn, secs) in enumerate(every):
+                if now < due[i]:
+                    continue
+                # Advance before the call, not after: a source that fails every
+                # time still waits its own interval instead of spinning.
+                due[i] = now + secs
+                try:
+                    fn()
+                except Exception as e:
+                    name = getattr(fn, "__name__", "poll")
+                    self.note("error", f"{name} failed: {e}")
+                    sys.stderr.write(f"[poll] {name}: {e}\n")
+            self.status["lastUpdate"] = time.time()
             self.stop_flag.wait(2.0)
+
+
+def _finite(v):
+    """The same value with every NaN and Infinity replaced by null.
+
+    "We do not know" is what a non-finite number means here anyway, and null is
+    how every other unknown in this API is spelled.
+    """
+    if isinstance(v, float):
+        return v if math.isfinite(v) else None
+    if isinstance(v, dict):
+        return {k: _finite(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_finite(x) for x in v]
+    return v
 
 
 def _gz(data):
@@ -919,6 +1112,21 @@ def _gz(data):
     with _gzip.GzipFile(fileobj=buf, mode="wb", compresslevel=6, mtime=0) as fh:
         fh.write(data)
     return buf.getvalue()
+
+
+#: The only content types /api/photo will ever claim. A pit record arrives from
+#: a phone - or from anything else on the venue wifi - and its data: URI used to
+#: name its own Content-Type, which meant a "photo" could be served back as
+#: text/html with attacker-chosen bytes in it: stored XSS on the hub's own
+#: origin, where the strategy token lives.
+IMAGE_MIMES = ("image/jpeg", "image/png", "image/webp", "image/gif", "image/heic")
+
+
+def _image_mime(raw):
+    m = str(raw or "").strip().lower()
+    if m == "image/jpg":
+        m = "image/jpeg"
+    return m if m in IMAGE_MIMES else "application/octet-stream"
 
 
 def _extract_photos(store, rec):
@@ -934,7 +1142,7 @@ def _extract_photos(store, rec):
         if isinstance(src, str) and src.startswith("data:"):
             try:
                 head, b64 = src.split(",", 1)
-                mime = head[5:].split(";")[0] or "image/jpeg"
+                mime = _image_mime(head[5:].split(";")[0])
                 raw = base64.b64decode(b64)
                 pid = hashlib.sha1(raw).hexdigest()[:16]
                 store.put_photo(pid, rec["eventKey"], rec["team"], mime, raw)
@@ -945,6 +1153,22 @@ def _extract_photos(store, rec):
             kept.append(src)          # already an id
     payload["photos"] = kept
     rec["payload"] = payload
+
+
+def _csv_safe(row):
+    """One row, with nothing in it a spreadsheet will treat as a formula.
+
+    Scout notes are free text typed on a phone, and this export exists to be
+    opened in Excel and handed to an alliance partner. A cell beginning = + - @
+    is a formula to every spreadsheet there is, so it gets a leading quote -
+    the standard defusing, and it still reads as the text the scout typed.
+    """
+    out = []
+    for v in row:
+        if isinstance(v, str) and v[:1] in ("=", "+", "-", "@", "\t", "\r"):
+            v = "'" + v
+        out.append(v)
+    return out
 
 
 def _csv_table(h, ek, table):
@@ -1085,7 +1309,7 @@ def _counts(m):
 
 
 def _secs(intervals):
-    return round(sum(max(0.0, float(iv.get("end", iv["start"])) - float(iv["start"]))
+    return round(sum(rules.interval_secs(iv)
                      for iv in (intervals or [])), 1)
 
 
@@ -1277,11 +1501,27 @@ def _tba_label(m):
 # the solver only walks rows with a `breakdown` (TBA). Scout intervals never
 # reached the solver, so every alliance total got split evenly across three
 # robots and the dashboard showed confident numbers containing no scouting.
-_QUAL_LABEL = re.compile(r"^\s*(?:qualification|qual|q)\s*(\d+)\s*$", re.I)
+# The spellings that unambiguously mean "qualification match N", so all of them
+# land on TBA's qmN instead of each earning a row of its own. A row of its own is
+# the documented failure this whole path exists to prevent: scouts log against
+# one key, the solver reads the other, and every fuel number becomes an even
+# three-way split of the official total with no scouting in it.
+# A qual word is required - "Match 42" alone could as easily be a playoff, and
+# guessing wrong is worse than keeping it separate.
+_QUAL_LABEL = re.compile(
+    r"^\s*(?:qualification|quals|qual|q)\s*(?:match\s*)?#?\s*(\d+)\s*(?:\([^)]*\))?\s*$",
+    re.I)
+
+#: Anything that is not a letter or a digit. A match key is used as a URL path
+#: segment (/api/ai/match/<key>) and in query strings, unencoded, so a label
+#: with a # in it truncated the request at the fragment and one with a / routed
+#: somewhere else entirely.
+_SLUG_UNSAFE = re.compile(r"[^a-z0-9]+")
 
 
 def _slug_match_key(event_key, label):
-    return f"{event_key}_{label.lower().replace(' ', '')}"
+    slug = _SLUG_UNSAFE.sub("", str(label or "").lower())
+    return f"{event_key}_{slug or 'match'}"
 
 
 def resolve_match_key(store, event_key, label, red=None, blue=None):
@@ -1320,7 +1560,18 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---------------------------------------------------------- helpers
     def _json(self, obj, code=200):
-        body = json.dumps(obj, separators=(",", ":")).encode("utf-8")
+        # allow_nan=False so this can never emit bare NaN or Infinity. Python
+        # writes those happily and reads them back; the browser's JSON.parse
+        # rejects them outright, so one non-finite number anywhere in a response
+        # made the whole endpoint unreadable to every client - the dashboard
+        # fell back to its cached copy and quietly stopped updating for the rest
+        # of the event. Costs nothing on the normal path: the scrub only runs
+        # when there is actually something to scrub.
+        try:
+            body = json.dumps(obj, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        except ValueError:
+            body = json.dumps(_finite(obj), separators=(",", ":"),
+                              allow_nan=False).encode("utf-8")
         enc = None
         if len(body) > 1024 and "gzip" in (self.headers.get("Accept-Encoding") or ""):
             body, enc = _gz(body), "gzip"
@@ -1334,10 +1585,15 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _csv(self, filename, header, rows):
+        # The filename is built from ?event=, so it is caller-controlled. A bare
+        # newline in it used to land in the response headers verbatim - a real
+        # Set-Cookie could be injected by anything that could get a lead to click
+        # a crafted export link - and a quote broke the quoted filename outright.
+        filename = re.sub(r"[^A-Za-z0-9._-]", "_", str(filename))[:120] or "export.csv"
         buf = io.StringIO()
         w = csv.writer(buf, lineterminator="\n")
         w.writerow(header)
-        w.writerows(rows)
+        w.writerows(_csv_safe(r) for r in rows)
         body = buf.getvalue().encode("utf-8-sig")   # BOM: Excel opens it as UTF-8
         enc = None
         if len(body) > 1024 and "gzip" in (self.headers.get("Accept-Encoding") or ""):
@@ -1351,6 +1607,45 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+    # ------------------------------------------------------------- CORS
+    # Every hub address other than the one a phone loaded the page from is a
+    # cross-origin address, and a browser will not let script read a response
+    # from one without this header. Without it `discover()` could only ever
+    # reach `location.origin`, which made the whole find-the-hub-again story
+    # inert: the remembered last-good address, both fallback candidates and the
+    # 254-host subnet sweep that exists so a phone can follow the laptop when
+    # DHCP moves it all failed identically, and a phone whose origin went dark
+    # sat offline holding its queue until somebody reloaded it by hand.
+    #
+    # `*` rather than an echo of Origin: the hub cannot know which of its
+    # addresses the phones reached it on. It is a LAN box serving numbers that
+    # are on TBA anyway - but not to a page open on the hub machine itself,
+    # where `_is_local()` is what stands between a request and the API keys.
+    # A website the lead happens to visit on that laptop is exactly the caller
+    # that boundary is for, so localhost keeps answering nobody but itself.
+    def end_headers(self):
+        if getattr(self, "path", "").startswith("/api/") and not self._is_local():
+            self.send_header("Access-Control-Allow-Origin", "*")
+        BaseHTTPRequestHandler.end_headers(self)
+
+    def do_OPTIONS(self):
+        """The preflight a cross-origin JSON POST asks before it sends anything.
+
+        BaseHTTPRequestHandler answers an unknown method with 501, which the
+        browser reads as a refusal - so /api/sync was never even attempted from
+        another origin, and a phone that had just found the hub again still
+        could not hand over a single queued record.
+        """
+        if not self.path.startswith("/api/"):
+            self.send_error(404, "Not found")
+            return
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Strategy-Token")
+        self.send_header("Access-Control-Max-Age", "86400")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def _is_local(self):
         """True only for a request from the machine running the hub.
@@ -1374,14 +1669,40 @@ class Handler(BaseHTTPRequestHandler):
         """
         return Handler.hub.pin_set() and self._unlocked()
 
+    # Well above any real sync - a pit record carries base64 photos - but low
+    # enough that a bogus Content-Length cannot make the hub eat the laptop's
+    # memory in the middle of quals.
+    MAX_BODY = 64 * 1024 * 1024
+
     def _body(self):
-        n = int(self.headers.get("Content-Length") or 0)
-        if not n:
+        """The POST body as an object. Never anything else.
+
+        Every handler below reads `body.get(...)`. JSON's top level can just as
+        well be a list, a string, a number or null, and each of those used to
+        take the request thread down with an AttributeError - no response at
+        all, the phone seeing a dropped connection rather than an answer. A
+        malformed Content-Length did the same before the read even started.
+        """
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            return {}
+        if n <= 0 or n > self.MAX_BODY:
             return {}
         try:
-            return json.loads(self.rfile.read(n).decode("utf-8"))
+            v = json.loads(self.rfile.read(n).decode("utf-8"))
         except Exception:
             return {}
+        return v if isinstance(v, dict) else {}
+
+    @staticmethod
+    def _rows(body, key):
+        """`scout`/`pit` as a list of records, whatever actually arrived.
+
+        `{"pit": 3}` used to reach `for rec in 3` and kill the request thread.
+        """
+        v = body.get(key)
+        return [r for r in v if isinstance(r, dict)] if isinstance(v, list) else []
 
     def _file(self, relpath):
         path = os.path.normpath(os.path.join(WEB_ROOT, relpath.lstrip("/")))
@@ -1506,7 +1827,12 @@ class Handler(BaseHTTPRequestHandler):
             if not data:
                 return self.send_error(404, "no such photo")
             self.send_response(200)
-            self.send_header("Content-Type", mime or "image/jpeg")
+            # Re-checked on the way out as well as in: a database written by an
+            # older build can still hold whatever a phone once claimed.
+            self.send_header("Content-Type", _image_mime(mime))
+            # And if it is mislabelled, no sniffing it into something runnable.
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "max-age=86400")
             self.end_headers()
@@ -1593,10 +1919,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True})
 
         if p == "/api/matchstart":
+            # A list here used to reach dict.get() as an unhashable key and take
+            # the thread down; a 50k-character one would have gone into the kv
+            # row verbatim and stayed there for the event.
             mk = body.get("matchKey")
-            if not mk:
+            if not isinstance(mk, str) or not mk.strip() or len(mk) > 120:
                 return self._json({"error": "matchKey required"}, 400)
-            rec = h.start_match(mk, body.get("scoutId") or "?")
+            sid = body.get("scoutId")
+            rec = h.start_match(mk.strip(), (str(sid).strip()[:4].upper() if sid else "") or "?")
             return self._json({"ok": True, "clock": rec, "serverTime": time.time()})
 
         if p == "/api/unlock":
@@ -1623,18 +1953,17 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/seat":
             seats = h.claim_seat(body.get("alliance"), body.get("station"),
                                  body.get("scoutId"), body.get("deviceId"))
-            h.touch({"deviceId": body.get("deviceId"), "scoutId": body.get("scoutId"),
-                     "seat": f"{body.get('alliance')}{body.get('station')}"}, "seated")
+            if seats is None:
+                return self._json({"error": "a claim needs alliance red or blue, "
+                                            "station 1-3, initials and a deviceId"}, 400)
             return self._json({"ok": True, "seats": seats})
 
         if p == "/api/unseat":
             # the lead can free a station from the dashboard when someone walks off
-            def apply(seats):
-                seats = dict(seats or {})
-                seats.pop(body.get("seat"), None)
-                return seats, seats
-            seats = h.store.mutate("seats", apply, {})
-            h.broadcast("seats", seats)
+            key = h.normalize_seat(body.get("seat"))
+            if not key:
+                return self._json({"error": "unseat needs a station like red2"}, 400)
+            seats = h.free_seat(key, body.get("deviceId"))
             return self._json({"ok": True, "seats": seats})
 
         if p == "/api/sync":
@@ -1654,7 +1983,7 @@ class Handler(BaseHTTPRequestHandler):
             # is ever given something destructive to do.
             applied, rejected = 0, 0
             touched = set()
-            for rec in body.get("scout") or []:
+            for rec in self._rows(body, "scout"):
                 try:
                     if h.store.upsert_scout(rec):
                         applied += 1
@@ -1663,7 +1992,7 @@ class Handler(BaseHTTPRequestHandler):
                         rejected += 1
                 except Exception:
                     rejected += 1
-            for rec in body.get("pit") or []:
+            for rec in self._rows(body, "pit"):
                 try:
                     _extract_photos(h.store, rec)
                     if h.store.upsert_pit(rec):
@@ -1679,10 +2008,10 @@ class Handler(BaseHTTPRequestHandler):
                     sys.stderr.write(f"[solve] {mk}: {e}\n")
             if touched:
                 h.request_recalibrate()
-            if body.get("who"):
+            if isinstance(body.get("who"), dict):
                 h.touch(body["who"], "sync")
             if applied:
-                h.writes.extend([time.time()] * applied)
+                h.record_writes(applied)
                 h.note("info", f"sync accepted {applied} row(s)"
                                + (f", rejected {rejected} stale" if rejected else ""))
                 h.broadcast("scout", {"applied": applied, "matches": sorted(touched)})
@@ -1720,7 +2049,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": "not a scouting export file"}, 400)
             applied = rejected = 0
             touched = set()
-            for rec in body.get("scout") or []:
+            for rec in self._rows(body, "scout"):
                 try:
                     if h.store.upsert_scout(rec):
                         applied += 1
@@ -1729,7 +2058,7 @@ class Handler(BaseHTTPRequestHandler):
                         rejected += 1
                 except Exception:
                     rejected += 1
-            for rec in body.get("pit") or []:
+            for rec in self._rows(body, "pit"):
                 try:
                     _extract_photos(h.store, rec)
                     applied += 1 if h.store.upsert_pit(rec) else 0
@@ -1887,6 +2216,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self.wfile.write(b": connected\n\n")
             self.wfile.flush()
+            last_touch = time.time()
             while True:
                 try:
                     msg = q.get(timeout=15)
@@ -1894,6 +2224,14 @@ class Handler(BaseHTTPRequestHandler):
                 except queue.Empty:
                     self.wfile.write(b": keepalive\n\n")  # keeps proxies and phones from dropping it
                 self.wfile.flush()
+                # A stream we can still write to IS the phone reporting in.
+                # "Last heard" used to count from the moment the phone
+                # connected and never move, so a phone that stayed up all
+                # morning read "gone quiet 4h ago" on the crew board and the
+                # lead was sent to check wifi that was working perfectly.
+                if who.get("deviceId") and time.time() - last_touch > 60:
+                    last_touch = time.time()
+                    Handler.hub.touch(who, "connected")
         except Exception:
             pass
         finally:
@@ -1903,6 +2241,14 @@ class Handler(BaseHTTPRequestHandler):
 class Server(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+    # socketserver defaults this to 5. Six phones flush the moment the buzzer
+    # goes, two dashboards poll on their own timers and the pit tablet syncs
+    # whenever it likes, so connections genuinely do arrive in bursts - and a
+    # burst past the backlog is refused by the kernel before any of this code
+    # runs. Measured: 60 of 200 simultaneous connects were reset at 5. A queued
+    # scouting record survives that and retries, but a seat claim or a match
+    # clock is a one-shot, and the clock is what the solver's accuracy rests on.
+    request_queue_size = 128
 
 
 def main():

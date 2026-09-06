@@ -102,7 +102,10 @@
           <div style="font:600 12.5px Barlow,sans-serif;color:#9aa2b0" id="sbTeamMeta">—</div>
         </div>
       </div>
-      <div class="pill">the screen wakes itself when the match starts</div>
+      <div class="pill">this opens itself when the field says the match is on</div>
+      <div class="cta flat" style="min-height:52px;margin-top:8px" id="btnOpenMatch">
+        <span class="a">THEY'RE ON THE FIELD</span>
+        <span class="b" id="openMatchSub">open the match screen now</span></div>
     </div>
     <div class="col" style="gap:8px">
       <div class="caption plain">WHERE DO THEY START</div>
@@ -132,8 +135,9 @@
       <h2>Keep scouting — nothing is lost.</h2>
       <p id="offBlurb">Everything you enter is saved on this phone and will send itself the moment
         the hub is back. You don't need to do anything.</p>
-      <div style="display:flex;gap:10px;margin-top:4px">
-        <div class="obtn" id="btnRetry">TRY AGAIN NOW</div>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:4px">
+        <div class="obtn" id="btnOffOpenMatch">THEY'RE ON THE FIELD</div>
+        <div class="obtn ghost" id="btnRetry">TRY AGAIN NOW</div>
         <div class="obtn ghost" id="btnBackup">SAVE A BACKUP FILE</div>
       </div>
       <div style="margin-top:6px;font:600 12px Barlow,sans-serif;color:var(--muted)" id="offLast">
@@ -167,6 +171,7 @@
         <div class="obtn" id="btnTakeBack">IT'S STILL MY CHAIR</div>
         <div class="obtn ghost" id="btnPickSeat">PICK A DIFFERENT STATION</div>
       </div>
+      <div style="margin-top:6px;font:600 12px Barlow,sans-serif;color:var(--muted)" id="bumpWait"></div>
     </div>
     <div class="col" style="gap:8px">
       <div class="caption plain">WHAT YOU LOGGED TODAY</div>

@@ -53,9 +53,12 @@ class Live:
         self.srv.server_close()
         shutil.rmtree(self.dir, ignore_errors=True)
 
-    def req(self, path, body=None, method=None, headers=None, raw=False):
+    def req(self, path, body=None, method=None, headers=None, raw=False, body_bytes=None):
         url = f"http://127.0.0.1:{self.port}{path}"
-        data = json.dumps(body).encode() if body is not None else None
+        # body_bytes goes on the wire verbatim, so a test can send something
+        # that is not an object - or not JSON at all.
+        data = body_bytes if body_bytes is not None else (
+            json.dumps(body).encode() if body is not None else None)
         r = urllib.request.Request(url, data=data, method=method or ("POST" if data else "GET"),
                                    headers={"Content-Type": "application/json", **(headers or {})})
         try:
@@ -393,6 +396,180 @@ def test_csv_export(L):
     return ok
 
 
+def test_hostile_input(L):
+    """Anything on the venue wifi can POST here. None of it may take a thread down.
+
+    Every handler reads `body.get(...)`; JSON's top level can be a list, a
+    string, a number or null, and each of those used to raise inside the request
+    thread, so the phone got a dropped connection instead of an answer.
+    """
+    ok = True
+    for name, raw in (("a bare array", b"[1,2,3]"), ("a bare string", b'"hi"'),
+                      ("null", b"null"), ("a number", b"7"), ("not json", b"<<<")):
+        code, _ = L.req("/api/sync", body_bytes=raw)
+        ok &= check(f"a body that is {name} still gets an answer", code == 200, f"({code})")
+
+    for name, body in (("scout is a dict", {"scout": {"a": 1}}),
+                       ("pit is a number", {"pit": 3}),
+                       ("rows are nulls", {"scout": [None, 1, "x"]}),
+                       ("who is a string", {"scout": [], "who": "me"})):
+        code, _ = L.req("/api/sync", body)
+        ok &= check(f"sync survives when {name}", code == 200, f"({code})")
+
+    for name, body in (("a list", {"matchKey": ["a"]}), ("a dict", {"matchKey": {"a": 1}}),
+                       ("empty", {}), ("50k long", {"matchKey": "m" * 50000})):
+        code, _ = L.req("/api/matchstart", body)
+        ok &= check(f"a matchKey that is {name} is a 400, not a dropped thread", code == 400,
+                    f"({code})")
+
+    # And the hub is still answering afterwards.
+    code, _ = L.req("/api/state")
+    ok &= check("the hub still answers after all of that", code == 200)
+    return ok
+
+
+def test_junk_payload_cannot_blank_the_dashboard(L):
+    """One malformed record must not take the whole event down with it.
+
+    Every consumer - solver, analytics, exports, dashboard - reads the payload
+    with `.get()`. A row whose payload was a string stopped `/api/analytics`
+    answering at all, so one bad record from one phone blanked the strategy
+    dashboard for the rest of the event, and the match it was in never solved.
+    """
+    ok = True
+    ek = "2026junk"
+    was = L.store.get("eventKey")
+    L.store.set("eventKey", ek)
+    L.store.put_event(ek)
+    L.store.put_match(ek, f"{ek}_qm1", label="Qualification 1", red=[101, 102, 103],
+                      blue=[201, 202, 203],
+                      breakdown={"red": {"windows": {"auto": 30, "shift1": 30}},
+                                 "blue": {"windows": {"auto": 10}}})
+    good = entry(f"{ek}_qm1", 101, "AK", time.time())
+    good["eventKey"] = ek
+    L.req("/api/sync", {"scout": [good]})
+
+    for junk in ("corrupted", [1, 2, 3], 7, None):
+        rec = entry(f"{ek}_qm1", 102, "BAD", time.time() + 50)
+        rec["eventKey"] = ek
+        rec["payload"] = junk
+        code, _ = L.req("/api/sync", {"scout": [rec]})
+        ok &= check(f"a {type(junk).__name__} payload is accepted without a crash", code == 200)
+
+    rows = L.store.scout_entries(ek)
+    ok &= check("no non-dict payload survives into the store",
+                all(isinstance(r["payload"], dict) for r in rows),
+                f"({[type(r['payload']).__name__ for r in rows]})")
+    code, a = L.req("/api/analytics?event=" + ek)
+    ok &= check("analytics still answers", code == 200, f"({code})")
+    ok &= check("and the match still solved despite the bad row",
+                bool([s for s in L.store.solved(ek) if s["matchKey"] == f"{ek}_qm1"]))
+    L.store.set("eventKey", was)          # this fixture is not the event under test
+    return ok
+
+
+def test_clock_correction_never_invents_numbers(L):
+    """A correction that empties a robot out is not a correction.
+
+    CLOCK_FIX_LIMIT was 180s against a 160s match, so an offset large enough to
+    shift every observation past the final buzzer was still trusted. Every
+    interval lost its window, the solver fell back to an even split, and a
+    fabricated 40/40/40 was reported with nothing flagged on it.
+    """
+    ok = True
+    ek = "2026clock"
+    mk = f"{ek}_qm1"
+    was = L.store.get("eventKey")
+    L.store.set("eventKey", ek)
+    L.store.put_event(ek)
+    actual = time.time() - 500
+    L.store.put_match(ek, mk, label="Qualification 1", red=[101, 102, 103], blue=[201, 202, 203],
+                      times={"actual": actual},
+                      breakdown={"red": {"windows": {"auto": 30, "shift1": 30,
+                                                     "shift2": 30, "endgame": 30}},
+                                 "blue": {"windows": {"auto": 10}}})
+
+    def iv(s, e, i="steady"):
+        ph = hub.rules.phase_at(s)
+        return {"start": s, "end": e, "phase": ph["id"] if ph else None, "intensity": i}
+
+    plan = {101: [iv(2, 18, "dumping"), iv(32, 52, "dumping"),
+                  iv(58, 78, "dumping"), iv(132, 158, "dumping")],
+            102: [iv(6, 10), iv(36, 40), iv(60, 64), iv(136, 140)],
+            103: [iv(8, 9, "trickle")]}
+    for t, ivs in plan.items():
+        L.store.upsert_scout({"eventKey": ek, "matchKey": mk, "team": t, "scoutId": f"S{t}",
+                              "deviceId": f"d{t}", "alliance": "red", "station": 1,
+                              "updatedAt": time.time(),
+                              "payload": {"intervals": ivs, "clockShared": True}})
+
+    ok &= check("a correction can never be longer than the match itself",
+                hub.Hub.CLOCK_FIX_LIMIT <= hub.rules.MATCH_SECONDS,
+                f"({hub.Hub.CLOCK_FIX_LIMIT}s vs {hub.rules.MATCH_SECONDS}s)")
+
+    def solved_for(late):
+        L.store.mutate("matchClocks",
+                       lambda c: ({mk: {"matchKey": mk, "startedAt": actual + late, "by": "S"}},
+                                  None), {})
+        L.store.conn().execute("DELETE FROM solved WHERE match_key=?", (mk,))
+        L.store.conn().execute("DELETE FROM flags WHERE match_key=?", (mk,))
+        L.hub.solve_match(mk)
+        return {r["team"]: r["fuel"] for r in L.store.solved(ek)
+                if r["matchKey"] == mk and r["team"] in (101, 102, 103)}
+
+    honest = solved_for(0)
+    ok &= check("with a good clock the dominant robot is credited",
+                honest[101] > honest[102] > honest[103], f"({honest})")
+
+    for late in (170, 300):
+        got = solved_for(late)
+        ok &= check(f"a {late}s-late tap does not become an even split",
+                    len(set(got.values())) > 1, f"({got})")
+        ok &= check(f"and the {late}s offset is flagged rather than silently applied",
+                    any(f["kind"] == "clock-offset" for f in L.store.flags(ek)))
+        ok &= check(f"the real allocation survives a {late}s-late tap", got == honest, f"({got})")
+    L.store.set("eventKey", was)          # this fixture is not the event under test
+    return ok
+
+
+def test_burst_of_connections(L):
+    """Everything connects at once at the buzzer, and the kernel decides first.
+
+    socketserver's default accept backlog is 5. Six phones flushing on the
+    buzzer, two dashboards on their own timers and the pit tablet genuinely do
+    arrive together: measured, 60 of 200 simultaneous connects were reset
+    before a line of handler code ran. A queued scouting record survives that
+    and retries; a seat claim and a match clock are one-shot, and the clock is
+    what the solver's accuracy rests on.
+    """
+    ok = True
+    ok &= check("the accept backlog is not socketserver's default 5",
+                hub.Server.request_queue_size >= 64, f"({hub.Server.request_queue_size})")
+
+    errs = []
+    def one(i):
+        code, _ = L.req("/api/seat", {"alliance": "red", "station": (i % 3) + 1,
+                                      "scoutId": "BX", "deviceId": f"burst{i}"})
+        if code != 200:
+            errs.append(code)
+    ts = [threading.Thread(target=one, args=(i,)) for i in range(60)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    ok &= check("60 phones connecting at the same instant all get served",
+                not errs, f"({len(errs)} refused)")
+    for k in list(L.hub.seats()):          # leave the chairs as we found them
+        L.req("/api/unseat", {"seat": k})
+
+    # the writes/min list is trimmed as it grows, not only when someone opens
+    # the dashboard on it
+    L.hub.record_writes(50000)
+    ok &= check("the writes/min buffer has a ceiling", len(L.hub.writes) <= 1000,
+                f"({len(L.hub.writes)})")
+    return ok
+
+
 def test_seats(L):
     ok = True
     L.req("/api/seat", {"alliance": "red", "station": 2, "scoutId": "AK", "deviceId": "phone-a"})
@@ -414,6 +591,80 @@ def test_seats(L):
     L.req("/api/unseat", {"seat": "blue1"})
     _, seats = L.req("/api/seats")
     ok &= check("the lead can free a chair", "blue1" not in seats)
+
+    # A claim key used to be f"{alliance}{station}" with nothing checked, so a
+    # phone posting a station it does not have left a chair in the map that no
+    # dashboard row could show and no FREE button could clear.
+    L.req("/api/seat", {"alliance": "blue", "station": 3, "scoutId": "AK", "deviceId": "p"})
+    for bad in ({"alliance": "red", "station": 0, "scoutId": "AK", "deviceId": "p"},
+                {"alliance": "green", "station": 1, "scoutId": "AK", "deviceId": "p"},
+                {"alliance": "red", "station": 1, "scoutId": "", "deviceId": "p"},
+                {"alliance": "red", "station": 1, "scoutId": "AK"}):
+        code, _ = L.req("/api/seat", bad)
+        ok &= check(f"a claim of {bad.get('alliance')}{bad.get('station')} "
+                    f"by {bad.get('scoutId')!r} is a 400", code == 400)
+    _, seats = L.req("/api/seats")
+    ok &= check("and nothing junk reached the seat map",
+                sorted(seats) == ["blue3"], f"({sorted(seats)})")
+    L.req("/api/unseat", {"seat": "blue3"})
+
+    code, _ = L.req("/api/unseat", {"seat": "red9"})
+    ok &= check("freeing a station that does not exist is a 400", code == 400)
+
+    # The lead clicks FREE on the row in front of them. If someone else has sat
+    # down in that chair since the board was drawn, the click must miss.
+    L.req("/api/seat", {"alliance": "red", "station": 3, "scoutId": "AK", "deviceId": "phone-a"})
+    L.req("/api/seat", {"alliance": "red", "station": 3, "scoutId": "CJ", "deviceId": "phone-c"})
+    L.req("/api/unseat", {"seat": "red3", "deviceId": "phone-a"})
+    _, seats = L.req("/api/seats")
+    ok &= check("FREE aimed at the scout who left does not throw out their replacement",
+                (seats.get("red3") or {}).get("deviceId") == "phone-c")
+    L.req("/api/unseat", {"seat": "red3", "deviceId": "phone-c"})
+    _, seats = L.req("/api/seats")
+    ok &= check("and it does free the phone it names", "red3" not in seats)
+
+    # Freeing a chair was silent, so that phone kept scouting while the lead saw
+    # an empty station and sat someone else on the same robot.
+    log = L.hub.seat_history()
+    ok &= check("a FREE shows up on the lead's swap list",
+                bool(log) and log[0]["seat"] == "red3" and log[0].get("freed"))
+    return ok
+
+
+def test_seat_lifetime(L):
+    """A chair belongs to whoever is sitting in it, for as long as they are."""
+    ok = True
+    L.req("/api/seat", {"alliance": "blue", "station": 2, "scoutId": "DM", "deviceId": "phone-d"})
+
+    # `at` used to be written only at the moment of the claim, so a scout who sat
+    # down at nine dropped off the crew board at noon and the lead was told the
+    # robot was unwatched while someone was watching it.
+    def age(seats):
+        seats = dict(seats)
+        seats["blue2"] = {**seats["blue2"], "at": time.time() - hub.Hub.SEAT_TTL + 30}
+        return seats, None
+    L.store.mutate("seats", age, {})
+    L.hub.touch({"deviceId": "phone-d", "scoutId": "DM", "seat": "blue2"}, "sync")
+    fresh = L.hub.seats()["blue2"]["at"]
+    ok &= check("hearing from the phone keeps its chair alive",
+                time.time() - fresh < 5, f"({int(time.time() - fresh)}s old)")
+
+    # Re-asserting the same chair is what a phone does every time it finds the
+    # hub again. It must not read as a swap, or the lead's list fills with noise.
+    before = len(L.hub.seat_history(limit=60))
+    L.req("/api/seat", {"alliance": "blue", "station": 2, "scoutId": "DM", "deviceId": "phone-d"})
+    L.req("/api/seat", {"alliance": "blue", "station": 2, "scoutId": "DM", "deviceId": "phone-d"})
+    ok &= check("re-claiming the chair you are already in is not a swap",
+                len(L.hub.seat_history(limit=60)) == before)
+
+    # A claim that ages out with nobody reporting still goes away.
+    def expire(seats):
+        seats = dict(seats)
+        seats["blue2"] = {**seats["blue2"], "at": time.time() - hub.Hub.SEAT_TTL - 1}
+        return seats, None
+    L.store.mutate("seats", expire, {})
+    ok &= check("a chair nobody has reported from all afternoon is released",
+                "blue2" not in L.hub.seats())
     return ok
 
 
@@ -796,7 +1047,11 @@ def main():
         for fn in (test_sync_and_last_write_wins, test_solving_ran, test_analytics_null_safe,
                    test_picklist_lock, test_export_import_idempotent,
                    test_snapshot_and_restore, test_csv_export,
-                   test_seats, test_match_clock, test_reconcile, test_config_scope,
+                   test_hostile_input, test_burst_of_connections,
+                   test_junk_payload_cannot_blank_the_dashboard,
+                   test_clock_correction_never_invents_numbers,
+                   test_seats, test_seat_lifetime, test_match_clock, test_reconcile,
+                   test_config_scope,
                    test_trend_series, test_defence_counts_both_ways,
                    test_ai_is_gated_and_grounded,
                    test_nexus_tba_one_row, test_legacy_keys_migrate,

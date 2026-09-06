@@ -70,13 +70,13 @@ On the **laptop itself**, open a browser and go to **http://localhost:6059/**
 > politely tell you to go to the laptop. That is on purpose — nobody on the venue wifi can
 > change your settings.
 
-Paste in whichever keys you have. All of them are free and all of them are optional; the app
-runs without any, just with less live data.
+All of the keys are free. **Nexus is required** — see below. The rest are optional and the app
+runs without them, just with less live data.
 
 | Key | What it gets you | Where to get it |
 |---|---|---|
+| **Nexus** — required | live queueing, match timing, pit map, alliance selection | [frc.nexus/api](https://frc.nexus/api) |
 | **The Blue Alliance** | official match results, per-robot climb | [thebluealliance.com/account](https://www.thebluealliance.com/account) |
-| **Nexus** | live queueing, match timing, pit map, alliance selection | [frc.nexus/api](https://frc.nexus/api) |
 | **FRC Events** | the official result a few minutes before TBA posts it | [frc-events.firstinspires.org](https://frc-events.firstinspires.org/services/API) |
 | **Lovat** | what other teams' scouts recorded about the same robots | [lovat.app](https://lovat.app) — see below |
 | **AI model** | summaries of your scout notes, and a read of the next match | Claude, Gemini or OpenAI — see below |
@@ -84,6 +84,13 @@ runs without any, just with less live data.
 
 The fuel numbers always come from The Blue Alliance, whichever other keys you set. FRC Events
 only gets you the result sooner.
+
+**Why Nexus is the one you cannot skip.** Nexus is what tells the hub a match has taken the
+field, and that is what opens the scouting screen on all six phones. Nothing else carries it —
+The Blue Alliance publishes results after a match, not the fact that one is starting. With no
+Nexus key nothing arms itself and every scout has to tap **THEY'RE ON THE FIELD** by hand at
+each match, which is one more thing to get wrong six times an hour. Set this one before the
+event rather than on the Saturday morning.
 
 #### Getting a Lovat key — the long version
 
@@ -95,11 +102,9 @@ scouting cannot produce — the second on the clock each robot left to go and cl
 It is free, and it takes about ten minutes the first time. Do it at home, not at the venue.
 
 1. **Make an account** at [lovat.app](https://lovat.app) and **verify the email** they send.
-   Skipping this is the single most common reason a key comes back empty: an unverified account
-   gets a polite `403` and no data.
-2. **Join or create your team** on Lovat, and get the team **verified**. Verification is a
-   person at Lovat checking that you are who you say you are; it is not instant, so do not
-   leave it until the Thursday before a competition.
+2. **Join or create your team** on Lovat, and get *the team* **verified**. This is a second,
+   separate verification — a person at Lovat checking that you are who you say you are. It is
+   not instant, so do not leave it until the Thursday before a competition.
 3. Open the **Lovat Dashboard** → **Settings** → **API keys** → **Add key**. Name it something
    you will recognise later, like `6059 scouting hub`.
 4. **Copy the key immediately.** It starts with `lvt-` and Lovat will not show it to you again.
@@ -107,6 +112,15 @@ It is free, and it takes about ten minutes the first time. Do it at home, not at
    key beside it, and click **SAVE & REFRESH**.
 6. Check it worked on the dashboard's **SERVER** tab: the `lovat` service goes green, and the
    **GRAPHS** tab starts counting teams under `teams lovat has`.
+
+> **Cannot find the API keys section at all?** That is step 2, not you. Lovat's key endpoints
+> sit behind a verified-*team* check, so until your team is registered and verified there is
+> nothing for that page to show. Their server answers `No team` if your account has not joined
+> a team yet and `Your team has not been verified yet` if it has but the team is still pending —
+> two different problems with the same symptom. Verifying only your own email is not enough, and
+> a key cannot be created from another key, so it has to be done signed in to the site.
+> (Checked against their server, which is open source:
+> [HighlanderRobotics/lovat-server](https://github.com/HighlanderRobotics/lovat-server).)
 
 **Some things worth knowing before you rely on it.**
 
@@ -234,8 +248,18 @@ order these actually happen:
 
 This costs you the live dashboard, not your data. The app is built to run offline.
 
-- **Scouts keep scouting, exactly as normal.** Everything queues on the phone. They will see the
-  offline header all day; that is fine and expected.
+- **Scouts keep scouting.** The screen normally arms itself when Nexus says the match is on the
+  field, and that needs the hub — so with no hub, the scout taps **THEY'RE ON THE FIELD** on
+  the standby or offline screen instead. Everything else is identical: the pad starts the clock,
+  the work queues on the phone. They will see the offline header all day; that is fine and
+  expected.
+- **The phone already knows who it is watching.** It caches the whole event the first time it
+  reaches the hub — under 60KB for a seventy-five-match regional — so the schedule, the lineups
+  and your seat's robot in every match survive the network going away. A phone that has *never*
+  reached the hub has no schedule, and **THEY'RE ON THE FIELD** asks for the number off the
+  robot instead. That
+  entry keeps everything the scout saw, but the hub has no official match to line it up with, so
+  it does not feed the fuel solver.
 - **At the end of the day, each phone taps `SAVE A BACKUP FILE`** on the offline screen.
 - **Collect those files onto the laptop** and import each one — `POST /api/import`, or the import
   control on the dashboard. Re-importing the same file is a no-op, so you cannot double-count by
@@ -272,8 +296,12 @@ Six scouts and no spare, so this happens all day.
 - **Same phone, new person** — on the standby screen, tap **HAND OVER**, type the new initials.
   The seat and the match stay put; the previous scout's work is saved under their name.
 - **Different phone** — the new scout just claims the station from their own phone. The old
-  phone is told immediately and stops, so you never get two people logging one robot.
-- **FREE** on the crew board releases a chair when someone walks off.
+  phone is told immediately and stops, so you never get two people logging one robot. If that
+  happened by mistake, the bumped phone offers **IT'S STILL MY CHAIR** — but only between
+  matches. Mid-match it shows the time to the buzzer instead, because taking the chair back
+  would stop whoever is sitting in it now.
+- **FREE** on the crew board releases a chair when someone walks off. That phone is told
+  immediately and stops, so a chair you have freed is never still logging.
 
 ### Training someone new
 

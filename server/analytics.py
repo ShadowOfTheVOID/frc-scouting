@@ -151,7 +151,7 @@ def score_report(store, event_key, matches=None, entries=None):
                 if not e:
                     continue
                 scouted += 1
-                ivs = [iv for iv in ((e.get("payload") or {}).get("intervals") or [])
+                ivs = [iv for iv in rules.split_by_phase((e.get("payload") or {}).get("intervals"))
                        if rules.hub_active(iv.get("phase"), alliance, auto_winner) is True]
                 scout_fuel += solve.interval_weight(ivs, mult)
                 p = e.get("payload") or {}
@@ -201,8 +201,17 @@ def score_report(store, event_key, matches=None, entries=None):
     }
 
 
+def _start(iv):
+    """When an interval began, or None if it does not say a number."""
+    try:
+        v = float(iv["start"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) else None
+
+
 def _interval_secs(intervals):
-    return sum(max(0.0, float(iv.get("end", iv["start"])) - float(iv["start"]))
+    return sum(rules.interval_secs(iv)
                for iv in (intervals or []))
 
 
@@ -445,11 +454,11 @@ def _team_summary(team, meta, entries, solved, by_match, ranking=None, epa=None,
         m = by_match.get(e["matchKey"])
         auto_winner = ((m or {}).get("breakdown") or {}).get("autoWinner")
         alliance = e.get("alliance")
-        ivs = p.get("intervals") or []
+        ivs = rules.split_by_phase(p.get("intervals"))
 
         waste_s = act_s = 0.0
         for iv in ivs:
-            dur = max(0.0, float(iv.get("end", iv["start"])) - float(iv["start"]))
+            dur = rules.interval_secs(iv)
             act = rules.hub_active(iv.get("phase"), alliance, auto_winner)
             if act is False:
                 waste_s += dur
@@ -464,10 +473,10 @@ def _team_summary(team, meta, entries, solved, by_match, ranking=None, epa=None,
         fi = p.get("feedIntervals") or []
         if fi:
             feeds += 1
-            feed_secs.append(sum(max(0.0, float(iv.get("end", iv["start"])) - float(iv["start"])) for iv in fi))
+            feed_secs.append(sum(rules.interval_secs(iv) for iv in fi))
         di = p.get("defenseIntervals") or []
         if di:
-            defense_secs.append(sum(max(0.0, float(iv.get("end", iv["start"])) - float(iv["start"])) for iv in di))
+            defense_secs.append(sum(rules.interval_secs(iv) for iv in di))
         if (p.get("note") or "").strip():
             notes.append({"matchKey": e["matchKey"], "scoutId": e.get("scoutId"),
                           "at": e.get("updatedAt"), "note": p["note"].strip()})
@@ -581,6 +590,10 @@ def _team_summary(team, meta, entries, solved, by_match, ranking=None, epa=None,
             "disruptRate", "traversalRate", "outpostIntakes",
             "climbStart", "climbStartSecs", "autoClimbStartSecs",
             "roles", "intakeTypes", "feederTypes",
+            # Which kind, not just how often: "beached on the bump" is a route
+            # you can send a robot around, "beached 40%" is not.
+            "beachedKinds", "traversalKinds", "autoClimbResults",
+            "climbsRead",
             "scouters", "notes", "unmatched")},
         "notes": sorted(notes, key=lambda x: -(x.get("at") or 0)),
     }
@@ -621,7 +634,8 @@ def _stockpiled(intervals, alliance, auto_winner):
         quiet = not any(iv.get("phase") == sh["id"] for iv in intervals)
         burst = any(iv.get("phase") == nxt["id"]
                     and iv.get("intensity") == "dumping"
-                    and float(iv["start"]) - nxt["start"] <= 6.0
+                    and _start(iv) is not None
+                    and _start(iv) - nxt["start"] <= 6.0
                     for iv in intervals)
         if quiet and burst:
             return True
@@ -644,7 +658,7 @@ def _scout_reliability(entries, by_match, solved):
         rec["matches"] += 1
         m = by_match.get(e["matchKey"])
         info = ((m or {}).get("breakdown") or {}).get(e.get("alliance"))
-        ivs = (e.get("payload") or {}).get("intervals") or []
+        ivs = rules.split_by_phase((e.get("payload") or {}).get("intervals"))
         if not info:
             continue
         official = sum((info.get("windows") or {}).values())
@@ -652,7 +666,7 @@ def _scout_reliability(entries, by_match, solved):
             rec["empty"] += 1
             continue
         for pid, total in (info.get("windows") or {}).items():
-            secs = sum(max(0.0, float(iv.get("end", iv["start"])) - float(iv["start"]))
+            secs = sum(rules.interval_secs(iv)
                        for iv in ivs if iv.get("phase") == pid)
             if total == 0 and secs > 3.0:
                 rec["residuals"].append(1.0)   # shooting claimed where nothing scored

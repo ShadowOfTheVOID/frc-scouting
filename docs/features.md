@@ -39,7 +39,8 @@ Where a scout starts, once, at the beginning of the day.
   above their chair. There is no field map on purpose: nothing to mirror, nothing to get
   backwards.
 - Stations already claimed show **the other scout's initials**; free ones show **OPEN** in
-  green, so a double-booked chair is visible before it costs a match.
+  green, so a double-booked chair is visible before it costs a match. The chair this phone
+  itself is holding reads **THIS PHONE**.
 - The footer shows which hub was found and which event is loaded.
 
 Claiming a station takes it from whoever held it. Their phone is told immediately and stops —
@@ -49,6 +50,18 @@ see [BUMPED](#bumped).
 
 Between matches. Shows a countdown to the next match, the robot this scout will watch next,
 and everything logged so far today.
+
+**The screen arms itself.** When Nexus reports the match `On field`, the hub pushes that to
+every phone and each one whose seat is in that match jumps straight to the live screen — the
+scout never picks a match. That is what the Nexus key buys, and why it is the one to set.
+
+**THEY'RE ON THE FIELD** is the manual way through, for when nothing arms it: no Nexus key, a
+volunteer who has not clicked yet, or no route to the hub at all. It opens the match screen on
+the robot this seat watches next — read from the schedule cached on the phone, so it works with
+the network down. It does not start the clock; the pad still does that. A phone that has never
+reached the hub has no schedule, and the button asks for the number off the robot instead: that
+entry keeps everything the scout saw, but the hub cannot line it up with an official match, so
+it does not feed the fuel solver.
 
 **Before the buzzer** — two rows of one-tap chips in the right-hand column:
 
@@ -123,14 +136,26 @@ Shown when the hub cannot be reached. It exists to say *nothing is wrong* — th
 working and everything is saved locally.
 
 - A list of matches waiting to send.
+- **THEY'RE ON THE FIELD** opens the match screen with no hub at all — the same control as on
+  standby, put here because this is where a phone with no network actually lands. It is what
+  makes [Plan B](../README.md#plan-b--no-usable-network) something a scout can actually do.
 - **SAVE A BACKUP FILE** writes the queue out as JSON, for a phone that is truly stuck.
 - **TRY AGAIN NOW** re-runs discovery.
 
 ### BUMPED
 
-Shown when another phone claims this scout's chair. The clock stops so two people never log the
-same robot. Offers **IT'S STILL MY CHAIR** or **PICK A DIFFERENT STATION**, and lists what this
-phone had already saved.
+Shown when this scout's chair goes away — another phone claimed it, or the lead freed it on the
+crew board. The clock stops so two people never log the same robot. Offers **IT'S STILL MY
+CHAIR** or **PICK A DIFFERENT STATION**, and lists what this phone had already saved. Reopening
+the app does not get past it: the phone asks the hub who is in the chair before it scouts, and
+another scout starting a match will not pull it back into the HUD.
+
+**IT'S STILL MY CHAIR only appears between matches.** While a match is being played the button
+is replaced by the time left until the buzzer. Taking a chair back mid-match stops whoever is
+sitting in it, and then two people have half a match each and neither half is worth having —
+so the argument about who is in that chair waits for the buzzer, which is where it belongs.
+**PICK A DIFFERENT STATION** stays available throughout: giving a chair up is never the
+dangerous direction.
 
 ### Practice mode
 
@@ -184,7 +209,8 @@ It says so in plain words — `RED 2 — nobody seated, those robots are unwatch
 app is not open on their phone`, `CJ on BLUE 3 — gone quiet 6m ago, check their wifi` — and one
 green line when everything is fine. **THIS MATCH** lists the six robots about to play and who
 is watching each, so an unwatched robot is obvious before the match rather than after. **FREE**
-releases a chair when someone walks off.
+releases a chair when someone walks off; that phone is told at once and stops, so a chair you
+have freed is never still logging.
 
 ### LIVE
 
@@ -534,7 +560,8 @@ it is in the phone's database, not the page. Tell scouts not to reload.
 
 ### Keys and settings
 
-Entered at `/` on the hub laptop. All keys are free and all are optional.
+Entered at `/` on the hub laptop. All keys are free. **Nexus is required** in practice — without
+it nothing arms the match screen and every scout opens each match by hand. The rest are optional.
 
 | Setting | What it does |
 |---|---|
@@ -543,7 +570,7 @@ Entered at `/` on the hub laptop. All keys are free and all are optional.
 | **Our team** | Highlights us in every table and drives the RP outlook. |
 | **Strategy passcode** | Gates picklist editing and the per-scout panel. Blank means open. |
 | **The Blue Alliance** | Official results, per-robot climb, rankings, OPR. The fuel solver's only source. |
-| **Nexus** | Live queueing and match status, pit map, pit addresses, inspection, alliance selection. |
+| **Nexus** — required | Live queueing and match status, pit map, pit addresses, inspection, alliance selection. Its `On field` is what arms the match screen on the phones; without it every scout has to tap **THEY'RE ON THE FIELD** by hand, six times an hour. |
 | **Nexus webhook token** | Only if you registered a push webhook. |
 | **FRC Events** | The official result a few minutes before TBA posts it. Does not feed the solver. |
 | **Lovat API key** | Other teams' scouting for this event. Your scouting lead makes one in the Lovat Dashboard under Settings → API keys; it starts `lvt-`, and your team has to be verified on Lovat first. Polled once every five minutes — Lovat allows one request every three seconds per key, so the hub stays well inside it. The export is scoped to what your Lovat account is allowed to see, so a short list is a setting on their side, not a failure on ours. |

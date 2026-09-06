@@ -68,7 +68,9 @@ def _request(url, headers=None, timeout=12, use_etag=False, method="GET", data=N
             if res.headers.get("Content-Encoding") == "gzip":
                 data_bytes = gzip.GzipFile(fileobj=io.BytesIO(data_bytes)).read()
             if raw:
-                body = data_bytes.decode("utf-8", "replace") if data_bytes else None
+                # utf-8-sig, not utf-8: Lovat's CSV export leads with a BOM,
+                # and left in place it becomes part of the first column's name.
+                body = data_bytes.decode("utf-8-sig", "replace") if data_bytes else None
             else:
                 body = json.loads(data_bytes.decode("utf-8")) if data_bytes else None
             if use_etag:
@@ -121,13 +123,23 @@ def parse_breakdown_2026(match):
     Field names verified against TBA's live OpenAPI schema
     (Match_Score_Breakdown_2026_Alliance / HubScore_2026 / TowerRobot_2026).
     """
-    bd = (match or {}).get("score_breakdown") or {}
+    # Somebody else's JSON, over the network, mid-event. A shape we did not
+    # expect - a schema change, a half-written match, an error object - used to
+    # raise out of here into the poller, which then skipped every source queued
+    # behind TBA and retried this same match every two seconds for the rest of
+    # the day. Unknown reads as unknown, the same as every other source here.
+    if not isinstance(match, dict):
+        return {}
+    bd = match.get("score_breakdown")
+    if not isinstance(bd, dict):
+        return {}
     out = {}
     for alliance in ("red", "blue"):
         a = bd.get(alliance)
-        if not a:
+        if not isinstance(a, dict) or not a:
             continue
-        hub = a.get("hubScore") or {}
+        hub = a.get("hubScore")
+        hub = hub if isinstance(hub, dict) else {}
         windows = {
             "auto": hub.get("autoCount"),
             "transition": hub.get("transitionCount"),

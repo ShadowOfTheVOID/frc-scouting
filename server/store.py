@@ -1,5 +1,6 @@
 """SQLite store.  WAL mode so ten scouts POSTing at the buzzer don't lock each other out."""
 import json
+import math
 import os
 import sqlite3
 import threading
@@ -200,7 +201,7 @@ class Store:
             "  event_key=excluded.event_key, device_id=excluded.device_id, alliance=excluded.alliance,"
             "  station=excluded.station, payload=excluded.payload, updated_at=excluded.updated_at",
             (rec["eventKey"], rec["matchKey"], int(rec["team"]), rec["scoutId"], rec.get("deviceId"),
-             rec.get("alliance"), rec.get("station"), json.dumps(rec.get("payload") or {}), now))
+             rec.get("alliance"), rec.get("station"), json.dumps(_payload(rec.get("payload"))), now))
         return True
 
     def scout_entries(self, event_key, match_key=None, team=None):
@@ -223,13 +224,13 @@ class Store:
             " ON CONFLICT(event_key,team) DO UPDATE SET scout_id=excluded.scout_id,"
             "  device_id=excluded.device_id, payload=excluded.payload, updated_at=excluded.updated_at",
             (rec["eventKey"], int(rec["team"]), rec.get("scoutId"), rec.get("deviceId"),
-             json.dumps(rec.get("payload") or {}), now))
+             json.dumps(_payload(rec.get("payload"))), now))
         return True
 
     def pit_entries(self, event_key):
         rows = self.conn().execute("SELECT * FROM pit_entries WHERE event_key=?", (event_key,)).fetchall()
         return [{"team": r["team"], "scoutId": r["scout_id"], "updatedAt": r["updated_at"],
-                 "payload": json.loads(r["payload"])} for r in rows]
+                 "payload": _payload(r["payload"])} for r in rows]
 
     # ------------------------------------------------------------- solved
     def put_solved(self, event_key, match_key, rows):
@@ -241,6 +242,18 @@ class Store:
             "  provisional=excluded.provisional, updated_at=excluded.updated_at",
             [(event_key, match_key, int(r["team"]), r["fuel"], r["band"],
               json.dumps(r.get("byPhase") or {}), 1 if r.get("provisional") else 0, now) for r in rows])
+
+    def drop_solved(self, event_key, match_key):
+        """Throw away the solved rows for one match.
+
+        They are derived from the scouting that was attached to that key. When
+        the key itself moves, or the scouting behind it changes shape, they are
+        no longer an answer to anything - and reconcile() treats a match with
+        any solved row as already done, so leaving them behind is what stops it
+        being re-solved.
+        """
+        self.conn().execute("DELETE FROM solved WHERE event_key=? AND match_key=?",
+                            (event_key, match_key))
 
     def solved(self, event_key, team=None):
         q = "SELECT * FROM solved WHERE event_key=?"
@@ -289,33 +302,54 @@ class Store:
         if not old:
             return False
 
-        # The row itself: COALESCE keeps whatever the canonical row already
-        # knows and fills its gaps from the legacy one (status and the Nexus
-        # timings, typically). put_match handles the times merge.
-        self.put_match(event_key, new_key, label=old["label"], comp_level=old["comp_level"],
-                       match_number=old["match_number"], play_order=old["play_order"],
-                       red=json.loads(old["red"] or "null"),
-                       blue=json.loads(old["blue"] or "null"),
-                       status=old["status"], times=json.loads(old["times"] or "null"),
-                       breakdown=json.loads(old["breakdown"] or "null"))
-        c.execute("DELETE FROM matches WHERE event_key=? AND match_key=?", (event_key, old_key))
+        # One transaction for the whole fold. The connection is in autocommit,
+        # so without this each statement landed on its own and a process that
+        # died between deleting the match row and moving the scouting left the
+        # scouting orphaned on a key with no match behind it - which is the very
+        # shape this function exists to repair. Guarded rather than
+        # unconditional: a caller that has already opened a transaction must not
+        # be broken by a nested BEGIN.
+        outer = c.in_transaction
+        if not outer:
+            c.execute("BEGIN IMMEDIATE")
+        try:
+            # The row itself: COALESCE keeps whatever the canonical row already
+            # knows and fills its gaps from the legacy one (status and the Nexus
+            # timings, typically). put_match handles the times merge.
+            self.put_match(event_key, new_key, label=old["label"], comp_level=old["comp_level"],
+                           match_number=old["match_number"], play_order=old["play_order"],
+                           red=json.loads(old["red"] or "null"),
+                           blue=json.loads(old["blue"] or "null"),
+                           status=old["status"], times=json.loads(old["times"] or "null"),
+                           breakdown=json.loads(old["breakdown"] or "null"))
+            c.execute("DELETE FROM matches WHERE event_key=? AND match_key=?",
+                      (event_key, old_key))
 
-        # Scout entries go through the normal last-write-wins rule rather than a
-        # blind UPDATE, so a row already sitting on the canonical key is only
-        # replaced when the legacy one is genuinely newer.
-        for r in c.execute("SELECT * FROM scout_entries WHERE match_key=?", (old_key,)).fetchall():
-            self.upsert_scout({
-                "eventKey": r["event_key"], "matchKey": new_key, "team": r["team"],
-                "scoutId": r["scout_id"], "deviceId": r["device_id"], "alliance": r["alliance"],
-                "station": r["station"], "payload": json.loads(r["payload"]),
-                "updatedAt": r["updated_at"],
-            })
-        c.execute("DELETE FROM scout_entries WHERE match_key=?", (old_key,))
+            # Scout entries go through the normal last-write-wins rule rather
+            # than a blind UPDATE, so a row already sitting on the canonical key
+            # is only replaced when the legacy one is genuinely newer.
+            for r in c.execute("SELECT * FROM scout_entries WHERE match_key=?",
+                               (old_key,)).fetchall():
+                self.upsert_scout({
+                    "eventKey": r["event_key"], "matchKey": new_key, "team": r["team"],
+                    "scoutId": r["scout_id"], "deviceId": r["device_id"],
+                    "alliance": r["alliance"], "station": r["station"],
+                    "payload": _payload(r["payload"]), "updatedAt": r["updated_at"],
+                })
+            c.execute("DELETE FROM scout_entries WHERE match_key=?", (old_key,))
 
-        # Solved rows are derived and will be recomputed by reconcile(); flags
-        # are advisory. Both are safe to overwrite.
-        c.execute("UPDATE OR REPLACE solved SET match_key=? WHERE match_key=?", (new_key, old_key))
-        c.execute("UPDATE OR REPLACE flags SET match_key=? WHERE match_key=?", (new_key, old_key))
+            # Solved rows are derived and will be recomputed by reconcile();
+            # flags are advisory. Both are safe to overwrite.
+            c.execute("UPDATE OR REPLACE solved SET match_key=? WHERE match_key=?",
+                      (new_key, old_key))
+            c.execute("UPDATE OR REPLACE flags SET match_key=? WHERE match_key=?",
+                      (new_key, old_key))
+            if not outer:
+                c.execute("COMMIT")
+        except Exception:
+            if not outer:
+                c.execute("ROLLBACK")
+            raise
         return True
 
     # ------------------------------------------------------------ backups
@@ -370,7 +404,54 @@ def _match_row(r):
             "breakdown": json.loads(r["breakdown"] or "null"), "updatedAt": r["updated_at"]}
 
 
+def _payload(v):
+    """A scouting payload, guaranteed to be an object.
+
+    Every consumer - the solver, analytics, the CSV exports, the dashboard -
+    reads this with `.get()`. A row whose payload was a string or a list took
+    all of them down: `/api/analytics` stopped answering entirely, so one
+    malformed record from one phone blanked the strategy dashboard for the rest
+    of the event. Coerced on the way in and on the way back out, so a database
+    written by an older build is safe too.
+    """
+    if isinstance(v, str):
+        try:
+            v = json.loads(v)
+        except (TypeError, ValueError):
+            return {}
+    if not isinstance(v, dict):
+        return {}
+    v = _finite(v)
+    # An interval list is walked by the solver, analytics, the exports and the
+    # dashboard, and every one of them reads `iv.get(...)`. A member that is not
+    # an object took the request down - `/api/analytics` dying is the strategy
+    # dashboard going blank for the rest of the event - so the lists are cleaned
+    # once, here, where untrusted data comes in, rather than at each of the
+    # dozen places that read them.
+    for k, val in list(v.items()):
+        if k.endswith("Intervals") or k == "intervals":
+            v[k] = [iv for iv in val if isinstance(iv, dict)] if isinstance(val, list) else []
+    return v
+
+
+def _finite(v):
+    """Strip NaN and Infinity out of a payload on its way into the database.
+
+    JSON permits `1e309`, and Python reads it as inf. Stored and handed back
+    out, it made three endpoints emit bare Infinity, which is not JSON any
+    browser will parse. "We do not know" is what it means, and null is how the
+    rest of this schema says that.
+    """
+    if isinstance(v, float):
+        return v if math.isfinite(v) else None
+    if isinstance(v, dict):
+        return {k: _finite(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_finite(x) for x in v]
+    return v
+
+
 def _scout_row(r):
     return {"eventKey": r["event_key"], "matchKey": r["match_key"], "team": r["team"],
             "scoutId": r["scout_id"], "deviceId": r["device_id"], "alliance": r["alliance"],
-            "station": r["station"], "payload": json.loads(r["payload"]), "updatedAt": r["updated_at"]}
+            "station": r["station"], "payload": _payload(r["payload"]), "updatedAt": r["updated_at"]}

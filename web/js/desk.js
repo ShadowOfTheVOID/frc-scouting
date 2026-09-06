@@ -9,6 +9,10 @@ import { loadRules, rpThresholds, rules as gameRules } from './game2026.js';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// `red2` as the sign above the chair reads it: RED 2. The lead is matching this
+// against a printed sign across the room, so every panel has to spell it the
+// same way - the crew alert used to say RED2 while the row under it said RED 1.
+const stationLabel = (k) => String(k || '').replace(/(\d)/, ' $1').toUpperCase();
 
 let STATE = null, ANALYTICS = null, CONFIG = null, ourTeam = null;
 const DNP = new Set(JSON.parse(localStorage.getItem('dnp') || '[]'));
@@ -256,6 +260,20 @@ function teamRoles(map) {
   if (!rows.length) return '—';
   return rows.slice(0, 3).map(([r, n]) => `${esc(r)}${n > 1 ? ` \u00d7${n}` : ''}`).join(' · ');
 }
+/** The interesting half of a yes/no rate: which kind, when it was a yes.
+ *
+ * "beached 40%" tells a strategist nothing they can act on; "beached 40% - on
+ * the bump" tells them to send the robot the long way round. `skip` is that
+ * column's word for "it did not happen", which the rate beside this already
+ * says.
+ */
+function kinds(map, skip) {
+  const rows = Object.entries(map || {}).filter(([k]) => k !== skip && k !== 'N/A');
+  if (!rows.length) return '';
+  rows.sort((a, b) => b[1] - a[1]);
+  return ` <span class="band">${rows.slice(0, 3).map(([k]) => esc(k.toLowerCase().replace(/_/g, ' '))).join(', ')}</span>`;
+}
+
 function lovatCell(t) {
   if (!lovatN(t) || t.lovat.avgFuel == null) return '<span class="band">—</span>';
   return `${Math.round(t.lovat.avgFuel)} <span class="band">n${lovatN(t)}</span>`;
@@ -816,10 +834,10 @@ function renderCrew() {
   // app closed means go tell them to reopen it; gone quiet means check their wifi.
   const problems = [];
   if (empty.length) {
-    problems.push(`${empty.map((c) => c.seat.toUpperCase()).join(', ')} — nobody seated, those robots are unwatched`);
+    problems.push(`${empty.map((c) => stationLabel(c.seat)).join(', ')} — nobody seated, those robots are unwatched`);
   }
   for (const c of seated) {
-    const who = `${String(c.scoutId).toUpperCase()} on ${c.seat.toUpperCase()}`;
+    const who = `${String(c.scoutId).toUpperCase()} on ${stationLabel(c.seat)}`;
     if (!c.connected) problems.push(`${who} — app is not open on their phone`);
     else if (c.lastSeenSec != null && c.lastSeenSec > 180) problems.push(`${who} — gone quiet ${ago(c.lastSeenSec)}, check their wifi`);
     else if (c.lastMatchAgoSec != null && c.lastMatchAgoSec > 25 * 60) problems.push(`${who} — nothing logged in ${ago(c.lastMatchAgoSec)}`);
@@ -838,9 +856,9 @@ function renderCrew() {
     const side = c.seat.startsWith('red') ? 'var(--red-label)' : 'var(--blue-label)';
     const ok = c.connected;
     return `<div class="r" style="grid-template-columns:${CREW_COLS}">
-      <span style="color:${side};font:800 12px Barlow,sans-serif;letter-spacing:.1em">${c.seat.replace(/(\d)/, ' $1').toUpperCase()}</span>
+      <span style="color:${side};font:800 12px Barlow,sans-serif;letter-spacing:.1em">${stationLabel(c.seat)}</span>
       <span>${c.scoutId ? esc(String(c.scoutId).toUpperCase()) : '<span style="color:var(--t6)">nobody seated</span>'}
-        ${c.scoutId ? `<button class="x" data-unseat="${c.seat}" style="margin-left:8px">FREE</button>` : ''}</span>
+        ${c.scoutId ? `<button class="x" data-unseat="${c.seat}" data-device="${esc(c.deviceId || '')}" style="margin-left:8px">FREE</button>` : ''}</span>
       <span class="num" style="color:${ok ? 'var(--green-soft)' : 'var(--red-alert)'};font:800 10.5px Barlow,sans-serif;letter-spacing:.1em">
         ${c.scoutId ? (ok ? 'LIVE' : 'NOT SEEN') : '—'}</span>
       <span class="num">${ago(c.lastSeenSec)}</span>
@@ -849,7 +867,12 @@ function renderCrew() {
   }).join('');
 
   for (const b of $$('[data-unseat]')) b.onclick = async () => {
-    await net.api('/api/unseat', { method: 'POST', body: JSON.stringify({ seat: b.dataset.unseat }) }).catch(() => {});
+    // Sending the phone as well as the station: the click frees the scout whose
+    // row the lead clicked, or nobody. Freeing by station alone threw out
+    // whoever happened to be in the chair by the time the click landed.
+    await net.api('/api/unseat', { method: 'POST', body: JSON.stringify({
+      seat: b.dataset.unseat, deviceId: b.dataset.device || undefined,
+    }) }).catch(() => {});
     refresh();
   };
 
@@ -876,8 +899,9 @@ function renderCrew() {
      <div class="kv"><span>flagged</span><b>${((STATE && STATE.flags) || []).length}</b></div>`;
 
   $('#crewSwaps').innerHTML = SEATLOG.length ? SEATLOG.slice(0, 6).map((e) => `
-    <div class="kv"><span>${esc(e.seat.replace(/(\d)/, ' $1').toUpperCase())}</span>
-      <b>${e.from ? esc(String(e.from).toUpperCase()) + ' → ' : ''}${esc(String(e.scoutId).toUpperCase())}</b></div>`).join('')
+    <div class="kv"><span>${esc(stationLabel(e.seat))}</span>
+      <b>${e.from ? esc(String(e.from).toUpperCase()) + ' → ' : ''}${
+        e.scoutId ? esc(String(e.scoutId).toUpperCase()) : 'FREED'}</b></div>`).join('')
     : '<div class="hint">nobody has swapped yet</div>';
 
   const base = net.state.base || location.origin;
@@ -1166,9 +1190,11 @@ function renderTeamDetail() {
         <div class="kv"><span>scores while moving</span><b>${lv.scoresWhileMovingRate == null
           ? '—' : Math.round(lv.scoresWhileMovingRate) + '%'}</b></div>
         <div class="kv"><span>crosses the field</span><b>${lv.traversalRate == null
-          ? '—' : Math.round(lv.traversalRate) + '%'}</b></div>
+          ? '—' : Math.round(lv.traversalRate) + '%'}${
+          kinds(lv.traversalKinds, 'NONE')}</b></div>
         <div class="kv"><span>gets beached</span><b>${lv.beachedRate == null
-          ? '—' : Math.round(lv.beachedRate) + '%'}</b></div>
+          ? '—' : Math.round(lv.beachedRate) + '%'}${
+          kinds(lv.beachedKinds, 'NEITHER')}</b></div>
         <div class="kv"><span>disrupts</span><b>${lv.disruptRate == null
           ? '—' : Math.round(lv.disruptRate) + '%'}</b></div>
         <div class="kv"><span>outpost intakes</span><b>${lv.outpostIntakes ?? '—'}</b></div>
@@ -1519,7 +1545,7 @@ function renderSeats() {
   const cols = `90px repeat(6, 1fr)`;
   $('#seatHead').style.gridTemplateColumns = cols;
   $('#seatHead').innerHTML = '<span>MATCH</span>' +
-    SEAT_KEYS.map((k) => `<span>${k.replace(/(\d)/, ' $1').toUpperCase()}</span>`).join('');
+    SEAT_KEYS.map((k) => `<span>${stationLabel(k)}</span>`).join('');
   $('#seatBody').innerHTML = ms.map((m) => `
     <div class="r" style="grid-template-columns:${cols}">
       <span class="tno" style="font-size:15px">${esc(shortCode(m.label))}</span>
@@ -1532,7 +1558,7 @@ function renderSeats() {
           ${team || '—'}<span class="hint" style="display:block">${who ? esc(String(who.scoutId).toUpperCase()) : 'nobody'}</span></span>`;
       }).join('')}
     </div>`).join('') || '<div class="empty">No upcoming matches.</div>';
-  $('#seatSub').textContent = `${Object.keys(seats).length} of 6 stations claimed`;
+  $('#seatSub').textContent = `${SEAT_KEYS.filter((k) => seats[k]).length} of 6 stations claimed`;
 
   // Who is sitting where and how much they have logged - no quality score.
   const rc = '1fr 120px';
@@ -1541,7 +1567,7 @@ function renderSeats() {
   $('#rosterHead').innerHTML = '<span>NAME</span><span class="num">STATION</span>';
   $('#rosterBody').innerHTML = roster.map((c) => `
     <div class="r" style="grid-template-columns:${rc}"><span>${esc(String(c.scoutId).toUpperCase())}</span>
-      <span class="num">${esc(c.seat.replace(/(\d)/, ' $1').toUpperCase())}</span></div>`).join('')
+      <span class="num">${esc(stationLabel(c.seat))}</span></div>`).join('')
     || '<div class="empty">Nobody seated yet.</div>';
 
   const c = ANALYTICS ? ANALYTICS.coverage : { pct: 0, robotsScouted: 0, robotsExpected: 0 };
@@ -1551,7 +1577,7 @@ function renderSeats() {
   const empty = SEAT_KEYS.filter((k) => !seats[k]);
   $('#seatWarn').innerHTML = empty.length
     ? `<div class="callout" style="margin-top:10px"><div class="h">${empty.length} STATION${empty.length > 1 ? 'S' : ''} EMPTY</div>
-       <div class="b">${empty.map((k) => k.toUpperCase()).join(', ')} — those robots go unwatched.</div></div>` : '';
+       <div class="b">${empty.map(stationLabel).join(', ')} — those robots go unwatched.</div></div>` : '';
 }
 
 // ══════════════════════════════════════════════════════════════ SERVER
@@ -1659,7 +1685,24 @@ async function main() {
   };
   await loadPicklistState();
   await refresh();
-  for (const t of ['nexus', 'results', 'scout', 'alliances', 'calibration', 'matchStatus', 'seats', 'matchStart', 'lovat']) net.on(t, refresh);
+  // These are the names the hub actually broadcasts. 'alliances' was not one of
+  // them - alliance selection arrives inside 'nexus' - so that listener had
+  // never fired, and the four below it were only ever picked up by the 30s
+  // poll below.
+  for (const t of ['nexus', 'results', 'scout', 'calibration', 'matchStatus', 'seats',
+                   'matchStart', 'lovat', 'solved', 'rankings', 'epa', 'earlyScores'])
+    net.on(t, refresh);
+
+  // The picklist is the one thing refresh() does not re-read, so it needs its
+  // own listener - and it is the one that matters most. Two dashboards are open
+  // during alliance selection; the second one kept its boot-time copy all
+  // afternoon, and the next edit made on it wrote that stale copy back over
+  // everyone else's DNP flags and ordering. Nothing said a thing.
+  net.on('picklist', async () => {
+    if (dragTeam) return;              // mid-drag: the drop re-renders anyway
+    await loadPicklistState();
+    renderPicklist(); renderPickMini(); renderWeights();
+  });
   wireAsk();
   wireImport();
   setInterval(refresh, 30000);

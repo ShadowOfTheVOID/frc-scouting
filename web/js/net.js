@@ -78,7 +78,14 @@ async function reachable(base, ms = 2500) {
  */
 async function sweepSubnet(port) {
   const saved = localStorage.getItem(LS_BASE) || '';
-  const m = saved.match(/^https?:\/\/(\d+)\.(\d+)\.(\d+)\.\d+(?::(\d+))?/);
+  let u = null;
+  try { u = new URL(saved); } catch { /* nothing saved yet, or not a URL */ }
+  // The /24 can only come from an address that IS one. The port can come from
+  // any of them, and used to be read out of the same IP-shaped match: a phone
+  // whose last good address was `http://scout.local:7000` swept for 6059 and
+  // could never find a hub the lead had started on --port 7000, which is the
+  // one case the port is remembered for.
+  const m = u && u.hostname.match(/^(\d+)\.(\d+)\.(\d+)\.\d+$/);
   const nets = [];
   if (m) nets.push(`${m[1]}.${m[2]}.${m[3]}`);
   for (const n of ['192.168.137', '192.168.1', '192.168.0', '10.0.0']) {
@@ -86,7 +93,7 @@ async function sweepSubnet(port) {
   }
   // The port we last reached a hub on wins: a lead who runs --port keeps
   // working. Only a phone that has never seen one falls back to the default.
-  const p = port || (m && m[4]) || PORT;
+  const p = port || (u && u.port) || PORT;
 
   for (const net of nets.slice(0, 2)) {      // two subnets is already 508 probes
     const tries = [];
@@ -161,7 +168,8 @@ export async function flush() {
     await api('/api/sync', { method: 'POST', body: JSON.stringify({ ...payload, who: identity }) });
 
     // Only drop what we actually sent; anything queued mid-flight survives.
-    const sent = new Set(items.map((i) => i.qid));
+    // Every row a collapsed item stands for goes, not just the newest of them.
+    const sent = new Set(items.flatMap((i) => i.qids || [i.qid]));
     await db.dropQueued([...sent]);
     state.lastSync = Date.now();
     state.online = true;
@@ -176,6 +184,7 @@ export async function flush() {
 
 // -------------------------------------------------------------------- SSE
 let es = null;
+let esBase = null;      // the address that stream is actually open against
 const streamHandlers = new Map();
 
 export function on(type, fn) {
@@ -192,9 +201,20 @@ export function setIdentity(who) {
 }
 
 export function connectStream() {
-  if (!state.base || es) return;
+  if (!state.base) return;
+  // A stream already open against the address we now believe in is the one we
+  // want; anything else has to be replaced. Bailing out on `es` alone left the
+  // phone streaming from the address it had just concluded was dead: a moved
+  // hub was rediscovered, records synced to it fine, and the stream sat on the
+  // old URL retrying forever. EventSource keeps a dead connection in
+  // CONNECTING rather than CLOSED, so nothing ever cleared it. The scout saw a
+  // working phone that had stopped hearing seat claims, match starts and the
+  // shared clock - and the shared clock is what the solver's accuracy rests on.
+  if (es && esBase === state.base) return;
+  if (es) { try { es.close(); } catch {} es = null; }
   try {
     const q = new URLSearchParams(Object.entries(identity).filter(([, v]) => v));
+    esBase = state.base;
     es = new EventSource(state.base + '/api/stream' + (q.toString() ? '?' + q : ''));
     es.onopen = () => { state.online = true; emit(); };
     es.onmessage = (ev) => {
@@ -235,7 +255,7 @@ export async function start({ flushMs = 8000, rediscoverMs = 20000 } = {}) {
       const cfg = await discover({ sweep: misses >= 3 });
       if (cfg) misses = 0;
     } else misses = 0;
-    if (state.base && !es) connectStream();
+    connectStream();   // self-guards; re-points itself if the hub has moved
     await flush();
   }, flushMs);
 

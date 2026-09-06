@@ -12,7 +12,7 @@ numbers therefore always carry a band and are never shown as bare integers.
 """
 import random
 
-from rules import BUCKET_PRIORS, BUCKETS, PHASE_IDS
+from rules import BUCKET_PRIORS, BUCKETS, PHASE_IDS, interval_secs
 
 
 # ---------------------------------------------------------------- allocation
@@ -44,7 +44,7 @@ def interval_weight(intervals, mult):
     """Sum of duration * bucket-multiplier over one robot's intervals."""
     w = 0.0
     for iv in intervals or []:
-        dur = max(0.0, float(iv.get("end", iv["start"])) - float(iv["start"]))
+        dur = interval_secs(iv)
         w += dur * mult.get(iv.get("intensity"), mult.get("steady", 1.0))
     return w
 

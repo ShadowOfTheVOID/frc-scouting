@@ -32,13 +32,16 @@ means nobody has to be precise.
 
 | source | what it gives | use for the clock |
 |---|---|---|
-| Nexus | `estimatedStartTime`, and `On field` when a volunteer clicks | arms the timer; cannot start it |
+| Nexus — required | `estimatedStartTime`, and `On field` when a volunteer clicks | arms the timer; cannot start it |
 | TBA | `predicted_time` before, **`actual_time` after** | re-anchors the clock once results post |
 | FRC Events | results after the match | same, slower |
 
-Nexus is a queueing tool driven by volunteers — its own docs say no continuous FMS feed is
-required — so `On field` happens while robots are still being placed. TBA's `actual_time` is
-the real FMS start, but it does not exist until the match is over.
+Arming is not a nicety: `On field` is what opens the match screen on the six phones, and no
+other source carries it, which is why Nexus is the one key to set — without it each scout has
+to open every match by hand. Nexus is a queueing
+tool driven by volunteers — its own docs say no continuous FMS feed is required — so `On field`
+happens while robots are still being placed. TBA's `actual_time` is the real FMS start, but it
+does not exist until the match is over.
 
 So the hub uses it retroactively: when TBA posts the match, it compares `actual_time` to when
 the scouts' shared clock started, and re-attributes every interval to the window it truly
