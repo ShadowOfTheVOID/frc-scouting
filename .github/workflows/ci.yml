@@ -73,8 +73,14 @@ jobs:
           python3 server/seed_demo.py --db data/ci.db --event 2026demo
           python3 - <<'PY'
           import subprocess, sys, time, urllib.request, json
+          # --no-poll is what makes this step deterministic. Statbotics needs
+          # no key, so a runner with internet asks it about 2026demo, gets a
+          # truthful empty answer about an event that does not exist, and
+          # writes it over the seeded EPA fixture - which failed this step or
+          # not depending on whether that landed before the assert below.
           p = subprocess.Popen([sys.executable, "server/hub.py",
-                                "--db", "data/ci.db", "--port", "8099", "--no-mdns"])
+                                "--db", "data/ci.db", "--port", "8099",
+                                "--no-mdns", "--no-poll"])
           try:
               for _ in range(40):
                   try:

@@ -1902,6 +1902,9 @@ def main():
     ap.add_argument("--port", type=int, default=PORT)
     ap.add_argument("--db", default=None)
     ap.add_argument("--no-mdns", action="store_true")
+    ap.add_argument("--no-poll", action="store_true",
+                    help="do not reach out to Nexus, TBA, FRC Events, Statbotics or Lovat "
+                         "(the hub still serves everything already in the database)")
     ap.add_argument("--allow-remote-config", action="store_true",
                     help="let any device on the network change hub settings and API keys "
                          "(default: the hub machine only)")
@@ -1921,7 +1924,15 @@ def main():
     except Exception as e:
         sys.stderr.write(f"[reconcile] {e}\n")
     srv = Server(("0.0.0.0", args.port), Handler)
-    threading.Thread(target=hub.run_poller, daemon=True, name="poller").start()
+    # Serving a database somebody built offline is a real mode, not just a test
+    # one: Statbotics needs no key, so a hub with no event on the internet still
+    # asks about one, and gets a truthful "nothing" back that overwrites what is
+    # already there. A hub told not to poll says so in its log, because silence
+    # from a source is otherwise indistinguishable from a source being down.
+    if args.no_poll:
+        hub.note("info", "polling disabled (--no-poll): serving what is already stored")
+    else:
+        threading.Thread(target=hub.run_poller, daemon=True, name="poller").start()
     threading.Thread(target=hub.run_snapshots, daemon=True, name="snapshots").start()
 
     responder = None

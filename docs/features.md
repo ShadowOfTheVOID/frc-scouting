@@ -554,11 +554,20 @@ Entered at `/` on the hub laptop. All keys are free and all are optional.
 ### Command line
 
 ```
-python3 server/hub.py [--port 6059] [--db data/scouting.db] [--no-mdns] [--allow-remote-config]
+python3 server/hub.py [--port 6059] [--db data/scouting.db] [--no-mdns] [--no-poll]
+                      [--allow-remote-config]
 ```
 
 `--no-mdns` skips answering to `scout.local`. `--allow-remote-config` lets any device on the
 network change hub settings — off by default, and rarely what you want.
+
+`--no-poll` stops the hub reaching out to Nexus, TBA, FRC Events, Statbotics or Lovat; it still
+serves everything already in the database. Use it to look at a saved event without touching the
+network. Statbotics is the reason the flag earns its place: it needs no key, so a hub that is
+online will ask about whatever event key it holds, and for an event that does not exist — a
+demo, a restored snapshot under a placeholder key — it gets a truthful "nothing" back and stores
+that over what was there. The hub notes in its log when polling is off, because a source that is
+silent and a source that is down must not look the same.
 
 ```
 python3 server/seed_demo.py [--db data/demo.db] [--event 2026demo] [--teams 31] [--matches 40] [--via-nexus]
