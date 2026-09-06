@@ -273,7 +273,8 @@ Six scouts and no spare, so this happens all day.
   The seat and the match stay put; the previous scout's work is saved under their name.
 - **Different phone** — the new scout just claims the station from their own phone. The old
   phone is told immediately and stops, so you never get two people logging one robot.
-- **FREE** on the crew board releases a chair when someone walks off.
+- **FREE** on the crew board releases a chair when someone walks off. That phone is told
+  immediately and stops, so a chair you have freed is never still logging.
 
 ### Training someone new
 

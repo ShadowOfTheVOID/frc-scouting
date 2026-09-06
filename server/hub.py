@@ -232,6 +232,8 @@ class Hub:
             cutoff = time.time() - 12 * 3600
             return {k: v for k, v in devs.items() if v.get("at", 0) > cutoff}, None
         self.store.mutate("devices", apply, {})
+        # Hearing from the phone is also the chair reporting in - see keep_seat_warm.
+        self.keep_seat_warm(who["deviceId"])
 
     def crew(self):
         """One row per station: who is on it, are they live, are they behind."""
@@ -604,19 +606,57 @@ class Hub:
         return (self.store.get("matchClocks") or {}).get(match_key)
 
     # ------------------------------------------------------------- seats
+    STATIONS = ("red1", "red2", "red3", "blue1", "blue2", "blue3")
+    SEAT_TTL = 3 * 3600            # seconds a chair survives with nobody reporting
+
+    @staticmethod
+    def normalize_seat(seat):
+        """`red2` from whatever was sent, or None if it is not a real station."""
+        s = str(seat or "").strip().lower()
+        return s if s in Hub.STATIONS else None
+
+    @classmethod
+    def seat_key(cls, alliance, station):
+        """One canonical key from an alliance and a station number.
+
+        Unvalidated input used to be pasted straight into the key, so a phone
+        that posted `station: 0` - or none at all - left a `red0` chair sitting
+        in the map. Nothing on the crew board can show a chair that is not one
+        of the six, so nothing could free it either, and the SEATS tab counted
+        it: "7 of 6 stations claimed".
+        """
+        try:
+            n = int(str(station).strip())
+        except (TypeError, ValueError):
+            return None
+        return cls.normalize_seat(f"{str(alliance or '').strip().lower()}{n}")
+
+    def _live_seats(self, seats):
+        cutoff = time.time() - self.SEAT_TTL
+        return {k: v for k, v in (seats or {}).items()
+                if k in self.STATIONS and (v or {}).get("at", 0) > cutoff}
+
     def seat_history(self, limit=12):
         return (self.store.get("seatLog") or [])[-limit:][::-1]
 
+    def _log_seat(self, entry):
+        self.store.mutate("seatLog", lambda log: ((list(log or []) + [entry])[-60:], None), [])
+
     def claim_seat(self, alliance, station, scout_id, device_id):
-        """Record who is sitting where. Returns the full seat map.
+        """Record who is sitting where. Returns the full seat map, or None if
+        the claim was not one a scout could have made.
 
         Not enforced - a scout who really is in that chair must always win.
         The point is that the phone can SHOW the clash before it costs a match.
         """
-        key = f"{alliance}{station}"
+        key = self.seat_key(alliance, station)
+        scout_id = str(scout_id or "").strip().upper()[:4]
+        device_id = str(device_id or "").strip()
+        if not key or not scout_id or not device_id:
+            return None
 
         def apply(seats):
-            seats = dict(seats or {})
+            seats = self._live_seats(seats)
             prev = seats.get(key)
             seats[key] = {"scoutId": scout_id, "deviceId": device_id, "at": time.time()}
             # one device sits in exactly one seat
@@ -628,15 +668,23 @@ class Hub:
             return seats, (seats, prev, vacated)
         seats, prev, vacated = self.store.mutate("seats", apply, {})
 
+        self.touch({"deviceId": device_id, "scoutId": scout_id, "seat": key}, "seated")
+
+        # Phones re-assert the chair they are already sitting in whenever they
+        # find the hub again, so only a real change is news. Logging every
+        # re-assert filled the lead's swap list with "AK -> AK".
+        if (prev and prev.get("scoutId") == scout_id
+                and prev.get("deviceId") == device_id and not vacated):
+            return seats
+
         # A phone that has just been displaced must be told, or two scouts keep
         # logging the same robot and neither knows.
         displaced = None
         if prev and prev.get("deviceId") and prev["deviceId"] != device_id:
             displaced = prev["deviceId"]
 
-        entry = {"at": time.time(), "seat": key, "scoutId": scout_id,
-                 "from": (prev or {}).get("scoutId"), "vacated": vacated}
-        self.store.mutate("seatLog", lambda log: ((list(log or []) + [entry])[-60:], None), [])
+        self._log_seat({"at": time.time(), "seat": key, "scoutId": scout_id,
+                        "from": (prev or {}).get("scoutId"), "vacated": vacated})
         self.note("info", f"{scout_id} took {key}"
                           + (f" from {prev['scoutId']}" if prev and prev.get("scoutId") else ""))
 
@@ -644,13 +692,59 @@ class Hub:
                                  "scoutId": scout_id})
         return seats
 
-    def seats(self):
-        cutoff = time.time() - 3 * 3600
+    def free_seat(self, key, device_id=None):
+        """Release a chair from the crew board. Returns the full seat map.
+
+        `device_id` is the phone the lead was looking at when they clicked. The
+        click frees that phone or nobody, so a FREE aimed at the scout who
+        walked off cannot land on the one who has just sat down in their place.
+        """
+        def apply(seats):
+            seats = self._live_seats(seats)
+            prev = seats.get(key)
+            if not prev or (device_id and prev.get("deviceId") != device_id):
+                return seats, (seats, None)
+            del seats[key]
+            return seats, (seats, prev)
+        seats, prev = self.store.mutate("seats", apply, {})
+        if not prev:
+            return seats
+
+        self._log_seat({"at": time.time(), "seat": key, "scoutId": None,
+                        "from": prev.get("scoutId"), "freed": True, "vacated": []})
+        self.note("info", f"{prev.get('scoutId') or 'someone'} was freed from {key}")
+        # Same envelope as a claim, and it names the phone that has to stop.
+        # Freeing a chair used to be silent: that phone kept scouting, the lead
+        # saw an empty station and sat someone else on the same robot, which is
+        # exactly the double-scouting the bump screen exists to prevent.
+        self.broadcast("seats", {"seats": seats, "displaced": prev.get("deviceId"),
+                                 "seat": key, "scoutId": None, "freed": True})
+        return seats
+
+    def keep_seat_warm(self, device_id):
+        """A chair belongs to whoever is sitting in it, for as long as they are.
+
+        `seats()` ages claims out, but `at` was only ever written at the moment
+        of the claim. A scout who sat down at nine and never opened the seat
+        screen again dropped off the crew board three hours later, and the lead
+        was told six robots were unwatched while six people watched them.
+        """
+        now = time.time()
 
         def apply(seats):
-            seats = seats or {}
-            live = {k: v for k, v in seats.items() if v.get("at", 0) > cutoff}
-            return (live if live != seats else None), live
+            seats = self._live_seats(seats)
+            touched = False
+            for k, v in list(seats.items()):
+                if v.get("deviceId") == device_id and now - v.get("at", 0) > 60:
+                    seats[k] = {**v, "at": now}
+                    touched = True
+            return (seats if touched else None), None
+        self.store.mutate("seats", apply, {})
+
+    def seats(self):
+        def apply(seats):
+            live = self._live_seats(seats)
+            return (live if live != (seats or {}) else None), live
         return self.store.mutate("seats", apply, {})
 
     # ---------------------------------------------------------- solving
@@ -1623,18 +1717,17 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/seat":
             seats = h.claim_seat(body.get("alliance"), body.get("station"),
                                  body.get("scoutId"), body.get("deviceId"))
-            h.touch({"deviceId": body.get("deviceId"), "scoutId": body.get("scoutId"),
-                     "seat": f"{body.get('alliance')}{body.get('station')}"}, "seated")
+            if seats is None:
+                return self._json({"error": "a claim needs alliance red or blue, "
+                                            "station 1-3, initials and a deviceId"}, 400)
             return self._json({"ok": True, "seats": seats})
 
         if p == "/api/unseat":
             # the lead can free a station from the dashboard when someone walks off
-            def apply(seats):
-                seats = dict(seats or {})
-                seats.pop(body.get("seat"), None)
-                return seats, seats
-            seats = h.store.mutate("seats", apply, {})
-            h.broadcast("seats", seats)
+            key = h.normalize_seat(body.get("seat"))
+            if not key:
+                return self._json({"error": "unseat needs a station like red2"}, 400)
+            seats = h.free_seat(key, body.get("deviceId"))
             return self._json({"ok": True, "seats": seats})
 
         if p == "/api/sync":
@@ -1887,6 +1980,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             self.wfile.write(b": connected\n\n")
             self.wfile.flush()
+            last_touch = time.time()
             while True:
                 try:
                     msg = q.get(timeout=15)
@@ -1894,6 +1988,14 @@ class Handler(BaseHTTPRequestHandler):
                 except queue.Empty:
                     self.wfile.write(b": keepalive\n\n")  # keeps proxies and phones from dropping it
                 self.wfile.flush()
+                # A stream we can still write to IS the phone reporting in.
+                # "Last heard" used to count from the moment the phone
+                # connected and never move, so a phone that stayed up all
+                # morning read "gone quiet 4h ago" on the crew board and the
+                # lead was sent to check wifi that was working perfectly.
+                if who.get("deviceId") and time.time() - last_touch > 60:
+                    last_touch = time.time()
+                    Handler.hub.touch(who, "connected")
         except Exception:
             pass
         finally:

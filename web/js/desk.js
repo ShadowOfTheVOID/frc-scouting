@@ -840,7 +840,7 @@ function renderCrew() {
     return `<div class="r" style="grid-template-columns:${CREW_COLS}">
       <span style="color:${side};font:800 12px Barlow,sans-serif;letter-spacing:.1em">${c.seat.replace(/(\d)/, ' $1').toUpperCase()}</span>
       <span>${c.scoutId ? esc(String(c.scoutId).toUpperCase()) : '<span style="color:var(--t6)">nobody seated</span>'}
-        ${c.scoutId ? `<button class="x" data-unseat="${c.seat}" style="margin-left:8px">FREE</button>` : ''}</span>
+        ${c.scoutId ? `<button class="x" data-unseat="${c.seat}" data-device="${esc(c.deviceId || '')}" style="margin-left:8px">FREE</button>` : ''}</span>
       <span class="num" style="color:${ok ? 'var(--green-soft)' : 'var(--red-alert)'};font:800 10.5px Barlow,sans-serif;letter-spacing:.1em">
         ${c.scoutId ? (ok ? 'LIVE' : 'NOT SEEN') : '—'}</span>
       <span class="num">${ago(c.lastSeenSec)}</span>
@@ -849,7 +849,12 @@ function renderCrew() {
   }).join('');
 
   for (const b of $$('[data-unseat]')) b.onclick = async () => {
-    await net.api('/api/unseat', { method: 'POST', body: JSON.stringify({ seat: b.dataset.unseat }) }).catch(() => {});
+    // Sending the phone as well as the station: the click frees the scout whose
+    // row the lead clicked, or nobody. Freeing by station alone threw out
+    // whoever happened to be in the chair by the time the click landed.
+    await net.api('/api/unseat', { method: 'POST', body: JSON.stringify({
+      seat: b.dataset.unseat, deviceId: b.dataset.device || undefined,
+    }) }).catch(() => {});
     refresh();
   };
 
@@ -876,8 +881,9 @@ function renderCrew() {
      <div class="kv"><span>flagged</span><b>${((STATE && STATE.flags) || []).length}</b></div>`;
 
   $('#crewSwaps').innerHTML = SEATLOG.length ? SEATLOG.slice(0, 6).map((e) => `
-    <div class="kv"><span>${esc(e.seat.replace(/(\d)/, ' $1').toUpperCase())}</span>
-      <b>${e.from ? esc(String(e.from).toUpperCase()) + ' → ' : ''}${esc(String(e.scoutId).toUpperCase())}</b></div>`).join('')
+    <div class="kv"><span>${esc(String(e.seat || '').replace(/(\d)/, ' $1').toUpperCase())}</span>
+      <b>${e.from ? esc(String(e.from).toUpperCase()) + ' → ' : ''}${
+        e.scoutId ? esc(String(e.scoutId).toUpperCase()) : 'FREED'}</b></div>`).join('')
     : '<div class="hint">nobody has swapped yet</div>';
 
   const base = net.state.base || location.origin;
@@ -1532,7 +1538,7 @@ function renderSeats() {
           ${team || '—'}<span class="hint" style="display:block">${who ? esc(String(who.scoutId).toUpperCase()) : 'nobody'}</span></span>`;
       }).join('')}
     </div>`).join('') || '<div class="empty">No upcoming matches.</div>';
-  $('#seatSub').textContent = `${Object.keys(seats).length} of 6 stations claimed`;
+  $('#seatSub').textContent = `${SEAT_KEYS.filter((k) => seats[k]).length} of 6 stations claimed`;
 
   // Who is sitting where and how much they have logged - no quality score.
   const rc = '1fr 120px';

@@ -414,6 +414,80 @@ def test_seats(L):
     L.req("/api/unseat", {"seat": "blue1"})
     _, seats = L.req("/api/seats")
     ok &= check("the lead can free a chair", "blue1" not in seats)
+
+    # A claim key used to be f"{alliance}{station}" with nothing checked, so a
+    # phone posting a station it does not have left a chair in the map that no
+    # dashboard row could show and no FREE button could clear.
+    L.req("/api/seat", {"alliance": "blue", "station": 3, "scoutId": "AK", "deviceId": "p"})
+    for bad in ({"alliance": "red", "station": 0, "scoutId": "AK", "deviceId": "p"},
+                {"alliance": "green", "station": 1, "scoutId": "AK", "deviceId": "p"},
+                {"alliance": "red", "station": 1, "scoutId": "", "deviceId": "p"},
+                {"alliance": "red", "station": 1, "scoutId": "AK"}):
+        code, _ = L.req("/api/seat", bad)
+        ok &= check(f"a claim of {bad.get('alliance')}{bad.get('station')} "
+                    f"by {bad.get('scoutId')!r} is a 400", code == 400)
+    _, seats = L.req("/api/seats")
+    ok &= check("and nothing junk reached the seat map",
+                sorted(seats) == ["blue3"], f"({sorted(seats)})")
+    L.req("/api/unseat", {"seat": "blue3"})
+
+    code, _ = L.req("/api/unseat", {"seat": "red9"})
+    ok &= check("freeing a station that does not exist is a 400", code == 400)
+
+    # The lead clicks FREE on the row in front of them. If someone else has sat
+    # down in that chair since the board was drawn, the click must miss.
+    L.req("/api/seat", {"alliance": "red", "station": 3, "scoutId": "AK", "deviceId": "phone-a"})
+    L.req("/api/seat", {"alliance": "red", "station": 3, "scoutId": "CJ", "deviceId": "phone-c"})
+    L.req("/api/unseat", {"seat": "red3", "deviceId": "phone-a"})
+    _, seats = L.req("/api/seats")
+    ok &= check("FREE aimed at the scout who left does not throw out their replacement",
+                (seats.get("red3") or {}).get("deviceId") == "phone-c")
+    L.req("/api/unseat", {"seat": "red3", "deviceId": "phone-c"})
+    _, seats = L.req("/api/seats")
+    ok &= check("and it does free the phone it names", "red3" not in seats)
+
+    # Freeing a chair was silent, so that phone kept scouting while the lead saw
+    # an empty station and sat someone else on the same robot.
+    log = L.hub.seat_history()
+    ok &= check("a FREE shows up on the lead's swap list",
+                bool(log) and log[0]["seat"] == "red3" and log[0].get("freed"))
+    return ok
+
+
+def test_seat_lifetime(L):
+    """A chair belongs to whoever is sitting in it, for as long as they are."""
+    ok = True
+    L.req("/api/seat", {"alliance": "blue", "station": 2, "scoutId": "DM", "deviceId": "phone-d"})
+
+    # `at` used to be written only at the moment of the claim, so a scout who sat
+    # down at nine dropped off the crew board at noon and the lead was told the
+    # robot was unwatched while someone was watching it.
+    def age(seats):
+        seats = dict(seats)
+        seats["blue2"] = {**seats["blue2"], "at": time.time() - hub.Hub.SEAT_TTL + 30}
+        return seats, None
+    L.store.mutate("seats", age, {})
+    L.hub.touch({"deviceId": "phone-d", "scoutId": "DM", "seat": "blue2"}, "sync")
+    fresh = L.hub.seats()["blue2"]["at"]
+    ok &= check("hearing from the phone keeps its chair alive",
+                time.time() - fresh < 5, f"({int(time.time() - fresh)}s old)")
+
+    # Re-asserting the same chair is what a phone does every time it finds the
+    # hub again. It must not read as a swap, or the lead's list fills with noise.
+    before = len(L.hub.seat_history(limit=60))
+    L.req("/api/seat", {"alliance": "blue", "station": 2, "scoutId": "DM", "deviceId": "phone-d"})
+    L.req("/api/seat", {"alliance": "blue", "station": 2, "scoutId": "DM", "deviceId": "phone-d"})
+    ok &= check("re-claiming the chair you are already in is not a swap",
+                len(L.hub.seat_history(limit=60)) == before)
+
+    # A claim that ages out with nobody reporting still goes away.
+    def expire(seats):
+        seats = dict(seats)
+        seats["blue2"] = {**seats["blue2"], "at": time.time() - hub.Hub.SEAT_TTL - 1}
+        return seats, None
+    L.store.mutate("seats", expire, {})
+    ok &= check("a chair nobody has reported from all afternoon is released",
+                "blue2" not in L.hub.seats())
     return ok
 
 
@@ -796,7 +870,8 @@ def main():
         for fn in (test_sync_and_last_write_wins, test_solving_ran, test_analytics_null_safe,
                    test_picklist_lock, test_export_import_idempotent,
                    test_snapshot_and_restore, test_csv_export,
-                   test_seats, test_match_clock, test_reconcile, test_config_scope,
+                   test_seats, test_seat_lifetime, test_match_clock, test_reconcile,
+                   test_config_scope,
                    test_trend_series, test_defence_counts_both_ways,
                    test_ai_is_gated_and_grounded,
                    test_nexus_tba_one_row, test_legacy_keys_migrate,

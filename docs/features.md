@@ -39,7 +39,8 @@ Where a scout starts, once, at the beginning of the day.
   above their chair. There is no field map on purpose: nothing to mirror, nothing to get
   backwards.
 - Stations already claimed show **the other scout's initials**; free ones show **OPEN** in
-  green, so a double-booked chair is visible before it costs a match.
+  green, so a double-booked chair is visible before it costs a match. The chair this phone
+  itself is holding reads **THIS PHONE**.
 - The footer shows which hub was found and which event is loaded.
 
 Claiming a station takes it from whoever held it. Their phone is told immediately and stops —
@@ -128,9 +129,10 @@ working and everything is saved locally.
 
 ### BUMPED
 
-Shown when another phone claims this scout's chair. The clock stops so two people never log the
-same robot. Offers **IT'S STILL MY CHAIR** or **PICK A DIFFERENT STATION**, and lists what this
-phone had already saved.
+Shown when this scout's chair goes away — another phone claimed it, or the lead freed it on the
+crew board. The clock stops so two people never log the same robot. Offers **IT'S STILL MY
+CHAIR** or **PICK A DIFFERENT STATION**, and lists what this phone had already saved. Reopening
+the app does not get past it: the phone asks the hub who is in the chair before it scouts.
 
 ### Practice mode
 
@@ -184,7 +186,8 @@ It says so in plain words — `RED 2 — nobody seated, those robots are unwatch
 app is not open on their phone`, `CJ on BLUE 3 — gone quiet 6m ago, check their wifi` — and one
 green line when everything is fine. **THIS MATCH** lists the six robots about to play and who
 is watching each, so an unwatched robot is obvious before the match rather than after. **FREE**
-releases a chair when someone walks off.
+releases a chair when someone walks off; that phone is told at once and stops, so a chair you
+have freed is never still logging.
 
 ### LIVE
 

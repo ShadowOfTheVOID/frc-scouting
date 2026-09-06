@@ -199,6 +199,84 @@ function autosave() {
 const ballsSoFar = () =>
   Math.round((entry ? entry.payload.intervals : []).reduce((s, i) => s + (i.end - i.start) * rateOf(i.intensity), 0));
 
+// ══════════════════════════════════════════════════════════ CLAIMING A CHAIR
+// The claim is the only thing that tells the lead this robot is being watched.
+// Tapping SIT used to fire one POST and forget it: if the hub was unreachable
+// at that moment - which at a venue is most of the time - the claim was lost
+// for good. The phone believed it was seated, the crew board said the station
+// was empty all day, and nothing ever tried again.
+//
+// `seatVerified` is the safety catch on the other side of that. A phone must
+// not re-assert a chair until the hub has confirmed the chair is still ours,
+// or a phone that was bumped and then restarted would quietly steal it back.
+let seatVerified = false;
+let lastSeatSync = 0;
+let lastVerify = 0;
+// Nothing may settle the chair until boot has chosen a screen: verifySeat's
+// answer decides between standby and the bump screen, and it must not race the
+// startup that picks one.
+let booted = false;
+
+function seatKey() {
+  return seat.alliance && seat.station ? `${seat.alliance}${seat.station}` : '';
+}
+
+function syncSeat(force = false) {
+  if (PRACTICE || !seatVerified || screen === 'bumped') return Promise.resolve();
+  if (!seat.scout || !seat.alliance || !seat.station) return Promise.resolve();
+  const now = Date.now();
+  // Re-asserting is also what keeps the chair from ageing out of the hub's map
+  // while the scout sits in it, so it repeats rather than firing once.
+  if (!force && (!net.state.online || now - lastSeatSync < 60000)) return Promise.resolve();
+  lastSeatSync = now;
+  return net.api('/api/seat', { method: 'POST', body: JSON.stringify({
+    alliance: seat.alliance, station: seat.station,
+    scoutId: seat.scout, deviceId: db.deviceId(),
+  }) }).then((r) => {
+    if (r && r.seats) { SEATS = r.seats; if (screen === 'seat') renderSeat(); }
+  }).catch(() => { lastSeatSync = 0; });   // offline: the next tick tries again
+}
+
+/** Ask the hub who is actually in our chair before we act as though it is ours. */
+async function verifySeat() {
+  if (PRACTICE || seatVerified || screen === 'bumped') return;
+  if (Date.now() - lastVerify < 15000) return;
+  lastVerify = Date.now();
+  let s;
+  try { s = await net.api('/api/seats'); } catch { return; }   // retried when we reconnect
+  SEATS = s || {};
+  const held = seatKey() ? SEATS[seatKey()] : null;
+  const stolen = !!held && !!held.deviceId && held.deviceId !== db.deviceId();
+  if (stolen) {
+    // On the seat screen nothing is at stake yet: the tile shows the clash and
+    // SIT is a deliberate take-back. Anywhere else this phone is scouting a
+    // robot it no longer has the chair for - restarting the app used to walk
+    // straight past that into standby, and two phones logged one robot.
+    if (screen !== 'seat') { showBumped(seatKey(), held.scoutId, false); return; }
+    renderSeat();
+    return;
+  }
+  seatVerified = true;
+  await syncSeat(true);
+  if (screen === 'seat') renderSeat();
+}
+
+function showBumped(key, byScout, freed) {
+  seatVerified = false;
+  clock.pause();
+  $('#bumpSeat').textContent = `${String(key || '').toUpperCase()} · ${seat.scout}`;
+  $('#bumpTitle').textContent = freed
+    ? `The scout lead freed ${(key || 'this chair').toUpperCase()}.`
+    : `${String(byScout || 'Someone').toUpperCase()} took ${(key || 'this chair').toUpperCase()}.`;
+  $('#bumpBody').textContent = freed
+    ? 'Stop logging until you have a chair again. Everything you already saved is safe and has been sent.'
+    : 'Stop logging — two phones on one robot means neither set of data is trustworthy. '
+      + 'Everything you already saved is safe and has been sent.';
+  renderBumped();
+  show('bumped');
+  buzz(60);
+}
+
 // ═══════════════════════════════════════════════════════════ TAKE A SEAT
 function renderSeat() {
   $('#myInitials').textContent = seat.scout || '--';
@@ -220,12 +298,16 @@ function renderSeat() {
     const mine = d.dataset.al === seat.alliance && Number(d.dataset.n) === seat.station;
     d.classList.toggle('on', mine);
     const claim = SEATS[`${d.dataset.al}${d.dataset.n}`];
-    const taken = claim && claim.deviceId !== db.deviceId();
+    const ours = !!claim && claim.deviceId === db.deviceId();
+    const taken = !!claim && !ours;
     const wh = d.querySelector('.wh');
     wh.textContent = mine ? `ME · ${seat.scout || '--'}`
-      : taken ? String(claim.scoutId || '??').toUpperCase() : 'OPEN';
+      : taken ? String(claim.scoutId || '??').toUpperCase()
+      // the chair this phone is holding right now, while a different tile is
+      // selected - it used to read OPEN in green, which is a lie about our own
+      : ours ? 'THIS PHONE' : 'OPEN';
     // OPEN is the only green one - a name means someone is already in that chair
-    wh.classList.toggle('open', !mine && !taken);
+    wh.classList.toggle('open', !mine && !taken && !ours);
   }
   if (seat.alliance && seat.station) {
     $('#signExample').textContent = `${seat.alliance.toUpperCase()} ${seat.station}`;
@@ -255,14 +337,14 @@ $('#btnInitials').onclick = () => {
 
 $('#btnSit').onclick = () => {
   if (!seat.scout || !seat.alliance || !seat.station) { buzz(30); return; }
+  // A training run must leave nothing behind, and that includes the station the
+  // trainee poked at - the next person to pick this phone up gets their own.
+  if (PRACTICE) { loadMatch(practiceMatch()); show('live'); renderLive(); return; }
   localStorage.setItem('alliance', seat.alliance);
   localStorage.setItem('station', String(seat.station));
-  if (PRACTICE) { loadMatch(practiceMatch()); show('live'); renderLive(); return; }
   net.setIdentity({ scoutId: seat.scout, seat: `${seat.alliance}${seat.station}` });
-  net.api('/api/seat', { method: 'POST', body: JSON.stringify({
-    alliance: seat.alliance, station: seat.station,
-    scoutId: seat.scout, deviceId: db.deviceId(),
-  }) }).then((r) => { SEATS = r.seats || SEATS; }).catch(() => {});
+  seatVerified = true;
+  syncSeat(true);
   loadMatch(pickCurrentMatch());
   goStandbyOrLive();
 };
@@ -575,16 +657,20 @@ async function renderOffline() {
 
 $('#btnRetry').onclick = () => { net.discover().then(net.flush); };
 $('#btnTakeBack').onclick = async () => {
-  try {
-    await net.api('/api/seat', { method: 'POST', body: JSON.stringify({
-      alliance: seat.alliance, station: seat.station,
-      scoutId: seat.scout, deviceId: db.deviceId(),
-    }) });
-  } catch {}
+  seatVerified = true;
+  await syncSeat(true);
   loadMatch(pickCurrentMatch());
   goStandbyOrLive();
 };
-$('#btnPickSeat').onclick = () => { show('seat'); renderSeat(); };
+$('#btnPickSeat').onclick = () => {
+  // Walking away from the bump screen gives the chair up. Keeping it selected
+  // would let the background re-claim take it straight back off whoever the
+  // lead just sat there, which is how we got here in the first place.
+  seat.alliance = ''; seat.station = 0;
+  localStorage.removeItem('alliance'); localStorage.removeItem('station');
+  seatVerified = true;
+  show('seat'); renderSeat();
+};
 $('#btnBackup').onclick = async () => {
   const items = db.collapse(await db.queued());
   const payload = {
@@ -611,11 +697,8 @@ $('#btnHandover').onclick = async () => {
   seat.scout = name;
   localStorage.setItem('scoutName', name);
   net.setIdentity({ scoutId: name });
-  try {
-    await net.api('/api/seat', { method: 'POST', body: JSON.stringify({
-      alliance: seat.alliance, station: seat.station, scoutId: name, deviceId: db.deviceId(),
-    }) });
-  } catch { /* offline: the claim syncs when the hub is back */ }
+  // offline: syncSeat re-asserts this the moment the hub is reachable again
+  await syncSeat(true);
   // fresh entry so the new scout's work is attributed to them
   loadMatch(currentMatch);
   await refreshHistory();
@@ -746,30 +829,33 @@ async function main() {
     buzz(); renderLive(); autosave();
   };
 
+  let wasOnline = net.state.online;
   net.onChange(() => {
     if (screen === 'live') { $('#lvLink').textContent = net.state.online ? 'STATION LINKED' : 'SAVING LOCALLY'; $('#lvDot').className = 'dot' + (net.state.online ? '' : ' amber'); }
     if (screen === 'standby') renderStandby();
     if (screen === 'seat') renderSeat();
     if (screen === 'offline') renderOffline();
+    // Finding the hub again is the moment to settle the chair: check who holds
+    // it, then re-assert ours. Both are no-ops once they have succeeded.
+    const cameBack = net.state.online && !wasOnline;
+    wasOnline = net.state.online;
+    if (booted && net.state.online) {
+      if (!seatVerified) verifySeat(); else syncSeat(cameBack);
+    }
   });
 
   net.setIdentity({ deviceId: db.deviceId(), scoutId: seat.scout,
                     seat: seat.alliance && seat.station ? `${seat.alliance}${seat.station}` : '' });
   const cfg = await net.start();
   if (cfg && cfg.eventKey) { eventKey = cfg.eventKey; localStorage.setItem('eventKey', eventKey); }
-  net.api('/api/seats').then((s) => { SEATS = s || {}; if (screen === 'seat') renderSeat(); }).catch(() => {});
   net.on('seats', (msg) => {
+    // Both a claim and a FREE from the crew board arrive in this envelope; a
+    // bare map is an older hub, still worth reading.
     const payload = (msg && msg.seats) ? msg : { seats: msg };
     SEATS = payload.seats || {};
     if (payload.displaced && payload.displaced === db.deviceId()) {
-      // our chair was claimed by another phone - stop, do not double-scout
-      clock.pause();
-      $('#bumpSeat').textContent = `${(payload.seat || '').toUpperCase()} · ${seat.scout}`;
-      $('#bumpTitle').textContent =
-        `${String(payload.scoutId || 'Someone').toUpperCase()} took ${(payload.seat || 'this chair').toUpperCase()}.`;
-      renderBumped();
-      show('bumped');
-      buzz(60);
+      // our chair is gone - stop, do not double-scout
+      showBumped(payload.seat, payload.scoutId, !!payload.freed);
       return;
     }
     if (screen === 'seat') renderSeat();
@@ -820,6 +906,11 @@ async function main() {
   } else if (seat.scout && seat.alliance && seat.station) {
     loadMatch(pickCurrentMatch()); goStandbyOrLive();
   } else { show('seat'); renderSeat(); }
+
+  // Only now: verifySeat can send us to the bump screen, so it has to run after
+  // the screen this boot would otherwise have landed on.
+  booted = true;
+  verifySeat();
 
   setInterval(() => {
     if (screen === 'live') {
