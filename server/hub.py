@@ -1079,6 +1079,21 @@ def _gz(data):
     return buf.getvalue()
 
 
+#: The only content types /api/photo will ever claim. A pit record arrives from
+#: a phone - or from anything else on the venue wifi - and its data: URI used to
+#: name its own Content-Type, which meant a "photo" could be served back as
+#: text/html with attacker-chosen bytes in it: stored XSS on the hub's own
+#: origin, where the strategy token lives.
+IMAGE_MIMES = ("image/jpeg", "image/png", "image/webp", "image/gif", "image/heic")
+
+
+def _image_mime(raw):
+    m = str(raw or "").strip().lower()
+    if m == "image/jpg":
+        m = "image/jpeg"
+    return m if m in IMAGE_MIMES else "application/octet-stream"
+
+
 def _extract_photos(store, rec):
     """Pull data: URIs off a pit record into the photo table.
 
@@ -1092,7 +1107,7 @@ def _extract_photos(store, rec):
         if isinstance(src, str) and src.startswith("data:"):
             try:
                 head, b64 = src.split(",", 1)
-                mime = head[5:].split(";")[0] or "image/jpeg"
+                mime = _image_mime(head[5:].split(";")[0])
                 raw = base64.b64decode(b64)
                 pid = hashlib.sha1(raw).hexdigest()[:16]
                 store.put_photo(pid, rec["eventKey"], rec["team"], mime, raw)
@@ -1103,6 +1118,22 @@ def _extract_photos(store, rec):
             kept.append(src)          # already an id
     payload["photos"] = kept
     rec["payload"] = payload
+
+
+def _csv_safe(row):
+    """One row, with nothing in it a spreadsheet will treat as a formula.
+
+    Scout notes are free text typed on a phone, and this export exists to be
+    opened in Excel and handed to an alliance partner. A cell beginning = + - @
+    is a formula to every spreadsheet there is, so it gets a leading quote -
+    the standard defusing, and it still reads as the text the scout typed.
+    """
+    out = []
+    for v in row:
+        if isinstance(v, str) and v[:1] in ("=", "+", "-", "@", "\t", "\r"):
+            v = "'" + v
+        out.append(v)
+    return out
 
 
 def _csv_table(h, ek, table):
@@ -1503,10 +1534,15 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _csv(self, filename, header, rows):
+        # The filename is built from ?event=, so it is caller-controlled. A bare
+        # newline in it used to land in the response headers verbatim - a real
+        # Set-Cookie could be injected by anything that could get a lead to click
+        # a crafted export link - and a quote broke the quoted filename outright.
+        filename = re.sub(r"[^A-Za-z0-9._-]", "_", str(filename))[:120] or "export.csv"
         buf = io.StringIO()
         w = csv.writer(buf, lineterminator="\n")
         w.writerow(header)
-        w.writerows(rows)
+        w.writerows(_csv_safe(r) for r in rows)
         body = buf.getvalue().encode("utf-8-sig")   # BOM: Excel opens it as UTF-8
         enc = None
         if len(body) > 1024 and "gzip" in (self.headers.get("Accept-Encoding") or ""):
@@ -1701,7 +1737,12 @@ class Handler(BaseHTTPRequestHandler):
             if not data:
                 return self.send_error(404, "no such photo")
             self.send_response(200)
-            self.send_header("Content-Type", mime or "image/jpeg")
+            # Re-checked on the way out as well as in: a database written by an
+            # older build can still hold whatever a phone once claimed.
+            self.send_header("Content-Type", _image_mime(mime))
+            # And if it is mislabelled, no sniffing it into something runnable.
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "max-age=86400")
             self.end_headers()
