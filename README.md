@@ -257,8 +257,17 @@ Drag a row to move a team by hand. The first time you do, the board freezes as y
 new match data stops reordering it under you; **RESET TO COMPUTED** hands it back to the score.
 
 **Filters narrow what you are looking at, never the board.** Above the rows: search by team
-number or name, a minimum climb, a minimum number of matches scouted, and chips for HIDE TAKEN,
-HIDE DNP, RELIABLE, DEFENDS and STOCKPILES. Hiding rows does not renumber the ones left — the
+number or name, a minimum climb, a minimum **fuel per second**, a minimum number of matches
+scouted, the zone a robot usually starts in, and chips for HIDE TAKEN, HIDE DNP, RELIABLE,
+AUTO WORKS, NO AUTO CLASH, DEFENDS and STOCKPILES.
+
+Fuel per second is the rate behind the volume — how fast a robot cycles rather than how much it
+finishes with — and it now reads on every row and on the team page. **NO AUTO CLASH** hides
+robots that habitually start where ours does, which is the auto argument the match preview has
+always had, moved to the day you can still pick somebody else; it needs OUR TEAM set and
+scouted, and says so when it is not.
+
+Hiding rows does not renumber the ones left — the
 number beside a team is always its rank on the whole board — and it changes nothing else: not
 the score, not the saved order, not the printed sheet, not what a drag does. Filters stay in
 the browser you set them in rather than on the hub, so the laptop running alliance selection
