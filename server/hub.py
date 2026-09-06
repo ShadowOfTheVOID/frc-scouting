@@ -92,6 +92,20 @@ class Hub:
         self.writes = []          # timestamps, for writes/min
         self.log = []             # ring buffer for the event log panel
 
+    WRITES_KEPT = 1000        # five minutes of writes is all writes/min needs
+
+    def record_writes(self, n):
+        """One timestamp per applied row, for the diagnostics panel's writes/min.
+
+        Trimmed on the way in rather than only in diag(): a hub nobody has the
+        dashboard open on still takes writes all day, and this was the one list
+        here with no ceiling on it.
+        """
+        now = time.time()
+        keep = [t for t in self.writes if now - t < 300]
+        keep.extend([now] * max(0, min(int(n), self.WRITES_KEPT)))
+        self.writes = keep[-self.WRITES_KEPT:]
+
     def note(self, level, msg):
         self.log.append({"at": time.time(), "level": level, "msg": msg})
         if len(self.log) > 300:
@@ -1832,7 +1846,7 @@ class Handler(BaseHTTPRequestHandler):
             if isinstance(body.get("who"), dict):
                 h.touch(body["who"], "sync")
             if applied:
-                h.writes.extend([time.time()] * applied)
+                h.record_writes(applied)
                 h.note("info", f"sync accepted {applied} row(s)"
                                + (f", rejected {rejected} stale" if rejected else ""))
                 h.broadcast("scout", {"applied": applied, "matches": sorted(touched)})
@@ -2062,6 +2076,14 @@ class Handler(BaseHTTPRequestHandler):
 class Server(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+    # socketserver defaults this to 5. Six phones flush the moment the buzzer
+    # goes, two dashboards poll on their own timers and the pit tablet syncs
+    # whenever it likes, so connections genuinely do arrive in bursts - and a
+    # burst past the backlog is refused by the kernel before any of this code
+    # runs. Measured: 60 of 200 simultaneous connects were reset at 5. A queued
+    # scouting record survives that and retries, but a seat claim or a match
+    # clock is a one-shot, and the clock is what the solver's accuracy rests on.
+    request_queue_size = 128
 
 
 def main():

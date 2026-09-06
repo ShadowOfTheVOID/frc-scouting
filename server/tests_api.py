@@ -532,6 +532,44 @@ def test_clock_correction_never_invents_numbers(L):
     return ok
 
 
+def test_burst_of_connections(L):
+    """Everything connects at once at the buzzer, and the kernel decides first.
+
+    socketserver's default accept backlog is 5. Six phones flushing on the
+    buzzer, two dashboards on their own timers and the pit tablet genuinely do
+    arrive together: measured, 60 of 200 simultaneous connects were reset
+    before a line of handler code ran. A queued scouting record survives that
+    and retries; a seat claim and a match clock are one-shot, and the clock is
+    what the solver's accuracy rests on.
+    """
+    ok = True
+    ok &= check("the accept backlog is not socketserver's default 5",
+                hub.Server.request_queue_size >= 64, f"({hub.Server.request_queue_size})")
+
+    errs = []
+    def one(i):
+        code, _ = L.req("/api/seat", {"alliance": "red", "station": (i % 3) + 1,
+                                      "scoutId": "BX", "deviceId": f"burst{i}"})
+        if code != 200:
+            errs.append(code)
+    ts = [threading.Thread(target=one, args=(i,)) for i in range(60)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    ok &= check("60 phones connecting at the same instant all get served",
+                not errs, f"({len(errs)} refused)")
+    for k in list(L.hub.seats()):          # leave the chairs as we found them
+        L.req("/api/unseat", {"seat": k})
+
+    # the writes/min list is trimmed as it grows, not only when someone opens
+    # the dashboard on it
+    L.hub.record_writes(50000)
+    ok &= check("the writes/min buffer has a ceiling", len(L.hub.writes) <= 1000,
+                f"({len(L.hub.writes)})")
+    return ok
+
+
 def test_seats(L):
     ok = True
     L.req("/api/seat", {"alliance": "red", "station": 2, "scoutId": "AK", "deviceId": "phone-a"})
@@ -1009,7 +1047,8 @@ def main():
         for fn in (test_sync_and_last_write_wins, test_solving_ran, test_analytics_null_safe,
                    test_picklist_lock, test_export_import_idempotent,
                    test_snapshot_and_restore, test_csv_export,
-                   test_hostile_input, test_junk_payload_cannot_blank_the_dashboard,
+                   test_hostile_input, test_burst_of_connections,
+                   test_junk_payload_cannot_blank_the_dashboard,
                    test_clock_correction_never_invents_numbers,
                    test_seats, test_seat_lifetime, test_match_clock, test_reconcile,
                    test_config_scope,
