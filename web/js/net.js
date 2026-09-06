@@ -1,7 +1,9 @@
 // Server discovery, SSE subscription, and queue flushing.
 //
-// The server may be at the pit while scouts are in the stands, well outside
-// hotspot range, so being disconnected is the normal case and not an error.
+// The server may be at the pit while scouts are in the stands, well out of
+// wifi range, so being disconnected is the normal case and not an error.
+// On a venue network that isolates clients it is the case all day, and the
+// queue below is the only path the data takes.
 
 import * as db from './db.js';
 

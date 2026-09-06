@@ -12,7 +12,9 @@ import threading
 MDNS_ADDR = "224.0.0.251"
 MDNS_PORT = 5353
 HOSTNAME = "scout"          # -> scout.local
-# Windows Mobile Hotspot always hands out this gateway; worth advertising loudly.
+# Windows Mobile Hotspot always hands out this gateway. Only ever seen when
+# practising at home - team access points are not allowed in a venue - but it
+# is the whole network when it is there, so it sorts first.
 WINDOWS_HOTSPOT = "192.168.137.1"
 
 
@@ -39,7 +41,7 @@ def _hostname_ips():
 
 
 def _scraped_ips():
-    """Catch hotspot interfaces the other two methods miss (they usually do)."""
+    """Catch the interfaces the other two methods miss (they usually do)."""
     out = set()
     for cmd in (["ifconfig"], ["ip", "-4", "addr"], ["ipconfig"]):
         try:

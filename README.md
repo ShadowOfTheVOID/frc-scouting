@@ -156,19 +156,31 @@ Practice with a fake event before you are standing in a venue. See
 
 ### Setting up (15 minutes, once per event)
 
-1. **Turn on the laptop's hotspot.** This is the most reliable option by a mile — venue wifi is
-   usually blocked, overloaded, or set up so devices cannot see each other.
-   - Windows: Settings → Network & internet → **Mobile hotspot** → on
-   - Mac: System Settings → General → Sharing → **Internet Sharing** → on
-2. **Connect all six scout phones to that hotspot.**
-3. **Start the server** (double-click the launcher as before).
+> **Do not turn on the laptop's hotspot at a competition.** FIRST's event rules prohibit teams
+> from running their own wireless access point in the venue — a laptop Mobile Hotspot, a phone
+> Personal Hotspot and an ad-hoc network all count. It exists because team radios interfere with
+> the field, so it is enforced on the spot rather than after the fact. Look up the current wording
+> and rule number in this year's game manual; it moves between seasons. The hotspot is for
+> [practising at home](#practice-without-a-competition), and nothing else.
+>
+> That is a rule about the *network*, not about this app. Nothing here transmits anything by
+> itself — it is an ordinary web server that uses whatever network is already there.
+
+1. **Put the laptop on the venue wifi**, whatever network the venue gives teams.
+2. **Start the server** (double-click the launcher as before). Note the address it prints.
+3. **Test one phone before you seat six.** Put one phone on the same wifi and open that printed
+   address in its browser. This is the most valuable thirty seconds of your setup: if it loads,
+   the network works for the whole event. If it does not, see
+   [If phones cannot reach the hub](#if-phones-cannot-reach-the-hub) — do that now, not at
+   match 1.
 4. **Check the event key is right** at http://localhost:6059/ — it changes every competition.
-5. **Open http://localhost:6059/join on the laptop screen.** It shows a big QR code.
-6. **Each scout points their normal camera at the QR** and taps the link that pops up. Not a
+5. **Put the rest of the phones on the same wifi.**
+6. **Open http://localhost:6059/join on the laptop screen.** It shows a big QR code.
+7. **Each scout points their normal camera at the QR** and taps the link that pops up. Not a
    scanner app — the camera app they already have.
-7. **Each scout picks the station matching the sign above their chair.** RED 2 means tap RED 2.
+8. **Each scout picks the station matching the sign above their chair.** RED 2 means tap RED 2.
    There is no field map on purpose, so there is nothing to mirror or get backwards.
-8. **Each scout adds it to their home screen** so it opens full-screen like an app:
+9. **Each scout adds it to their home screen** so it opens full-screen like an app:
    - iPhone: Share button → **Add to Home Screen**
    - Android: Chrome menu (⋮) → **Add to home screen**
 
@@ -195,8 +207,44 @@ Scouts do not have to do anything except watch their robot:
 Nothing is lost and nobody needs to do anything. The phone keeps working, saves everything on
 itself, and sends it the moment the hub is reachable again. The header changes to say so.
 
-The one thing to tell scouts: **do not force-reload the page while out of range.** Their data is
-safe either way, but the page will not load again until they are back in range.
+The one thing to tell scouts: **do not force-reload the page while out of range.** Everything
+they have logged is stored on the phone and is safe either way — but the *page* is not, so it
+will not come back until they are in range again. A browser will only keep a page for offline
+use over HTTPS, and this hub serves plain HTTP so that nobody has to install a certificate on
+six phones the morning of a competition. That trade is deliberate; the cost is this one rule.
+
+### If phones cannot reach the hub
+
+Bandwidth is never the problem. A whole competition day of scouting for six people is about
+80 KB total, and a connected phone that is doing nothing sends roughly one byte per second. If a
+phone cannot reach the hub, something is blocking it — the network is not merely slow. In the
+order these actually happen:
+
+1. **The network isolates clients from each other.** Venue and guest wifi very often do this:
+   phones reach the internet perfectly well and cannot see the laptop at all. Nothing on this end
+   can defeat it — go to **Plan B** below.
+2. **A captive portal.** The phone has joined the wifi but has not been through the splash page.
+   Open any ordinary website on the phone first, accept whatever it asks, then try the hub again.
+3. **Windows Firewall.** It prompts the first time the server runs and silently blocks every
+   phone if that prompt was dismissed. Allow Python on **Private** networks.
+4. **The address moved.** The venue's DHCP can hand the laptop a new one. Phones re-find it
+   themselves within a minute; re-opening `/join` shows you the current address immediately.
+
+### Plan B — no usable network
+
+This costs you the live dashboard, not your data. The app is built to run offline.
+
+- **Scouts keep scouting, exactly as normal.** Everything queues on the phone. They will see the
+  offline header all day; that is fine and expected.
+- **At the end of the day, each phone taps `SAVE A BACKUP FILE`** on the offline screen.
+- **Collect those files onto the laptop** and import each one — `POST /api/import`, or the import
+  control on the dashboard. Re-importing the same file is a no-op, so you cannot double-count by
+  being careless about which files you have already done.
+- The solver, picklist and every dashboard tab work normally once the data is in.
+
+The one thing that genuinely does not survive Plan B is the shared match clock across phones that
+never saw each other. Those matches are flagged `clock-partial` and the hub leaves their timing
+alone rather than corrupting it — see [how it works](docs/how-it-works.md#the-match-clock).
 
 ---
 
@@ -396,6 +444,22 @@ by a fifth or so, the "where the sources disagree" chart has something real to s
 Adding `--via-nexus` builds the same event but feeds the schedule in the way a real competition
 does, through Nexus rather than as finished results. It is worth using if you are changing how
 matches are ingested — that path is the one that broke once.
+
+### Practising with real phones, at home
+
+At home there is no field to interfere with, so the laptop's hotspot is the easy way to get six
+phones onto one network — and it is the one place you should use it:
+
+- Windows: Settings → Network & internet → **Mobile hotspot** → on
+- Mac: System Settings → General → Sharing → **Internet Sharing** → on
+
+Connect the phones to it, then set up as normal. The hub advertises the hotspot's gateway address
+(`192.168.137.1` on Windows) first, so it is usually the top QR code on the `/join` screen.
+
+**Then turn it off before you leave for the competition**, and run through
+[Setting up](#setting-up-15-minutes-once-per-event) on venue wifi when you get there. Practising
+on a hotspot and arriving expecting one is how teams get told to shut it down at 8am on a
+Friday.
 
 ---
 

@@ -164,8 +164,8 @@ The form per robot:
 | Notes | free text |
 | Photos | any number, from the camera |
 
-Photos are resized on the phone before sending — a 12MP pit photo is not worth 4MB on a venue
-hotspot. Inspection status and pit address come from Nexus when a key is set. A progress bar
+Photos are resized on the phone before sending — a 12MP pit photo is not worth 4MB on venue
+wifi. Inspection status and pit address come from Nexus when a key is set. A progress bar
 tracks how much of the field is done.
 
 ---
