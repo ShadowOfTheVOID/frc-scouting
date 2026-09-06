@@ -290,33 +290,54 @@ class Store:
         if not old:
             return False
 
-        # The row itself: COALESCE keeps whatever the canonical row already
-        # knows and fills its gaps from the legacy one (status and the Nexus
-        # timings, typically). put_match handles the times merge.
-        self.put_match(event_key, new_key, label=old["label"], comp_level=old["comp_level"],
-                       match_number=old["match_number"], play_order=old["play_order"],
-                       red=json.loads(old["red"] or "null"),
-                       blue=json.loads(old["blue"] or "null"),
-                       status=old["status"], times=json.loads(old["times"] or "null"),
-                       breakdown=json.loads(old["breakdown"] or "null"))
-        c.execute("DELETE FROM matches WHERE event_key=? AND match_key=?", (event_key, old_key))
+        # One transaction for the whole fold. The connection is in autocommit,
+        # so without this each statement landed on its own and a process that
+        # died between deleting the match row and moving the scouting left the
+        # scouting orphaned on a key with no match behind it - which is the very
+        # shape this function exists to repair. Guarded rather than
+        # unconditional: a caller that has already opened a transaction must not
+        # be broken by a nested BEGIN.
+        outer = c.in_transaction
+        if not outer:
+            c.execute("BEGIN IMMEDIATE")
+        try:
+            # The row itself: COALESCE keeps whatever the canonical row already
+            # knows and fills its gaps from the legacy one (status and the Nexus
+            # timings, typically). put_match handles the times merge.
+            self.put_match(event_key, new_key, label=old["label"], comp_level=old["comp_level"],
+                           match_number=old["match_number"], play_order=old["play_order"],
+                           red=json.loads(old["red"] or "null"),
+                           blue=json.loads(old["blue"] or "null"),
+                           status=old["status"], times=json.loads(old["times"] or "null"),
+                           breakdown=json.loads(old["breakdown"] or "null"))
+            c.execute("DELETE FROM matches WHERE event_key=? AND match_key=?",
+                      (event_key, old_key))
 
-        # Scout entries go through the normal last-write-wins rule rather than a
-        # blind UPDATE, so a row already sitting on the canonical key is only
-        # replaced when the legacy one is genuinely newer.
-        for r in c.execute("SELECT * FROM scout_entries WHERE match_key=?", (old_key,)).fetchall():
-            self.upsert_scout({
-                "eventKey": r["event_key"], "matchKey": new_key, "team": r["team"],
-                "scoutId": r["scout_id"], "deviceId": r["device_id"], "alliance": r["alliance"],
-                "station": r["station"], "payload": _payload(r["payload"]),
-                "updatedAt": r["updated_at"],
-            })
-        c.execute("DELETE FROM scout_entries WHERE match_key=?", (old_key,))
+            # Scout entries go through the normal last-write-wins rule rather
+            # than a blind UPDATE, so a row already sitting on the canonical key
+            # is only replaced when the legacy one is genuinely newer.
+            for r in c.execute("SELECT * FROM scout_entries WHERE match_key=?",
+                               (old_key,)).fetchall():
+                self.upsert_scout({
+                    "eventKey": r["event_key"], "matchKey": new_key, "team": r["team"],
+                    "scoutId": r["scout_id"], "deviceId": r["device_id"],
+                    "alliance": r["alliance"], "station": r["station"],
+                    "payload": _payload(r["payload"]), "updatedAt": r["updated_at"],
+                })
+            c.execute("DELETE FROM scout_entries WHERE match_key=?", (old_key,))
 
-        # Solved rows are derived and will be recomputed by reconcile(); flags
-        # are advisory. Both are safe to overwrite.
-        c.execute("UPDATE OR REPLACE solved SET match_key=? WHERE match_key=?", (new_key, old_key))
-        c.execute("UPDATE OR REPLACE flags SET match_key=? WHERE match_key=?", (new_key, old_key))
+            # Solved rows are derived and will be recomputed by reconcile();
+            # flags are advisory. Both are safe to overwrite.
+            c.execute("UPDATE OR REPLACE solved SET match_key=? WHERE match_key=?",
+                      (new_key, old_key))
+            c.execute("UPDATE OR REPLACE flags SET match_key=? WHERE match_key=?",
+                      (new_key, old_key))
+            if not outer:
+                c.execute("COMMIT")
+        except Exception:
+            if not outer:
+                c.execute("ROLLBACK")
+            raise
         return True
 
     # ------------------------------------------------------------ backups
