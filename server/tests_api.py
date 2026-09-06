@@ -53,9 +53,12 @@ class Live:
         self.srv.server_close()
         shutil.rmtree(self.dir, ignore_errors=True)
 
-    def req(self, path, body=None, method=None, headers=None, raw=False):
+    def req(self, path, body=None, method=None, headers=None, raw=False, body_bytes=None):
         url = f"http://127.0.0.1:{self.port}{path}"
-        data = json.dumps(body).encode() if body is not None else None
+        # body_bytes goes on the wire verbatim, so a test can send something
+        # that is not an object - or not JSON at all.
+        data = body_bytes if body_bytes is not None else (
+            json.dumps(body).encode() if body is not None else None)
         r = urllib.request.Request(url, data=data, method=method or ("POST" if data else "GET"),
                                    headers={"Content-Type": "application/json", **(headers or {})})
         try:
@@ -390,6 +393,138 @@ def test_csv_export(L):
     ok &= check("pit csv answers even with no pit data", code == 200)
     code, r = L.req("/api/export.csv?table=nonsense")
     ok &= check("an unknown table is a 400, not a stack trace", code == 400)
+    return ok
+
+
+def test_hostile_input(L):
+    """Anything on the venue wifi can POST here. None of it may take a thread down.
+
+    Every handler reads `body.get(...)`; JSON's top level can be a list, a
+    string, a number or null, and each of those used to raise inside the request
+    thread, so the phone got a dropped connection instead of an answer.
+    """
+    ok = True
+    for name, raw in (("a bare array", b"[1,2,3]"), ("a bare string", b'"hi"'),
+                      ("null", b"null"), ("a number", b"7"), ("not json", b"<<<")):
+        code, _ = L.req("/api/sync", body_bytes=raw)
+        ok &= check(f"a body that is {name} still gets an answer", code == 200, f"({code})")
+
+    for name, body in (("scout is a dict", {"scout": {"a": 1}}),
+                       ("pit is a number", {"pit": 3}),
+                       ("rows are nulls", {"scout": [None, 1, "x"]}),
+                       ("who is a string", {"scout": [], "who": "me"})):
+        code, _ = L.req("/api/sync", body)
+        ok &= check(f"sync survives when {name}", code == 200, f"({code})")
+
+    for name, body in (("a list", {"matchKey": ["a"]}), ("a dict", {"matchKey": {"a": 1}}),
+                       ("empty", {}), ("50k long", {"matchKey": "m" * 50000})):
+        code, _ = L.req("/api/matchstart", body)
+        ok &= check(f"a matchKey that is {name} is a 400, not a dropped thread", code == 400,
+                    f"({code})")
+
+    # And the hub is still answering afterwards.
+    code, _ = L.req("/api/state")
+    ok &= check("the hub still answers after all of that", code == 200)
+    return ok
+
+
+def test_junk_payload_cannot_blank_the_dashboard(L):
+    """One malformed record must not take the whole event down with it.
+
+    Every consumer - solver, analytics, exports, dashboard - reads the payload
+    with `.get()`. A row whose payload was a string stopped `/api/analytics`
+    answering at all, so one bad record from one phone blanked the strategy
+    dashboard for the rest of the event, and the match it was in never solved.
+    """
+    ok = True
+    ek = "2026junk"
+    L.store.set("eventKey", ek)
+    L.store.put_event(ek)
+    L.store.put_match(ek, f"{ek}_qm1", label="Qualification 1", red=[101, 102, 103],
+                      blue=[201, 202, 203],
+                      breakdown={"red": {"windows": {"auto": 30, "shift1": 30}},
+                                 "blue": {"windows": {"auto": 10}}})
+    good = entry(f"{ek}_qm1", 101, "AK", time.time())
+    good["eventKey"] = ek
+    L.req("/api/sync", {"scout": [good]})
+
+    for junk in ("corrupted", [1, 2, 3], 7, None):
+        rec = entry(f"{ek}_qm1", 102, "BAD", time.time() + 50)
+        rec["eventKey"] = ek
+        rec["payload"] = junk
+        code, _ = L.req("/api/sync", {"scout": [rec]})
+        ok &= check(f"a {type(junk).__name__} payload is accepted without a crash", code == 200)
+
+    rows = L.store.scout_entries(ek)
+    ok &= check("no non-dict payload survives into the store",
+                all(isinstance(r["payload"], dict) for r in rows),
+                f"({[type(r['payload']).__name__ for r in rows]})")
+    code, a = L.req("/api/analytics?event=" + ek)
+    ok &= check("analytics still answers", code == 200, f"({code})")
+    ok &= check("and the match still solved despite the bad row",
+                bool([s for s in L.store.solved(ek) if s["matchKey"] == f"{ek}_qm1"]))
+    return ok
+
+
+def test_clock_correction_never_invents_numbers(L):
+    """A correction that empties a robot out is not a correction.
+
+    CLOCK_FIX_LIMIT was 180s against a 160s match, so an offset large enough to
+    shift every observation past the final buzzer was still trusted. Every
+    interval lost its window, the solver fell back to an even split, and a
+    fabricated 40/40/40 was reported with nothing flagged on it.
+    """
+    ok = True
+    ek = "2026clock"
+    mk = f"{ek}_qm1"
+    L.store.set("eventKey", ek)
+    L.store.put_event(ek)
+    actual = time.time() - 500
+    L.store.put_match(ek, mk, label="Qualification 1", red=[101, 102, 103], blue=[201, 202, 203],
+                      times={"actual": actual},
+                      breakdown={"red": {"windows": {"auto": 30, "shift1": 30,
+                                                     "shift2": 30, "endgame": 30}},
+                                 "blue": {"windows": {"auto": 10}}})
+
+    def iv(s, e, i="steady"):
+        ph = hub.rules.phase_at(s)
+        return {"start": s, "end": e, "phase": ph["id"] if ph else None, "intensity": i}
+
+    plan = {101: [iv(2, 18, "dumping"), iv(32, 52, "dumping"),
+                  iv(58, 78, "dumping"), iv(132, 158, "dumping")],
+            102: [iv(6, 10), iv(36, 40), iv(60, 64), iv(136, 140)],
+            103: [iv(8, 9, "trickle")]}
+    for t, ivs in plan.items():
+        L.store.upsert_scout({"eventKey": ek, "matchKey": mk, "team": t, "scoutId": f"S{t}",
+                              "deviceId": f"d{t}", "alliance": "red", "station": 1,
+                              "updatedAt": time.time(),
+                              "payload": {"intervals": ivs, "clockShared": True}})
+
+    ok &= check("a correction can never be longer than the match itself",
+                hub.Hub.CLOCK_FIX_LIMIT <= hub.rules.MATCH_SECONDS,
+                f"({hub.Hub.CLOCK_FIX_LIMIT}s vs {hub.rules.MATCH_SECONDS}s)")
+
+    def solved_for(late):
+        L.store.mutate("matchClocks",
+                       lambda c: ({mk: {"matchKey": mk, "startedAt": actual + late, "by": "S"}},
+                                  None), {})
+        L.store.conn().execute("DELETE FROM solved WHERE match_key=?", (mk,))
+        L.store.conn().execute("DELETE FROM flags WHERE match_key=?", (mk,))
+        L.hub.solve_match(mk)
+        return {r["team"]: r["fuel"] for r in L.store.solved(ek)
+                if r["matchKey"] == mk and r["team"] in (101, 102, 103)}
+
+    honest = solved_for(0)
+    ok &= check("with a good clock the dominant robot is credited",
+                honest[101] > honest[102] > honest[103], f"({honest})")
+
+    for late in (170, 300):
+        got = solved_for(late)
+        ok &= check(f"a {late}s-late tap does not become an even split",
+                    len(set(got.values())) > 1, f"({got})")
+        ok &= check(f"and the {late}s offset is flagged rather than silently applied",
+                    any(f["kind"] == "clock-offset" for f in L.store.flags(ek)))
+        ok &= check(f"the real allocation survives a {late}s-late tap", got == honest, f"({got})")
     return ok
 
 
@@ -870,6 +1005,8 @@ def main():
         for fn in (test_sync_and_last_write_wins, test_solving_ran, test_analytics_null_safe,
                    test_picklist_lock, test_export_import_idempotent,
                    test_snapshot_and_restore, test_csv_export,
+                   test_hostile_input, test_junk_payload_cannot_blank_the_dashboard,
+                   test_clock_correction_never_invents_numbers,
                    test_seats, test_seat_lifetime, test_match_clock, test_reconcile,
                    test_config_scope,
                    test_trend_series, test_defence_counts_both_ways,

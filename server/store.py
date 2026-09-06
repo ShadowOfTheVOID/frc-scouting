@@ -200,7 +200,7 @@ class Store:
             "  event_key=excluded.event_key, device_id=excluded.device_id, alliance=excluded.alliance,"
             "  station=excluded.station, payload=excluded.payload, updated_at=excluded.updated_at",
             (rec["eventKey"], rec["matchKey"], int(rec["team"]), rec["scoutId"], rec.get("deviceId"),
-             rec.get("alliance"), rec.get("station"), json.dumps(rec.get("payload") or {}), now))
+             rec.get("alliance"), rec.get("station"), json.dumps(_payload(rec.get("payload"))), now))
         return True
 
     def scout_entries(self, event_key, match_key=None, team=None):
@@ -223,13 +223,13 @@ class Store:
             " ON CONFLICT(event_key,team) DO UPDATE SET scout_id=excluded.scout_id,"
             "  device_id=excluded.device_id, payload=excluded.payload, updated_at=excluded.updated_at",
             (rec["eventKey"], int(rec["team"]), rec.get("scoutId"), rec.get("deviceId"),
-             json.dumps(rec.get("payload") or {}), now))
+             json.dumps(_payload(rec.get("payload"))), now))
         return True
 
     def pit_entries(self, event_key):
         rows = self.conn().execute("SELECT * FROM pit_entries WHERE event_key=?", (event_key,)).fetchall()
         return [{"team": r["team"], "scoutId": r["scout_id"], "updatedAt": r["updated_at"],
-                 "payload": json.loads(r["payload"])} for r in rows]
+                 "payload": _payload(r["payload"])} for r in rows]
 
     # ------------------------------------------------------------- solved
     def put_solved(self, event_key, match_key, rows):
@@ -307,7 +307,7 @@ class Store:
             self.upsert_scout({
                 "eventKey": r["event_key"], "matchKey": new_key, "team": r["team"],
                 "scoutId": r["scout_id"], "deviceId": r["device_id"], "alliance": r["alliance"],
-                "station": r["station"], "payload": json.loads(r["payload"]),
+                "station": r["station"], "payload": _payload(r["payload"]),
                 "updatedAt": r["updated_at"],
             })
         c.execute("DELETE FROM scout_entries WHERE match_key=?", (old_key,))
@@ -370,7 +370,25 @@ def _match_row(r):
             "breakdown": json.loads(r["breakdown"] or "null"), "updatedAt": r["updated_at"]}
 
 
+def _payload(v):
+    """A scouting payload, guaranteed to be an object.
+
+    Every consumer - the solver, analytics, the CSV exports, the dashboard -
+    reads this with `.get()`. A row whose payload was a string or a list took
+    all of them down: `/api/analytics` stopped answering entirely, so one
+    malformed record from one phone blanked the strategy dashboard for the rest
+    of the event. Coerced on the way in and on the way back out, so a database
+    written by an older build is safe too.
+    """
+    if isinstance(v, str):
+        try:
+            v = json.loads(v)
+        except (TypeError, ValueError):
+            return {}
+    return v if isinstance(v, dict) else {}
+
+
 def _scout_row(r):
     return {"eventKey": r["event_key"], "matchKey": r["match_key"], "team": r["team"],
             "scoutId": r["scout_id"], "deviceId": r["device_id"], "alliance": r["alliance"],
-            "station": r["station"], "payload": json.loads(r["payload"]), "updatedAt": r["updated_at"]}
+            "station": r["station"], "payload": _payload(r["payload"]), "updatedAt": r["updated_at"]}

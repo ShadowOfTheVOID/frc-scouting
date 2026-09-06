@@ -748,7 +748,13 @@ class Hub:
         return self.store.mutate("seats", apply, {})
 
     # ---------------------------------------------------------- solving
-    CLOCK_FIX_LIMIT = 180          # seconds; beyond this it is not a late tap
+    # Beyond this it is not a late tap. It used to be a flat 180s, which is
+    # longer than a match: an offset that large shifts every observation past
+    # the final buzzer, every interval loses its window, and the solver falls
+    # back to an even split - the fabricated 40/40/40 the solver tests exist to
+    # catch, reported with no flag on it. A correction cannot be longer than
+    # the thing it is correcting.
+    CLOCK_FIX_LIMIT = rules.MATCH_SECONDS
 
     def clock_offset(self, m):
         """How far the scouts' shared clock was from the real match start.
@@ -775,16 +781,24 @@ class Hub:
         The scouts' raw observations are never mutated; correction happens at
         solve time so it can be redone if TBA revises the match.
         """
-        out = []
+        out, lost = [], 0
         for iv in intervals or []:
-            start = float(iv["start"]) + offset
+            try:
+                start = float(iv["start"]) + offset
+                end = float(iv.get("end", iv["start"])) + offset
+            except (TypeError, ValueError, KeyError):
+                continue
             ph = rules.phase_at(start)
+            if ph is None:
+                # Shifted off the end of the match: this observation no longer
+                # belongs to any window and stops counting for anyone.
+                lost += 1
             j = dict(iv)
             j["start"] = start
-            j["end"] = float(iv.get("end", iv["start"])) + offset
+            j["end"] = end
             j["phase"] = ph["id"] if ph else None
             out.append(j)
-        return out
+        return out, lost
 
     def solve_match(self, match_key):
         """Allocate official per-window fuel across the three robots that scouts watched."""
@@ -814,13 +828,25 @@ class Hub:
             robots = []
             for t in lineup:
                 e = by_team.get(t)
-                payload = (e or {}).get("payload", {})
-                ivs = payload.get("intervals") or []
+                payload = (e or {}).get("payload")
+                payload = payload if isinstance(payload, dict) else {}
+                ivs = payload.get("intervals")
+                ivs = ivs if isinstance(ivs, list) else []
                 # Only re-anchor phones that were on the shared clock. A phone
                 # that fell back to its own timeline has a different origin, and
                 # shifting it by someone else's offset makes it worse, not better.
                 if offset and payload.get("clockShared"):
-                    ivs = self._rephase(ivs, offset)
+                    shifted, lost = self._rephase(ivs, offset)
+                    # A correction that empties a robot out is not a correction.
+                    # Silently it hands that robot's fuel to the other two and
+                    # reports a number nobody observed, so keep what the scout
+                    # actually saw and say so instead.
+                    if ivs and lost == len(ivs):
+                        self.store.flag(ek, match_key, "clock-offset",
+                                        f"a {offset:+.0f}s correction would have thrown away every "
+                                        f"observation of {t} — left uncorrected")
+                    else:
+                        ivs = shifted
                 robots.append({"team": t, "intervals": ivs})
             if not robots:
                 continue
@@ -840,7 +866,8 @@ class Hub:
             self.broadcast("solved", {"matchKey": match_key,
                                       "teams": sorted(r["team"] for r in out_rows)})
         if offset:
-            shared = sum(1 for e in entries if (e.get("payload") or {}).get("clockShared"))
+            shared = sum(1 for e in entries
+                         if isinstance(e.get("payload"), dict) and e["payload"].get("clockShared"))
             fix = {"offset": round(offset, 2), "corrected": shared, "of": len(entries)}
             self.store.mutate("clockFixes",
                               lambda f: ({**(f or {}), match_key: fix}, None), {})
@@ -1468,14 +1495,40 @@ class Handler(BaseHTTPRequestHandler):
         """
         return Handler.hub.pin_set() and self._unlocked()
 
+    # Well above any real sync - a pit record carries base64 photos - but low
+    # enough that a bogus Content-Length cannot make the hub eat the laptop's
+    # memory in the middle of quals.
+    MAX_BODY = 64 * 1024 * 1024
+
     def _body(self):
-        n = int(self.headers.get("Content-Length") or 0)
-        if not n:
+        """The POST body as an object. Never anything else.
+
+        Every handler below reads `body.get(...)`. JSON's top level can just as
+        well be a list, a string, a number or null, and each of those used to
+        take the request thread down with an AttributeError - no response at
+        all, the phone seeing a dropped connection rather than an answer. A
+        malformed Content-Length did the same before the read even started.
+        """
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            return {}
+        if n <= 0 or n > self.MAX_BODY:
             return {}
         try:
-            return json.loads(self.rfile.read(n).decode("utf-8"))
+            v = json.loads(self.rfile.read(n).decode("utf-8"))
         except Exception:
             return {}
+        return v if isinstance(v, dict) else {}
+
+    @staticmethod
+    def _rows(body, key):
+        """`scout`/`pit` as a list of records, whatever actually arrived.
+
+        `{"pit": 3}` used to reach `for rec in 3` and kill the request thread.
+        """
+        v = body.get(key)
+        return [r for r in v if isinstance(r, dict)] if isinstance(v, list) else []
 
     def _file(self, relpath):
         path = os.path.normpath(os.path.join(WEB_ROOT, relpath.lstrip("/")))
@@ -1687,10 +1740,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True})
 
         if p == "/api/matchstart":
+            # A list here used to reach dict.get() as an unhashable key and take
+            # the thread down; a 50k-character one would have gone into the kv
+            # row verbatim and stayed there for the event.
             mk = body.get("matchKey")
-            if not mk:
+            if not isinstance(mk, str) or not mk.strip() or len(mk) > 120:
                 return self._json({"error": "matchKey required"}, 400)
-            rec = h.start_match(mk, body.get("scoutId") or "?")
+            sid = body.get("scoutId")
+            rec = h.start_match(mk.strip(), (str(sid).strip()[:4].upper() if sid else "") or "?")
             return self._json({"ok": True, "clock": rec, "serverTime": time.time()})
 
         if p == "/api/unlock":
@@ -1747,7 +1804,7 @@ class Handler(BaseHTTPRequestHandler):
             # is ever given something destructive to do.
             applied, rejected = 0, 0
             touched = set()
-            for rec in body.get("scout") or []:
+            for rec in self._rows(body, "scout"):
                 try:
                     if h.store.upsert_scout(rec):
                         applied += 1
@@ -1756,7 +1813,7 @@ class Handler(BaseHTTPRequestHandler):
                         rejected += 1
                 except Exception:
                     rejected += 1
-            for rec in body.get("pit") or []:
+            for rec in self._rows(body, "pit"):
                 try:
                     _extract_photos(h.store, rec)
                     if h.store.upsert_pit(rec):
@@ -1772,7 +1829,7 @@ class Handler(BaseHTTPRequestHandler):
                     sys.stderr.write(f"[solve] {mk}: {e}\n")
             if touched:
                 h.request_recalibrate()
-            if body.get("who"):
+            if isinstance(body.get("who"), dict):
                 h.touch(body["who"], "sync")
             if applied:
                 h.writes.extend([time.time()] * applied)
@@ -1813,7 +1870,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"error": "not a scouting export file"}, 400)
             applied = rejected = 0
             touched = set()
-            for rec in body.get("scout") or []:
+            for rec in self._rows(body, "scout"):
                 try:
                     if h.store.upsert_scout(rec):
                         applied += 1
@@ -1822,7 +1879,7 @@ class Handler(BaseHTTPRequestHandler):
                         rejected += 1
                 except Exception:
                     rejected += 1
-            for rec in body.get("pit") or []:
+            for rec in self._rows(body, "pit"):
                 try:
                     _extract_photos(h.store, rec)
                     applied += 1 if h.store.upsert_pit(rec) else 0
