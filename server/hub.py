@@ -942,20 +942,33 @@ class Hub:
                 info = bd.get(alliance)
                 if not info:
                     continue
+                # Every robot on the alliance, or none of them. The official
+                # total for a window covers all three; the seconds we can see
+                # cover only the robots somebody was watching. Fitting one
+                # against the other taught the model that a scouted robot
+                # produces the whole alliance's fuel. Measured against a known
+                # truth: fully-scouted windows recover it to 0.1%, and letting
+                # in windows where a third had only one robot watched put the
+                # multipliers 44.6% out - and these multipliers are behind every
+                # fuel number the solver produces for the rest of the event.
+                # It is the same rule the score report and solve_match already
+                # apply; calibration was the one place it was missing.
+                lineup = [t for t in (m.get(alliance) or []) if t]
+                if not lineup or any(t not in entries for t in lineup):
+                    continue
                 for pid, total in (info.get("windows") or {}).items():
                     if not total:
                         continue
                     secs = {b: 0.0 for b in rules.BUCKETS}
-                    seen = False
-                    for t in (m.get(alliance) or []):
-                        e = entries.get(t)
-                        for iv in (e or {}).get("payload", {}).get("intervals") or []:
+                    for t in lineup:
+                        payload = entries[t].get("payload") or {}
+                        for iv in payload.get("intervals") or []:
                             if iv.get("phase") != pid:
                                 continue
-                            seen = True
-                            secs[iv.get("intensity", "steady")] = secs.get(iv.get("intensity", "steady"), 0.0) + \
-                                rules.interval_secs(iv)
-                    if seen:
+                            b = iv.get("intensity", "steady")
+                            if b in secs:          # an intensity we do not model
+                                secs[b] += rules.interval_secs(iv)
+                    if any(secs.values()):
                         rows.append((secs, total))
         fit = solve.calibrate_multipliers(rows)
         if fit:
