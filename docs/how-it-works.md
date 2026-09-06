@@ -37,7 +37,8 @@ means nobody has to be precise.
 | FRC Events | results after the match | same, slower |
 
 Arming is not a nicety: `On field` is what opens the match screen on the six phones, and no
-other source carries it, which is why Nexus is the one key you have to set. Nexus is a queueing
+other source carries it, which is why Nexus is the one key to set — without it each scout has
+to open every match by hand. Nexus is a queueing
 tool driven by volunteers — its own docs say no continuous FMS feed is required — so `On field`
 happens while robots are still being placed. TBA's `actual_time` is the real FMS start, but it
 does not exist until the match is over.

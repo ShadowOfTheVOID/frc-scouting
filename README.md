@@ -88,8 +88,9 @@ only gets you the result sooner.
 **Why Nexus is the one you cannot skip.** Nexus is what tells the hub a match has taken the
 field, and that is what opens the scouting screen on all six phones. Nothing else carries it —
 The Blue Alliance publishes results after a match, not the fact that one is starting. With no
-Nexus key the phones sit on the standby countdown and no scout can reach the match screen, so
-set this one before the event rather than on the Saturday morning.
+Nexus key nothing arms itself and every scout has to tap **THEY'RE ON THE FIELD** by hand at
+each match, which is one more thing to get wrong six times an hour. Set this one before the
+event rather than on the Saturday morning.
 
 #### Getting a Lovat key — the long version
 
@@ -238,18 +239,19 @@ order these actually happen:
 
 ### Plan B — no usable network
 
-This protects the data on the phones. It does not let scouting start.
+This costs you the live dashboard, not your data. The app is built to run offline.
 
-**A phone that cannot reach the hub cannot open a match.** The match screen arms when Nexus
-reports the match on the field and the hub pushes that out — that is the whole reason the Nexus
-key is required — so a phone with no route to the hub stays on the standby countdown with no way
-through. Plan B is what you do once the network dies mid-event, not a way to run the day without
-one.
-
-- **A scout already in a match keeps scouting to the buzzer.** Everything queues on the phone
-  and nothing is lost. They will see the offline header; that is fine and expected. What they
-  will not get is the next match arming, so treat the network coming back as the priority rather
-  than something to work around.
+- **Scouts keep scouting.** The screen normally arms itself when Nexus says the match is on the
+  field, and that needs the hub — so with no hub, the scout taps **THEY'RE ON THE FIELD** on
+  the standby or offline screen instead. Everything else is identical: the pad starts the clock,
+  the work queues on the phone. They will see the offline header all day; that is fine and
+  expected.
+- **The phone already knows who it is watching.** It caches the whole event the first time it
+  reaches the hub — 38KB for a forty-match regional — so the schedule, the lineups and your seat's
+  robot in every match survive the network going away. A phone that has *never* reached the hub
+  has no schedule, and **THEY'RE ON THE FIELD** asks for the number off the robot instead. That
+  entry keeps everything the scout saw, but the hub has no official match to line it up with, so
+  it does not feed the fuel solver.
 - **At the end of the day, each phone taps `SAVE A BACKUP FILE`** on the offline screen.
 - **Collect those files onto the laptop** and import each one — `POST /api/import`, or the import
   control on the dashboard. Re-importing the same file is a no-op, so you cannot double-count by

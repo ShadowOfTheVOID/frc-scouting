@@ -653,6 +653,10 @@ function renderStandby() {
     : m.status ? `${m.label.toUpperCase()} · ${m.status.toUpperCase()}`
     : `UNTIL ${m.label.toUpperCase()} IS CALLED`;
 
+  $('#openMatchSub').textContent = t
+    ? `open the match screen for ${t} now`
+    : 'open the match screen — it will ask which team';
+
   const eta = m && m.times && (m.times.estimatedOnFieldTime || m.times.estimatedQueueTime);
   if (eta) {
     const secs = Math.max(0, (eta - Date.now()) / 1000);
@@ -698,6 +702,38 @@ async function renderOffline() {
       <span class="tag queued">QUEUED</span></div>`;
   }).join('') : '<div class="lrow"><span class="desc">nothing waiting</span></div>';
 }
+
+// ══════════════════════════════════════════════ OPENING A MATCH BY HAND
+/**
+ * The match screen normally arms itself: Nexus reports the match on the field,
+ * the hub pushes that out, and every phone whose seat is in that match jumps
+ * straight to the HUD. A phone that cannot reach the hub never hears it and had
+ * no other way through, which made the whole of Plan B - "keep scouting, the
+ * network is down" - impossible to actually do: the scout sat on the countdown
+ * watching the match being played.
+ *
+ * The schedule is not what was missing. The phone caches the entire event at
+ * boot (38KB for a 40-match regional, of which every lineup is 3KB), so it
+ * already knows which robot this seat watches in every match, network or no
+ * network. Only the door was missing. A phone that has never once reached the
+ * hub has no schedule at all, and that one asks for the number off the robot.
+ */
+function openMatchByHand() {
+  const m = currentMatch || nextScoutableMatch();
+  let team = teamForSeat(m);
+  if (!team) {
+    const v = prompt('Which team are you watching? (the number on the robot)', '');
+    if (v === null) return;
+    team = Number(String(v).replace(/\D/g, ''));
+    if (!team) { buzz(30); return; }
+  }
+  loadMatch(m);                 // m may be null: newEntry files that as a manual row
+  if (entry && !entry.team) entry.team = team;
+  buzz(20);
+  show('live'); renderLive();
+}
+$('#btnOpenMatch').onclick = openMatchByHand;
+$('#btnOffOpenMatch').onclick = openMatchByHand;
 
 $('#btnRetry').onclick = () => { net.discover().then(net.flush); };
 $('#btnTakeBack').onclick = async () => {

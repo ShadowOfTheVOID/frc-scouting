@@ -51,11 +51,17 @@ see [BUMPED](#bumped).
 Between matches. Shows a countdown to the next match, the robot this scout will watch next,
 and everything logged so far today.
 
-**The screen arms itself and there is no button for it.** When Nexus reports the match `On
-field`, the hub pushes that to every phone and each one whose seat is in that match jumps
-straight to the live screen — the scout never picks a match. This is why the Nexus key is
-required: it is the only source of `On field`, and without it a phone stays on this countdown
-with no way through to the match screen.
+**The screen arms itself.** When Nexus reports the match `On field`, the hub pushes that to
+every phone and each one whose seat is in that match jumps straight to the live screen — the
+scout never picks a match. That is what the Nexus key buys, and why it is the one to set.
+
+**THEY'RE ON THE FIELD** is the manual way through, for when nothing arms it: no Nexus key, a
+volunteer who has not clicked yet, or no route to the hub at all. It opens the match screen on
+the robot this seat watches next — read from the schedule cached on the phone, so it works with
+the network down. It does not start the clock; the pad still does that. A phone that has never
+reached the hub has no schedule, and the button asks for the number off the robot instead: that
+entry keeps everything the scout saw, but the hub cannot line it up with an official match, so
+it does not feed the fuel solver.
 
 **Before the buzzer** — two rows of one-tap chips in the right-hand column:
 
@@ -130,6 +136,9 @@ Shown when the hub cannot be reached. It exists to say *nothing is wrong* — th
 working and everything is saved locally.
 
 - A list of matches waiting to send.
+- **THEY'RE ON THE FIELD** opens the match screen with no hub at all — the same control as on
+  standby, put here because this is where a phone with no network actually lands. It is what
+  makes [Plan B](../README.md#plan-b--no-usable-network) something a scout can actually do.
 - **SAVE A BACKUP FILE** writes the queue out as JSON, for a phone that is truly stuck.
 - **TRY AGAIN NOW** re-runs discovery.
 
@@ -551,8 +560,8 @@ it is in the phone's database, not the page. Tell scouts not to reload.
 
 ### Keys and settings
 
-Entered at `/` on the hub laptop. All keys are free. **Nexus is required**; the rest are
-optional.
+Entered at `/` on the hub laptop. All keys are free. **Nexus is required** in practice — without
+it nothing arms the match screen and every scout opens each match by hand. The rest are optional.
 
 | Setting | What it does |
 |---|---|
@@ -561,7 +570,7 @@ optional.
 | **Our team** | Highlights us in every table and drives the RP outlook. |
 | **Strategy passcode** | Gates picklist editing and the per-scout panel. Blank means open. |
 | **The Blue Alliance** | Official results, per-robot climb, rankings, OPR. The fuel solver's only source. |
-| **Nexus** — required | Live queueing and match status, pit map, pit addresses, inspection, alliance selection. Its `On field` is the only thing that opens the match screen on a scout's phone, so without this key nobody can scout. |
+| **Nexus** — required | Live queueing and match status, pit map, pit addresses, inspection, alliance selection. Its `On field` is what arms the match screen on the phones; without it every scout has to tap **THEY'RE ON THE FIELD** by hand, six times an hour. |
 | **Nexus webhook token** | Only if you registered a push webhook. |
 | **FRC Events** | The official result a few minutes before TBA posts it. Does not feed the solver. |
 | **Lovat API key** | Other teams' scouting for this event. Your scouting lead makes one in the Lovat Dashboard under Settings → API keys; it starts `lvt-`, and your team has to be verified on Lovat first. Polled once every five minutes — Lovat allows one request every three seconds per key, so the hub stays well inside it. The export is scoped to what your Lovat account is allowed to see, so a short list is a setting on their side, not a failure on ours. |
