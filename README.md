@@ -256,6 +256,14 @@ not breaking down count for more down there. Each has its own weights and its ow
 Drag a row to move a team by hand. The first time you do, the board freezes as you see it, so
 new match data stops reordering it under you; **RESET TO COMPUTED** hands it back to the score.
 
+**Filters narrow what you are looking at, never the board.** Above the rows: search by team
+number or name, a minimum climb, a minimum number of matches scouted, and chips for HIDE TAKEN,
+HIDE DNP, RELIABLE, DEFENDS and STOCKPILES. Hiding rows does not renumber the ones left — the
+number beside a team is always its rank on the whole board — and it changes nothing else: not
+the score, not the saved order, not the printed sheet, not what a drag does. Filters stay in
+the browser you set them in rather than on the hub, so the laptop running alliance selection
+can never inherit one somebody upstairs forgot to clear. **CLEAR** puts them all back.
+
 **Print it before alliance selection.** The SERVER tab has PRINTABLE PICKLIST (and one for the
 second-pick board). One laptop is one laptop, and this is the ten minutes where it cannot fail.
 

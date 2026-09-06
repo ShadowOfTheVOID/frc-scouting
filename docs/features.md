@@ -240,6 +240,16 @@ you see it so new match data stops reordering it under you, and **RESET TO COMPU
 back. Teams are crossed off automatically as they are picked. **DNP** flags a team as
 do-not-pick.
 
+A row of filters sits over the board: free text against team number and name, a minimum climb,
+a minimum number of matches our scouts watched, and chips for HIDE TAKEN, HIDE DNP, RELIABLE
+(died or no-showed in under a tenth of its matches), DEFENDS (rated 3+ or has actually spent
+seconds on it) and STOCKPILES (in at least half its matches). They are a view and nothing more.
+Rank, score, hand order, the rationale below and the printed sheet are all computed over the
+whole board, so a filtered list is the same list with rows hidden — the number beside a team
+stays the rank it holds among everyone. Filters are per-browser (`localStorage`), deliberately
+not hub state: the order has to be shared, but one reader's narrowing must never reach the
+laptop running alliance selection.
+
 Anyone may look. Changing it needs the strategy passcode.
 
 **WHY THIS ORDER** sits above the board and is generated (see [AI](#ai) below). It explains the
