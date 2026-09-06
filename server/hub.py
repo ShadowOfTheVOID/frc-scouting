@@ -299,7 +299,10 @@ class Hub:
         """Nexus live event status, from push or poll.  Ordering guarded by dataAsOfTime."""
         if not payload:
             return False
-        as_of = float(payload.get("dataAsOfTime") or 0)
+        try:
+            as_of = float(payload.get("dataAsOfTime") or 0)
+        except (TypeError, ValueError):
+            as_of = 0.0
         if as_of and as_of <= self.last_nexus_at:
             return False  # Nexus warns updates can arrive out of order
         self.last_nexus_at = as_of or time.time()
@@ -314,9 +317,20 @@ class Hub:
                 continue
             red = [_int(t) for t in (m.get("redTeams") or [])]
             blue = [_int(t) for t in (m.get("blueTeams") or [])]
+            # A qualification's number IS its place in the schedule. This used
+            # to take the index within the payload, which is only the same
+            # thing when the payload is the whole schedule - a live feed
+            # carrying just the next few matches renumbered them from zero and
+            # sent them to the front of everyone's schedule. Measured: pushing
+            # Q14-Q16 reordered a 20-match event to Q14 Q1 Q15 Q16 Q2 Q3, which
+            # is what pickCurrentMatch reads to tell a scout which robot to
+            # watch. Playoffs have no number of their own, so they keep the
+            # index, offset to sort after every qual.
+            qual = _QUAL_LABEL.match(str(label))
             self.store.put_match(
                 ek, resolve_match_key(self.store, ek, label, red, blue),
-                label=label, play_order=i, red=red, blue=blue,
+                label=label, play_order=int(qual.group(1)) if qual else 10000 + i,
+                red=red, blue=blue,
                 status=m.get("status"), times=m.get("times"))
         self.store.set("nexusLive", {
             "nowQueuing": payload.get("nowQueuing"),
