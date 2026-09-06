@@ -554,7 +554,7 @@ Entered at `/` on the hub laptop. All keys are free and all are optional.
 ### Command line
 
 ```
-python3 server/hub.py [--port 8080] [--db data/scouting.db] [--no-mdns] [--allow-remote-config]
+python3 server/hub.py [--port 6059] [--db data/scouting.db] [--no-mdns] [--allow-remote-config]
 ```
 
 `--no-mdns` skips answering to `scout.local`. `--allow-remote-config` lets any device on the

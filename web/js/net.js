@@ -6,7 +6,10 @@
 import * as db from './db.js';
 
 const LS_BASE = 'serverBase';
-const CANDIDATES = ['http://scout.local:8080', 'http://192.168.137.1:8080'];
+// Our team number, so the hub is not sitting on a port some other tool on
+// the laptop already wanted.
+const PORT = '6059';
+const CANDIDATES = [`http://scout.local:${PORT}`, `http://192.168.137.1:${PORT}`];
 
 export const state = {
   base: null,
@@ -79,7 +82,9 @@ async function sweepSubnet(port) {
   for (const n of ['192.168.137', '192.168.1', '192.168.0', '10.0.0']) {
     if (!nets.includes(n)) nets.push(n);
   }
-  const p = port || (m && m[4]) || '8080';
+  // The port we last reached a hub on wins: a lead who runs --port keeps
+  // working. Only a phone that has never seen one falls back to the default.
+  const p = port || (m && m[4]) || PORT;
 
   for (const net of nets.slice(0, 2)) {      // two subnets is already 508 probes
     const tries = [];
