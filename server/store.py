@@ -243,6 +243,18 @@ class Store:
             [(event_key, match_key, int(r["team"]), r["fuel"], r["band"],
               json.dumps(r.get("byPhase") or {}), 1 if r.get("provisional") else 0, now) for r in rows])
 
+    def drop_solved(self, event_key, match_key):
+        """Throw away the solved rows for one match.
+
+        They are derived from the scouting that was attached to that key. When
+        the key itself moves, or the scouting behind it changes shape, they are
+        no longer an answer to anything - and reconcile() treats a match with
+        any solved row as already done, so leaving them behind is what stops it
+        being re-solved.
+        """
+        self.conn().execute("DELETE FROM solved WHERE event_key=? AND match_key=?",
+                            (event_key, match_key))
+
     def solved(self, event_key, team=None):
         q = "SELECT * FROM solved WHERE event_key=?"
         a = [event_key]

@@ -1008,6 +1008,14 @@ class Hub:
         if moved:
             # anything derived from the old key is now stale
             self.store.set("clockFixes", {})
+            # Solved rows most of all. The canonical key was very likely solved
+            # already, on nothing - that is the even three-way split this whole
+            # migration exists to undo - and reconcile() treats a match with any
+            # solved row as already done. Leaving them meant the scouting moved
+            # across correctly and the fabricated numbers stayed on screen
+            # anyway, which is the bug surviving its own repair.
+            for _, new_key in moved:
+                self.store.drop_solved(ek, new_key)
             clocks = self.store.get("matchClocks") or {}
             for old, new in moved:
                 if old in clocks:
