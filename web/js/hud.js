@@ -221,8 +221,15 @@ function seatKey() {
   return seat.alliance && seat.station ? `${seat.alliance}${seat.station}` : '';
 }
 
+/** `red2` as the sign above the chair reads it: RED 2. */
+const seatLabel = (k) => String(k || 'this chair').replace(/(\d)/, ' $1').toUpperCase();
+
 function syncSeat(force = false) {
-  if (PRACTICE || !seatVerified || screen === 'bumped') return Promise.resolve();
+  if (PRACTICE || !seatVerified) return Promise.resolve();
+  // The background re-assert must never fire from the bump screen - that is the
+  // one place the phone has been told to stop. IT'S STILL MY CHAIR is the
+  // deliberate exception and passes force, so it is not caught by this.
+  if (!force && screen === 'bumped') return Promise.resolve();
   if (!seat.scout || !seat.alliance || !seat.station) return Promise.resolve();
   const now = Date.now();
   // Re-asserting is also what keeps the chair from ageing out of the hub's map
@@ -264,10 +271,16 @@ async function verifySeat() {
 function showBumped(key, byScout, freed) {
   seatVerified = false;
   clock.pause();
-  $('#bumpSeat').textContent = `${String(key || '').toUpperCase()} · ${seat.scout}`;
+  // Whatever is half-entered belongs to the scout being stopped, exactly as it
+  // does on HAND OVER. Bank it now rather than trusting the debounced autosave
+  // to land after the screen has been taken away from them.
+  if (!PRACTICE && entry && entry.team && entry.payload.intervals.length) {
+    db.saveScout(entry).then(() => net.flush()).catch(() => {});
+  }
+  $('#bumpSeat').textContent = `${seatLabel(key)} · ${seat.scout}`;
   $('#bumpTitle').textContent = freed
-    ? `The scout lead freed ${(key || 'this chair').toUpperCase()}.`
-    : `${String(byScout || 'Someone').toUpperCase()} took ${(key || 'this chair').toUpperCase()}.`;
+    ? `The scout lead freed ${seatLabel(key)}.`
+    : `${String(byScout || 'Someone').toUpperCase()} took ${seatLabel(key)}.`;
   $('#bumpBody').textContent = freed
     ? 'Stop logging until you have a chair again. Everything you already saved is safe and has been sent.'
     : 'Stop logging — two phones on one robot means neither set of data is trustworthy. '

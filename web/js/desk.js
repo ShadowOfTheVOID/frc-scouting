@@ -9,6 +9,10 @@ import { loadRules, rpThresholds, rules as gameRules } from './game2026.js';
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// `red2` as the sign above the chair reads it: RED 2. The lead is matching this
+// against a printed sign across the room, so every panel has to spell it the
+// same way - the crew alert used to say RED2 while the row under it said RED 1.
+const stationLabel = (k) => String(k || '').replace(/(\d)/, ' $1').toUpperCase();
 
 let STATE = null, ANALYTICS = null, CONFIG = null, ourTeam = null;
 const DNP = new Set(JSON.parse(localStorage.getItem('dnp') || '[]'));
@@ -816,10 +820,10 @@ function renderCrew() {
   // app closed means go tell them to reopen it; gone quiet means check their wifi.
   const problems = [];
   if (empty.length) {
-    problems.push(`${empty.map((c) => c.seat.toUpperCase()).join(', ')} — nobody seated, those robots are unwatched`);
+    problems.push(`${empty.map((c) => stationLabel(c.seat)).join(', ')} — nobody seated, those robots are unwatched`);
   }
   for (const c of seated) {
-    const who = `${String(c.scoutId).toUpperCase()} on ${c.seat.toUpperCase()}`;
+    const who = `${String(c.scoutId).toUpperCase()} on ${stationLabel(c.seat)}`;
     if (!c.connected) problems.push(`${who} — app is not open on their phone`);
     else if (c.lastSeenSec != null && c.lastSeenSec > 180) problems.push(`${who} — gone quiet ${ago(c.lastSeenSec)}, check their wifi`);
     else if (c.lastMatchAgoSec != null && c.lastMatchAgoSec > 25 * 60) problems.push(`${who} — nothing logged in ${ago(c.lastMatchAgoSec)}`);
@@ -838,7 +842,7 @@ function renderCrew() {
     const side = c.seat.startsWith('red') ? 'var(--red-label)' : 'var(--blue-label)';
     const ok = c.connected;
     return `<div class="r" style="grid-template-columns:${CREW_COLS}">
-      <span style="color:${side};font:800 12px Barlow,sans-serif;letter-spacing:.1em">${c.seat.replace(/(\d)/, ' $1').toUpperCase()}</span>
+      <span style="color:${side};font:800 12px Barlow,sans-serif;letter-spacing:.1em">${stationLabel(c.seat)}</span>
       <span>${c.scoutId ? esc(String(c.scoutId).toUpperCase()) : '<span style="color:var(--t6)">nobody seated</span>'}
         ${c.scoutId ? `<button class="x" data-unseat="${c.seat}" data-device="${esc(c.deviceId || '')}" style="margin-left:8px">FREE</button>` : ''}</span>
       <span class="num" style="color:${ok ? 'var(--green-soft)' : 'var(--red-alert)'};font:800 10.5px Barlow,sans-serif;letter-spacing:.1em">
@@ -881,7 +885,7 @@ function renderCrew() {
      <div class="kv"><span>flagged</span><b>${((STATE && STATE.flags) || []).length}</b></div>`;
 
   $('#crewSwaps').innerHTML = SEATLOG.length ? SEATLOG.slice(0, 6).map((e) => `
-    <div class="kv"><span>${esc(String(e.seat || '').replace(/(\d)/, ' $1').toUpperCase())}</span>
+    <div class="kv"><span>${esc(stationLabel(e.seat))}</span>
       <b>${e.from ? esc(String(e.from).toUpperCase()) + ' → ' : ''}${
         e.scoutId ? esc(String(e.scoutId).toUpperCase()) : 'FREED'}</b></div>`).join('')
     : '<div class="hint">nobody has swapped yet</div>';
@@ -1525,7 +1529,7 @@ function renderSeats() {
   const cols = `90px repeat(6, 1fr)`;
   $('#seatHead').style.gridTemplateColumns = cols;
   $('#seatHead').innerHTML = '<span>MATCH</span>' +
-    SEAT_KEYS.map((k) => `<span>${k.replace(/(\d)/, ' $1').toUpperCase()}</span>`).join('');
+    SEAT_KEYS.map((k) => `<span>${stationLabel(k)}</span>`).join('');
   $('#seatBody').innerHTML = ms.map((m) => `
     <div class="r" style="grid-template-columns:${cols}">
       <span class="tno" style="font-size:15px">${esc(shortCode(m.label))}</span>
@@ -1547,7 +1551,7 @@ function renderSeats() {
   $('#rosterHead').innerHTML = '<span>NAME</span><span class="num">STATION</span>';
   $('#rosterBody').innerHTML = roster.map((c) => `
     <div class="r" style="grid-template-columns:${rc}"><span>${esc(String(c.scoutId).toUpperCase())}</span>
-      <span class="num">${esc(c.seat.replace(/(\d)/, ' $1').toUpperCase())}</span></div>`).join('')
+      <span class="num">${esc(stationLabel(c.seat))}</span></div>`).join('')
     || '<div class="empty">Nobody seated yet.</div>';
 
   const c = ANALYTICS ? ANALYTICS.coverage : { pct: 0, robotsScouted: 0, robotsExpected: 0 };
@@ -1557,7 +1561,7 @@ function renderSeats() {
   const empty = SEAT_KEYS.filter((k) => !seats[k]);
   $('#seatWarn').innerHTML = empty.length
     ? `<div class="callout" style="margin-top:10px"><div class="h">${empty.length} STATION${empty.length > 1 ? 'S' : ''} EMPTY</div>
-       <div class="b">${empty.map((k) => k.toUpperCase()).join(', ')} — those robots go unwatched.</div></div>` : '';
+       <div class="b">${empty.map(stationLabel).join(', ')} — those robots go unwatched.</div></div>` : '';
 }
 
 // ══════════════════════════════════════════════════════════════ SERVER
