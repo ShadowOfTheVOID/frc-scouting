@@ -1608,6 +1608,45 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    # ------------------------------------------------------------- CORS
+    # Every hub address other than the one a phone loaded the page from is a
+    # cross-origin address, and a browser will not let script read a response
+    # from one without this header. Without it `discover()` could only ever
+    # reach `location.origin`, which made the whole find-the-hub-again story
+    # inert: the remembered last-good address, both fallback candidates and the
+    # 254-host subnet sweep that exists so a phone can follow the laptop when
+    # DHCP moves it all failed identically, and a phone whose origin went dark
+    # sat offline holding its queue until somebody reloaded it by hand.
+    #
+    # `*` rather than an echo of Origin: the hub cannot know which of its
+    # addresses the phones reached it on. It is a LAN box serving numbers that
+    # are on TBA anyway - but not to a page open on the hub machine itself,
+    # where `_is_local()` is what stands between a request and the API keys.
+    # A website the lead happens to visit on that laptop is exactly the caller
+    # that boundary is for, so localhost keeps answering nobody but itself.
+    def end_headers(self):
+        if getattr(self, "path", "").startswith("/api/") and not self._is_local():
+            self.send_header("Access-Control-Allow-Origin", "*")
+        BaseHTTPRequestHandler.end_headers(self)
+
+    def do_OPTIONS(self):
+        """The preflight a cross-origin JSON POST asks before it sends anything.
+
+        BaseHTTPRequestHandler answers an unknown method with 501, which the
+        browser reads as a refusal - so /api/sync was never even attempted from
+        another origin, and a phone that had just found the hub again still
+        could not hand over a single queued record.
+        """
+        if not self.path.startswith("/api/"):
+            self.send_error(404, "Not found")
+            return
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Strategy-Token")
+        self.send_header("Access-Control-Max-Age", "86400")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def _is_local(self):
         """True only for a request from the machine running the hub.
 
