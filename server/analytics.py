@@ -201,8 +201,17 @@ def score_report(store, event_key, matches=None, entries=None):
     }
 
 
+def _start(iv):
+    """When an interval began, or None if it does not say a number."""
+    try:
+        v = float(iv["start"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) else None
+
+
 def _interval_secs(intervals):
-    return sum(max(0.0, float(iv.get("end", iv["start"])) - float(iv["start"]))
+    return sum(rules.interval_secs(iv)
                for iv in (intervals or []))
 
 
@@ -449,7 +458,7 @@ def _team_summary(team, meta, entries, solved, by_match, ranking=None, epa=None,
 
         waste_s = act_s = 0.0
         for iv in ivs:
-            dur = max(0.0, float(iv.get("end", iv["start"])) - float(iv["start"]))
+            dur = rules.interval_secs(iv)
             act = rules.hub_active(iv.get("phase"), alliance, auto_winner)
             if act is False:
                 waste_s += dur
@@ -464,10 +473,10 @@ def _team_summary(team, meta, entries, solved, by_match, ranking=None, epa=None,
         fi = p.get("feedIntervals") or []
         if fi:
             feeds += 1
-            feed_secs.append(sum(max(0.0, float(iv.get("end", iv["start"])) - float(iv["start"])) for iv in fi))
+            feed_secs.append(sum(rules.interval_secs(iv) for iv in fi))
         di = p.get("defenseIntervals") or []
         if di:
-            defense_secs.append(sum(max(0.0, float(iv.get("end", iv["start"])) - float(iv["start"])) for iv in di))
+            defense_secs.append(sum(rules.interval_secs(iv) for iv in di))
         if (p.get("note") or "").strip():
             notes.append({"matchKey": e["matchKey"], "scoutId": e.get("scoutId"),
                           "at": e.get("updatedAt"), "note": p["note"].strip()})
@@ -625,7 +634,8 @@ def _stockpiled(intervals, alliance, auto_winner):
         quiet = not any(iv.get("phase") == sh["id"] for iv in intervals)
         burst = any(iv.get("phase") == nxt["id"]
                     and iv.get("intensity") == "dumping"
-                    and float(iv["start"]) - nxt["start"] <= 6.0
+                    and _start(iv) is not None
+                    and _start(iv) - nxt["start"] <= 6.0
                     for iv in intervals)
         if quiet and burst:
             return True
@@ -656,7 +666,7 @@ def _scout_reliability(entries, by_match, solved):
             rec["empty"] += 1
             continue
         for pid, total in (info.get("windows") or {}).items():
-            secs = sum(max(0.0, float(iv.get("end", iv["start"])) - float(iv["start"]))
+            secs = sum(rules.interval_secs(iv)
                        for iv in ivs if iv.get("phase") == pid)
             if total == 0 and secs > 3.0:
                 rec["residuals"].append(1.0)   # shooting claimed where nothing scored

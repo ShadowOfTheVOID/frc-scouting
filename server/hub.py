@@ -15,6 +15,7 @@ import hmac
 import secrets
 import io
 import json
+import math
 import mimetypes
 import os
 import posixpath
@@ -939,7 +940,7 @@ class Hub:
                                 continue
                             seen = True
                             secs[iv.get("intensity", "steady")] = secs.get(iv.get("intensity", "steady"), 0.0) + \
-                                max(0.0, float(iv.get("end", iv["start"])) - float(iv["start"]))
+                                rules.interval_secs(iv)
                     if seen:
                         rows.append((secs, total))
         fit = solve.calibrate_multipliers(rows)
@@ -1054,6 +1055,21 @@ class Hub:
                     sys.stderr.write(f"[poll] {name}: {e}\n")
             self.status["lastUpdate"] = time.time()
             self.stop_flag.wait(2.0)
+
+
+def _finite(v):
+    """The same value with every NaN and Infinity replaced by null.
+
+    "We do not know" is what a non-finite number means here anyway, and null is
+    how every other unknown in this API is spelled.
+    """
+    if isinstance(v, float):
+        return v if math.isfinite(v) else None
+    if isinstance(v, dict):
+        return {k: _finite(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_finite(x) for x in v]
+    return v
 
 
 def _gz(data):
@@ -1227,7 +1243,7 @@ def _counts(m):
 
 
 def _secs(intervals):
-    return round(sum(max(0.0, float(iv.get("end", iv["start"])) - float(iv["start"]))
+    return round(sum(rules.interval_secs(iv)
                      for iv in (intervals or [])), 1)
 
 
@@ -1462,7 +1478,18 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---------------------------------------------------------- helpers
     def _json(self, obj, code=200):
-        body = json.dumps(obj, separators=(",", ":")).encode("utf-8")
+        # allow_nan=False so this can never emit bare NaN or Infinity. Python
+        # writes those happily and reads them back; the browser's JSON.parse
+        # rejects them outright, so one non-finite number anywhere in a response
+        # made the whole endpoint unreadable to every client - the dashboard
+        # fell back to its cached copy and quietly stopped updating for the rest
+        # of the event. Costs nothing on the normal path: the scrub only runs
+        # when there is actually something to scrub.
+        try:
+            body = json.dumps(obj, separators=(",", ":"), allow_nan=False).encode("utf-8")
+        except ValueError:
+            body = json.dumps(_finite(obj), separators=(",", ":"),
+                              allow_nan=False).encode("utf-8")
         enc = None
         if len(body) > 1024 and "gzip" in (self.headers.get("Accept-Encoding") or ""):
             body, enc = _gz(body), "gzip"

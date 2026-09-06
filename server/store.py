@@ -1,5 +1,6 @@
 """SQLite store.  WAL mode so ten scouts POSTing at the buzzer don't lock each other out."""
 import json
+import math
 import os
 import sqlite3
 import threading
@@ -385,7 +386,36 @@ def _payload(v):
             v = json.loads(v)
         except (TypeError, ValueError):
             return {}
-    return v if isinstance(v, dict) else {}
+    if not isinstance(v, dict):
+        return {}
+    v = _finite(v)
+    # An interval list is walked by the solver, analytics, the exports and the
+    # dashboard, and every one of them reads `iv.get(...)`. A member that is not
+    # an object took the request down - `/api/analytics` dying is the strategy
+    # dashboard going blank for the rest of the event - so the lists are cleaned
+    # once, here, where untrusted data comes in, rather than at each of the
+    # dozen places that read them.
+    for k, val in list(v.items()):
+        if k.endswith("Intervals") or k == "intervals":
+            v[k] = [iv for iv in val if isinstance(iv, dict)] if isinstance(val, list) else []
+    return v
+
+
+def _finite(v):
+    """Strip NaN and Infinity out of a payload on its way into the database.
+
+    JSON permits `1e309`, and Python reads it as inf. Stored and handed back
+    out, it made three endpoints emit bare Infinity, which is not JSON any
+    browser will parse. "We do not know" is what it means, and null is how the
+    rest of this schema says that.
+    """
+    if isinstance(v, float):
+        return v if math.isfinite(v) else None
+    if isinstance(v, dict):
+        return {k: _finite(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_finite(x) for x in v]
+    return v
 
 
 def _scout_row(r):

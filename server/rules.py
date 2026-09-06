@@ -4,6 +4,7 @@ Sharing one file is deliberate: a client and server that disagree about where
 SHIFT 2 ends would silently mis-attribute fuel.
 """
 import json
+import math
 import os
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -18,6 +19,29 @@ MATCH_SECONDS = RULES["matchSeconds"]
 BUCKETS = [b["id"] for b in RULES["intensityBuckets"]]
 BUCKET_PRIORS = {b["id"]: b["prior"] for b in RULES["intensityBuckets"]}
 TBA_WINDOW_FIELD = RULES["tbaBreakdownWindows"]
+
+
+def interval_secs(iv):
+    """How long one recorded interval lasted, or 0.0 if it does not say.
+
+    Every consumer - the solver, analytics, the exports - used to read this as
+    `float(iv.get("end", iv["start"])) - float(iv["start"])`, which assumes both
+    ends are numbers. A row where either is null or a string took the whole
+    request down with a TypeError, and `/api/analytics` dying is the strategy
+    dashboard going blank for the rest of the event. An interval that cannot say
+    how long it was contributes nothing, which is what it knows.
+    """
+    if not isinstance(iv, dict):
+        return 0.0
+    try:
+        start = float(iv["start"])
+        end = iv.get("end")
+        end = start if end is None else float(end)
+    except (KeyError, TypeError, ValueError):
+        return 0.0
+    if not (math.isfinite(start) and math.isfinite(end)):
+        return 0.0
+    return max(0.0, end - start)
 
 
 def phase_at(elapsed):
