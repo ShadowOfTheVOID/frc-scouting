@@ -272,7 +272,10 @@ Six scouts and no spare, so this happens all day.
 - **Same phone, new person** — on the standby screen, tap **HAND OVER**, type the new initials.
   The seat and the match stay put; the previous scout's work is saved under their name.
 - **Different phone** — the new scout just claims the station from their own phone. The old
-  phone is told immediately and stops, so you never get two people logging one robot.
+  phone is told immediately and stops, so you never get two people logging one robot. If that
+  happened by mistake, the bumped phone offers **IT'S STILL MY CHAIR** — but only between
+  matches. Mid-match it shows the time to the buzzer instead, because taking the chair back
+  would stop whoever is sitting in it now.
 - **FREE** on the crew board releases a chair when someone walks off. That phone is told
   immediately and stops, so a chair you have freed is never still logging.
 

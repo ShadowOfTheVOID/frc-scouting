@@ -224,6 +224,33 @@ function seatKey() {
 /** `red2` as the sign above the chair reads it: RED 2. */
 const seatLabel = (k) => String(k || 'this chair').replace(/(\d)/, ' $1').toUpperCase();
 
+// When the match this phone was bumped out of finishes, as wall clock. Taking a
+// chair back mid-match stops whoever the lead has just put in it, and then two
+// people have half a match each and neither set of numbers is worth having. The
+// buzzer is when you sort out who is sitting where, so the take-back waits for
+// it. Zero means we were bumped between matches and it is free to use now.
+let bumpMatchEndsAt = 0;
+
+/** Seconds until the take-back is safe to offer. 0 = now. */
+function bumpMatchLeft() {
+  let left = bumpMatchEndsAt ? (bumpMatchEndsAt - Date.now()) / 1000 : 0;
+  // A match that got under way after we were bumped is just as bad a moment.
+  const rec = currentMatch && MATCH_CLOCKS[currentMatch.matchKey];
+  if (rec && rec.startedAt) {
+    left = Math.max(left, matchSeconds() - (net.serverNow() - rec.startedAt));
+  }
+  return Math.max(0, left);
+}
+
+function paintBumpWait() {
+  const left = bumpMatchLeft();
+  $('#btnTakeBack').classList.toggle('hide', left > 0);
+  $('#bumpWait').textContent = left > 0
+    ? `A match is being played. Taking the chair back now would stop whoever is `
+      + `in it, so it waits for the buzzer — ${fmt(left)}.`
+    : '';
+}
+
 function syncSeat(force = false) {
   if (PRACTICE || !seatVerified) return Promise.resolve();
   // The background re-assert must never fire from the bump screen - that is the
@@ -270,6 +297,9 @@ async function verifySeat() {
 
 function showBumped(key, byScout, freed) {
   seatVerified = false;
+  const elapsed = clock.elapsed();
+  const left = matchSeconds() - elapsed;
+  bumpMatchEndsAt = elapsed > 0 && left > 0 ? Date.now() + left * 1000 : 0;
   clock.pause();
   // Whatever is half-entered belongs to the scout being stopped, exactly as it
   // does on HAND OVER. Bank it now rather than trusting the debounced autosave
@@ -358,7 +388,7 @@ $('#btnSit').onclick = () => {
   net.setIdentity({ scoutId: seat.scout, seat: `${seat.alliance}${seat.station}` });
   seatVerified = true;
   syncSeat(true);
-  loadMatch(pickCurrentMatch());
+  loadMatch(nextScoutableMatch());
   goStandbyOrLive();
 };
 
@@ -644,6 +674,7 @@ function renderStandby() {
 }
 
 async function renderBumped() {
+  paintBumpWait();
   await refreshHistory();
   $('#bumpList').innerHTML = history.length ? history.map((h) => `
     <div class="lrow"><span class="code">${shortCode(h.matchLabel)}</span>
@@ -670,9 +701,12 @@ async function renderOffline() {
 
 $('#btnRetry').onclick = () => { net.discover().then(net.flush); };
 $('#btnTakeBack').onclick = async () => {
+  // Belt and braces: the button is hidden mid-match, but a stale tap landing as
+  // the next match starts must not take a chair out from under someone.
+  if (bumpMatchLeft() > 0) { buzz(30); paintBumpWait(); return; }
   seatVerified = true;
   await syncSeat(true);
-  loadMatch(pickCurrentMatch());
+  loadMatch(nextScoutableMatch());
   goStandbyOrLive();
 };
 $('#btnPickSeat').onclick = () => {
@@ -735,6 +769,22 @@ function practiceMatch() {
     breakdown: { autoWinner: 'blue' },   // so the shift strip has real live/dead states
     eventKey: 'practice',
   };
+}
+
+/** The next match this seat can still actually scout.
+ *
+ * A phone joining or rejoining lands on the match on the field - but right
+ * after a buzzer that match is over, and loading it adopts its finished clock,
+ * which puts the scout on the after-the-buzzer screen for a match they did not
+ * watch, one tap from sending an empty record for it. A robot that scored
+ * nothing is what an empty record claims, and the solver believes it.
+ */
+function nextScoutableMatch() {
+  const m = pickCurrentMatch();
+  const rec = m && MATCH_CLOCKS[m.matchKey];
+  if (!rec || !rec.startedAt || net.serverNow() - rec.startedAt < matchSeconds()) return m;
+  const i = matches.findIndex((x) => x.matchKey === m.matchKey);
+  return (i >= 0 && matches[i + 1]) || m;
 }
 
 function pickCurrentMatch() {
@@ -880,7 +930,7 @@ async function main() {
     MATCH_CLOCKS = s.matchClocks || {};
     window.__teams = s.teams || [];
     db.cacheSet('state', s);
-    if (!currentMatch) loadMatch(pickCurrentMatch());
+    if (!currentMatch) loadMatch(nextScoutableMatch());
   };
   try { applyState(await net.api('/api/state')); }
   catch { applyState(await db.cacheGet('state')); }
@@ -893,7 +943,17 @@ async function main() {
 
   // another scout started this match: adopt their clock and jump into the HUD
   net.on('matchStart', (rec) => {
-    if (!rec || !currentMatch || rec.matchKey !== currentMatch.matchKey) return;
+    if (!rec || !rec.matchKey) return;
+    // Worth remembering whoever it belongs to: loadMatch adopts a clock that is
+    // already running when a scout arrives late, and the bump screen reads it
+    // to tell whether a match is being played right now.
+    MATCH_CLOCKS[rec.matchKey] = rec;
+    // A phone on the bump screen has been told to stop. Someone else starting
+    // the match used to pull it straight back into the HUD - showBumped clears
+    // the shared origin, so the guard below did not catch it - and the scout
+    // who had just been bumped was logging the same robot again.
+    if (screen === 'bumped') { paintBumpWait(); return; }
+    if (!currentMatch || rec.matchKey !== currentMatch.matchKey) return;
     if (clock.startedAtServer != null) return;
     clock.adopt(rec);
     if (screen !== 'live' && entry && entry.team) { show('live'); }
@@ -917,7 +977,7 @@ async function main() {
     loadMatch(practiceMatch());
     show('live'); renderLive();
   } else if (seat.scout && seat.alliance && seat.station) {
-    loadMatch(pickCurrentMatch()); goStandbyOrLive();
+    loadMatch(nextScoutableMatch()); goStandbyOrLive();
   } else { show('seat'); renderSeat(); }
 
   // Only now: verifySeat can send us to the bump screen, so it has to run after
@@ -934,6 +994,7 @@ async function main() {
         show('after'); renderAfter();
       }
     } else if (screen === 'standby') renderStandby();
+    else if (screen === 'bumped') paintBumpWait();
   }, 200);
 
   window.addEventListener('beforeunload', (e) => {

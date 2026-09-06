@@ -132,7 +132,15 @@ working and everything is saved locally.
 Shown when this scout's chair goes away — another phone claimed it, or the lead freed it on the
 crew board. The clock stops so two people never log the same robot. Offers **IT'S STILL MY
 CHAIR** or **PICK A DIFFERENT STATION**, and lists what this phone had already saved. Reopening
-the app does not get past it: the phone asks the hub who is in the chair before it scouts.
+the app does not get past it: the phone asks the hub who is in the chair before it scouts, and
+another scout starting a match will not pull it back into the HUD.
+
+**IT'S STILL MY CHAIR only appears between matches.** While a match is being played the button
+is replaced by the time left until the buzzer. Taking a chair back mid-match stops whoever is
+sitting in it, and then two people have half a match each and neither half is worth having —
+so the argument about who is in that chair waits for the buzzer, which is where it belongs.
+**PICK A DIFFERENT STATION** stays available throughout: giving a chair up is never the
+dangerous direction.
 
 ### Practice mode
 
