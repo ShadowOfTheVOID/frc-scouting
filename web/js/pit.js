@@ -262,8 +262,11 @@ async function main() {
   ourTeam = Number((cfg && cfg.ourTeam) || 0) || null;
   await refresh();
   net.onChange(() => { $('#pdot').className = 'dot' + (net.state.online ? '' : ' amber'); });
-  net.on('pits', refresh); net.on('pitMap', refresh);
-  net.on('inspection', refresh); net.on('scout', refresh);
+  // Pit data, the pit map and inspection status all arrive from Nexus under one
+  // broadcast name. These used to listen for 'pits', 'pitMap' and 'inspection',
+  // which the hub has never sent, so the map only ever caught up on the 30s
+  // poll below.
+  net.on('nexus', refresh); net.on('scout', refresh);
   setInterval(refresh, 30000);
 }
 main().catch((e) => { console.error(e); $('#phdr').textContent = 'FAILED: ' + e.message; });

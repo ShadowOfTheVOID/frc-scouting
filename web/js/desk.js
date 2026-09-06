@@ -1669,7 +1669,24 @@ async function main() {
   };
   await loadPicklistState();
   await refresh();
-  for (const t of ['nexus', 'results', 'scout', 'alliances', 'calibration', 'matchStatus', 'seats', 'matchStart', 'lovat']) net.on(t, refresh);
+  // These are the names the hub actually broadcasts. 'alliances' was not one of
+  // them - alliance selection arrives inside 'nexus' - so that listener had
+  // never fired, and the four below it were only ever picked up by the 30s
+  // poll below.
+  for (const t of ['nexus', 'results', 'scout', 'calibration', 'matchStatus', 'seats',
+                   'matchStart', 'lovat', 'solved', 'rankings', 'epa', 'earlyScores'])
+    net.on(t, refresh);
+
+  // The picklist is the one thing refresh() does not re-read, so it needs its
+  // own listener - and it is the one that matters most. Two dashboards are open
+  // during alliance selection; the second one kept its boot-time copy all
+  // afternoon, and the next edit made on it wrote that stale copy back over
+  // everyone else's DNP flags and ordering. Nothing said a thing.
+  net.on('picklist', async () => {
+    if (dragTeam) return;              // mid-drag: the drop re-renders anyway
+    await loadPicklistState();
+    renderPicklist(); renderPickMini(); renderWeights();
+  });
   wireAsk();
   wireImport();
   setInterval(refresh, 30000);
