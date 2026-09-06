@@ -247,9 +247,10 @@ This costs you the live dashboard, not your data. The app is built to run offlin
   the work queues on the phone. They will see the offline header all day; that is fine and
   expected.
 - **The phone already knows who it is watching.** It caches the whole event the first time it
-  reaches the hub — 38KB for a forty-match regional — so the schedule, the lineups and your seat's
-  robot in every match survive the network going away. A phone that has *never* reached the hub
-  has no schedule, and **THEY'RE ON THE FIELD** asks for the number off the robot instead. That
+  reaches the hub — under 60KB for a seventy-five-match regional — so the schedule, the lineups
+  and your seat's robot in every match survive the network going away. A phone that has *never*
+  reached the hub has no schedule, and **THEY'RE ON THE FIELD** asks for the number off the
+  robot instead. That
   entry keeps everything the scout saw, but the hub has no official match to line it up with, so
   it does not feed the fuel solver.
 - **At the end of the day, each phone taps `SAVE A BACKUP FILE`** on the offline screen.

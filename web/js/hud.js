@@ -713,8 +713,8 @@ async function renderOffline() {
  * watching the match being played.
  *
  * The schedule is not what was missing. The phone caches the entire event at
- * boot (38KB for a 40-match regional, of which every lineup is 3KB), so it
- * already knows which robot this seat watches in every match, network or no
+ * boot - under 60KB for a 75-match regional, of which every lineup is 6KB - so
+ * it already knows which robot this seat watches in every match, network or no
  * network. Only the door was missing. A phone that has never once reached the
  * hub has no schedule at all, and that one asks for the number off the robot.
  */
