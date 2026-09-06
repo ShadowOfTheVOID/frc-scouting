@@ -161,7 +161,8 @@ export async function flush() {
     await api('/api/sync', { method: 'POST', body: JSON.stringify({ ...payload, who: identity }) });
 
     // Only drop what we actually sent; anything queued mid-flight survives.
-    const sent = new Set(items.map((i) => i.qid));
+    // Every row a collapsed item stands for goes, not just the newest of them.
+    const sent = new Set(items.flatMap((i) => i.qids || [i.qid]));
     await db.dropQueued([...sent]);
     state.lastSync = Date.now();
     state.online = true;
