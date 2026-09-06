@@ -177,7 +177,7 @@ function renderShots() {
   if (add) add.onclick = () => $('#pPhoto').click();
 }
 
-/** Resize client-side: a 12MP pit photo is not worth 4MB on a venue hotspot. */
+/** Resize client-side: a 12MP pit photo is not worth 4MB on venue wifi. */
 function shrink(file, max = 1200, quality = 0.72) {
   return new Promise((resolve, reject) => {
     const img = new Image();

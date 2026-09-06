@@ -349,6 +349,16 @@
       <div id="srvNet"></div>
       <div class="eyebrow" style="margin-top:8px">DATA</div>
       <div id="srvData"></div>
+      <div class="eyebrow" style="margin-top:12px">BRING PHONE BACKUPS IN</div>
+      <div id="srvImport">
+        <div class="hint" style="line-height:1.6">For a day scouted with no network: take the
+          JSON files the phones saved with <b>SAVE A BACKUP FILE</b> and drop them in here.
+          Pick as many at once as you like. Importing the same file twice changes nothing,
+          so you do not have to track which ones you have already done.</div>
+        <input type="file" id="impFile" accept="application/json,.json" multiple
+               style="margin-top:9px;font:500 12px Barlow,sans-serif;color:var(--t2)">
+        <div id="impOut" class="hint" style="margin-top:8px"></div>
+      </div>
     </div>
   </div>
 

@@ -1276,6 +1276,46 @@ async function peekAi(bodySel, path, body, idle) {
   el.innerHTML = aiBlock(await aiCall(path, { ...(body || {}), peek: true }), idle);
 }
 
+/**
+ * Bring phone backup files in from the SERVER tab.
+ *
+ * The path that matters when the venue gave us no usable network: scouts run
+ * offline all day, each phone writes a JSON file, and they all land here. The
+ * hub already merges last-write-wins, so importing the same file twice is a
+ * no-op and the lead does not have to track which ones are done.
+ */
+function wireImport() {
+  const input = $('#impFile'), out = $('#impOut');
+  if (!input || !out) return;
+  input.onchange = async () => {
+    const files = [...(input.files || [])];
+    if (!files.length) return;
+    input.disabled = true;
+    const lines = [];
+    let applied = 0;
+    for (const f of files) {
+      try {
+        const body = JSON.parse(await f.text());
+        const r = await net.api('/api/import', { method: 'POST', body: JSON.stringify(body) });
+        applied += r.applied || 0;
+        lines.push(`${esc(f.name)} — ${r.applied || 0} in`
+          + ((r.rejected ? `, ${r.rejected} already had a newer copy` : '')));
+      } catch (e) {
+        // Reached only for a file that is not JSON at all, or a hub that went
+        // away mid-import. A backup with nothing queued in it parses fine and
+        // comes back as "0 in", which is not an error and does not land here.
+        const why = /JSON/i.test(String(e && e.message)) ? 'not a scouting backup file'
+          : String((e && e.message) || 'could not be read');
+        lines.push(`${esc(f.name)} — ${esc(why)}`);
+      }
+    }
+    out.innerHTML = lines.map((l) => `<div style="padding:2px 0">${l}</div>`).join('');
+    input.disabled = false;
+    input.value = '';
+    if (applied) await refresh();
+  };
+}
+
 function wireAsk() {
   const box = $('#askBox'), go = $('#askGo');
   if (!box || !go) return;
@@ -1562,9 +1602,10 @@ function renderServer() {
        <a href="/picklist/print" target="_blank">PRINTABLE PICKLIST</a>
        <a href="/picklist/print?list=second" target="_blank">PRINTABLE SECOND-PICK LIST</a>
      </div>
-     <div class="hint" style="margin-top:8px">JSON is the one that imports back in.
-       CSV is for a spreadsheet, and the printed picklist is the paper fallback for
-       alliance selection.</div>`;
+     <div class="hint" style="margin-top:8px">JSON is the one that imports back in — the
+       same shape the phones write, so a full export and a single phone's backup both go
+       in below. CSV is for a spreadsheet, and the printed picklist is the paper fallback
+       for alliance selection.</div>`;
 }
 
 // ══════════════════════════════════════════════════════════════ refresh
@@ -1620,6 +1661,7 @@ async function main() {
   await refresh();
   for (const t of ['nexus', 'results', 'scout', 'alliances', 'calibration', 'matchStatus', 'seats', 'matchStart', 'lovat']) net.on(t, refresh);
   wireAsk();
+  wireImport();
   setInterval(refresh, 30000);
   // the crew board is the lead's live view; keep it fresher than the rest
   setInterval(async () => {

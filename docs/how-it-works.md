@@ -114,3 +114,51 @@ Instead:
 - **Hub** → `GET /api/export` dumps the whole event; `POST /api/import` merges a file back in
   under the same last-write-wins rule, so re-importing the same file is a no-op.
 
+---
+
+## The network, and why we do not bring our own
+
+**The hub emits nothing.** There is no radio code in this repository. `hub.py` binds a socket,
+`discover.py` sends mDNS multicast and *reads* the interface list the OS already has. Whatever
+network exists, we use.
+
+That is a deliberate constraint, not an omission. FIRST's event rules prohibit a team from
+operating its own wireless access point in the venue — laptop hotspot, phone hotspot, ad-hoc
+network alike — because team radios interfere with the field. So the setup instructions lead
+with venue wifi, and the hotspot is documented only for practising at home. Rule numbers move
+between seasons; the game manual is the authority.
+
+### Bandwidth was never the constraint
+
+Measured against the seeded demo event (31 teams, 40 matches, 156 scout entries):
+
+| | over the wire |
+|---|---|
+| one scout's match record | 1.1 KB median, 1.4 KB p90 |
+| one match, all six phones | ~7 KB |
+| **a 12-match qual day, whole crew** | **~80 KB** |
+| connected phone, idle | ~1 byte/sec (a `: keepalive` every 15s) |
+| dashboard refresh | ~19 KB gzipped per 30s |
+| first page load, per phone | ~256 KB (66 KB gzipped code + 186 KB fonts) |
+
+Responses over 1 KB are gzipped, and phones only POST when the queue is non-empty. The whole
+crew's steady-state demand is under 50 kbps. Even badly congested venue wifi has orders of
+magnitude more than this.
+
+So when a phone cannot reach the hub it is **never** because the network is slow. It is client
+isolation, a captive portal, or a firewall — three things that are all binary, and all
+discoverable in thirty seconds by loading the hub's address on one phone before seating six.
+That preflight is the single highest-value step in the setup list.
+
+### Why there is no service worker
+
+The app would be much better with one: a scout who reloads out of range would get the app back
+instead of a dead page. It cannot be done here. Browsers only register a service worker in a
+secure context, and `http://` on a LAN address is not one — the same wall that stops the
+dashboard from opening a camera, above.
+
+The alternatives are worse than the problem. HTTPS on a LAN address means a self-signed
+certificate and a scary warning to click through on six phones on a Friday morning, or a real
+certificate for a hostname that resolves to a DHCP address that moves. So: the *data* lives in
+IndexedDB and is safe across anything, the *page* does not survive a reload out of range, and
+both the README and the phone's own offline screen say so in as many words.

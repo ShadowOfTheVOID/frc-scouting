@@ -1638,12 +1638,20 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True, "seats": seats})
 
         if p == "/api/sync":
-            # No token gate here on purpose. It is the endpoint every phone hits
-            # at the buzzer; a hotspot you control is already a closed network,
-            # and a scout locked out on Saturday morning is a far worse outcome
-            # than an open one. (There WAS a `hubToken` check, but no client ever
-            # sent the header and no page could set the value, so turning it on
-            # simply bricked every phone.)
+            # No token gate here on purpose: it is the endpoint every phone hits
+            # at the buzzer, and a scout locked out on Saturday morning is a far
+            # worse outcome than an open one. (There WAS a `hubToken` check, but
+            # no client ever sent the header and no page could set the value, so
+            # turning it on simply bricked every phone.)
+            #
+            # This used to be justified by "a hotspot you control is a closed
+            # network". That reasoning is dead - team access points are not
+            # allowed in the venue, so the hub now runs on venue wifi and anything
+            # on that subnet can POST here. Accepted, not overlooked: the worst
+            # case is junk scout rows, which last-write-wins and the solver's
+            # outlier handling already absorb, and no key or config is reachable
+            # from here (those are localhost-only). Revisit before this endpoint
+            # is ever given something destructive to do.
             applied, rejected = 0, 0
             touched = set()
             for rec in body.get("scout") or []:
