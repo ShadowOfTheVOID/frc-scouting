@@ -1466,11 +1466,27 @@ def _tba_label(m):
 # the solver only walks rows with a `breakdown` (TBA). Scout intervals never
 # reached the solver, so every alliance total got split evenly across three
 # robots and the dashboard showed confident numbers containing no scouting.
-_QUAL_LABEL = re.compile(r"^\s*(?:qualification|qual|q)\s*(\d+)\s*$", re.I)
+# The spellings that unambiguously mean "qualification match N", so all of them
+# land on TBA's qmN instead of each earning a row of its own. A row of its own is
+# the documented failure this whole path exists to prevent: scouts log against
+# one key, the solver reads the other, and every fuel number becomes an even
+# three-way split of the official total with no scouting in it.
+# A qual word is required - "Match 42" alone could as easily be a playoff, and
+# guessing wrong is worse than keeping it separate.
+_QUAL_LABEL = re.compile(
+    r"^\s*(?:qualification|quals|qual|q)\s*(?:match\s*)?#?\s*(\d+)\s*(?:\([^)]*\))?\s*$",
+    re.I)
+
+#: Anything that is not a letter or a digit. A match key is used as a URL path
+#: segment (/api/ai/match/<key>) and in query strings, unencoded, so a label
+#: with a # in it truncated the request at the fragment and one with a / routed
+#: somewhere else entirely.
+_SLUG_UNSAFE = re.compile(r"[^a-z0-9]+")
 
 
 def _slug_match_key(event_key, label):
-    return f"{event_key}_{label.lower().replace(' ', '')}"
+    slug = _SLUG_UNSAFE.sub("", str(label or "").lower())
+    return f"{event_key}_{slug or 'match'}"
 
 
 def resolve_match_key(store, event_key, label, red=None, blue=None):
