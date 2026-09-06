@@ -70,13 +70,13 @@ On the **laptop itself**, open a browser and go to **http://localhost:6059/**
 > politely tell you to go to the laptop. That is on purpose — nobody on the venue wifi can
 > change your settings.
 
-Paste in whichever keys you have. All of them are free and all of them are optional; the app
-runs without any, just with less live data.
+All of the keys are free. **Nexus is required** — see below. The rest are optional and the app
+runs without them, just with less live data.
 
 | Key | What it gets you | Where to get it |
 |---|---|---|
+| **Nexus** — required | live queueing, match timing, pit map, alliance selection | [frc.nexus/api](https://frc.nexus/api) |
 | **The Blue Alliance** | official match results, per-robot climb | [thebluealliance.com/account](https://www.thebluealliance.com/account) |
-| **Nexus** | live queueing, match timing, pit map, alliance selection | [frc.nexus/api](https://frc.nexus/api) |
 | **FRC Events** | the official result a few minutes before TBA posts it | [frc-events.firstinspires.org](https://frc-events.firstinspires.org/services/API) |
 | **Lovat** | what other teams' scouts recorded about the same robots | [lovat.app](https://lovat.app) — see below |
 | **AI model** | summaries of your scout notes, and a read of the next match | Claude, Gemini or OpenAI — see below |
@@ -84,6 +84,12 @@ runs without any, just with less live data.
 
 The fuel numbers always come from The Blue Alliance, whichever other keys you set. FRC Events
 only gets you the result sooner.
+
+**Why Nexus is the one you cannot skip.** Nexus is what tells the hub a match has taken the
+field, and that is what opens the scouting screen on all six phones. Nothing else carries it —
+The Blue Alliance publishes results after a match, not the fact that one is starting. With no
+Nexus key the phones sit on the standby countdown and no scout can reach the match screen, so
+set this one before the event rather than on the Saturday morning.
 
 #### Getting a Lovat key — the long version
 
@@ -232,10 +238,18 @@ order these actually happen:
 
 ### Plan B — no usable network
 
-This costs you the live dashboard, not your data. The app is built to run offline.
+This protects the data on the phones. It does not let scouting start.
 
-- **Scouts keep scouting, exactly as normal.** Everything queues on the phone. They will see the
-  offline header all day; that is fine and expected.
+**A phone that cannot reach the hub cannot open a match.** The match screen arms when Nexus
+reports the match on the field and the hub pushes that out — that is the whole reason the Nexus
+key is required — so a phone with no route to the hub stays on the standby countdown with no way
+through. Plan B is what you do once the network dies mid-event, not a way to run the day without
+one.
+
+- **A scout already in a match keeps scouting to the buzzer.** Everything queues on the phone
+  and nothing is lost. They will see the offline header; that is fine and expected. What they
+  will not get is the next match arming, so treat the network coming back as the priority rather
+  than something to work around.
 - **At the end of the day, each phone taps `SAVE A BACKUP FILE`** on the offline screen.
 - **Collect those files onto the laptop** and import each one — `POST /api/import`, or the import
   control on the dashboard. Re-importing the same file is a no-op, so you cannot double-count by

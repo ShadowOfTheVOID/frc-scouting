@@ -51,6 +51,12 @@ see [BUMPED](#bumped).
 Between matches. Shows a countdown to the next match, the robot this scout will watch next,
 and everything logged so far today.
 
+**The screen arms itself and there is no button for it.** When Nexus reports the match `On
+field`, the hub pushes that to every phone and each one whose seat is in that match jumps
+straight to the live screen — the scout never picks a match. This is why the Nexus key is
+required: it is the only source of `On field`, and without it a phone stays on this countdown
+with no way through to the match screen.
+
 **Before the buzzer** — two rows of one-tap chips in the right-hand column:
 
 - **WHERE DO THEY START** — LEFT / CENTRE / RIGHT.
@@ -545,7 +551,8 @@ it is in the phone's database, not the page. Tell scouts not to reload.
 
 ### Keys and settings
 
-Entered at `/` on the hub laptop. All keys are free and all are optional.
+Entered at `/` on the hub laptop. All keys are free. **Nexus is required**; the rest are
+optional.
 
 | Setting | What it does |
 |---|---|
@@ -554,7 +561,7 @@ Entered at `/` on the hub laptop. All keys are free and all are optional.
 | **Our team** | Highlights us in every table and drives the RP outlook. |
 | **Strategy passcode** | Gates picklist editing and the per-scout panel. Blank means open. |
 | **The Blue Alliance** | Official results, per-robot climb, rankings, OPR. The fuel solver's only source. |
-| **Nexus** | Live queueing and match status, pit map, pit addresses, inspection, alliance selection. |
+| **Nexus** — required | Live queueing and match status, pit map, pit addresses, inspection, alliance selection. Its `On field` is the only thing that opens the match screen on a scout's phone, so without this key nobody can scout. |
 | **Nexus webhook token** | Only if you registered a push webhook. |
 | **FRC Events** | The official result a few minutes before TBA posts it. Does not feed the solver. |
 | **Lovat API key** | Other teams' scouting for this event. Your scouting lead makes one in the Lovat Dashboard under Settings → API keys; it starts `lvt-`, and your team has to be verified on Lovat first. Polled once every five minutes — Lovat allows one request every three seconds per key, so the hub stays well inside it. The export is scoped to what your Lovat account is allowed to see, so a short list is a setting on their side, not a failure on ours. |

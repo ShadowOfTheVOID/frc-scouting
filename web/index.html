@@ -54,14 +54,17 @@
     <div class="pane mid">
       <div class="eyebrow">API KEYS</div>
       <div class="hint">Stored on this machine only. Scout phones never receive them.
-        All optional — the app runs without any, just without live data.</div>
+        Nexus is required — it is what opens the match screen on the phones. The rest are
+        optional; the app runs without them, just with less live data.</div>
       <div class="form">
         <div class="f"><label>THE BLUE ALLIANCE</label>
           <input id="tbaKey" placeholder="X-TBA-Auth-Key" autocomplete="off">
           <div class="h">Official results and per-robot climb. thebluealliance.com/account</div></div>
         <div class="f"><label>NEXUS</label>
           <input id="nexusKey" placeholder="Nexus-Api-Key" autocomplete="off">
-          <div class="h">Live queueing, pit map, alliance selection. frc.nexus/api</div></div>
+          <div class="h">Required. Its "on field" is what opens the match screen on every
+            phone — with no key here, nobody can scout. Also pit map and alliance selection.
+            frc.nexus/api</div></div>
         <div class="f"><label>NEXUS WEBHOOK TOKEN</label>
           <input id="nexusToken" placeholder="Nexus-Token" autocomplete="off">
           <div class="h">Only if you registered a push webhook.</div></div>
