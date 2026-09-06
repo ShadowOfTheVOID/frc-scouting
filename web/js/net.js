@@ -177,6 +177,7 @@ export async function flush() {
 
 // -------------------------------------------------------------------- SSE
 let es = null;
+let esBase = null;      // the address that stream is actually open against
 const streamHandlers = new Map();
 
 export function on(type, fn) {
@@ -193,9 +194,20 @@ export function setIdentity(who) {
 }
 
 export function connectStream() {
-  if (!state.base || es) return;
+  if (!state.base) return;
+  // A stream already open against the address we now believe in is the one we
+  // want; anything else has to be replaced. Bailing out on `es` alone left the
+  // phone streaming from the address it had just concluded was dead: a moved
+  // hub was rediscovered, records synced to it fine, and the stream sat on the
+  // old URL retrying forever. EventSource keeps a dead connection in
+  // CONNECTING rather than CLOSED, so nothing ever cleared it. The scout saw a
+  // working phone that had stopped hearing seat claims, match starts and the
+  // shared clock - and the shared clock is what the solver's accuracy rests on.
+  if (es && esBase === state.base) return;
+  if (es) { try { es.close(); } catch {} es = null; }
   try {
     const q = new URLSearchParams(Object.entries(identity).filter(([, v]) => v));
+    esBase = state.base;
     es = new EventSource(state.base + '/api/stream' + (q.toString() ? '?' + q : ''));
     es.onopen = () => { state.online = true; emit(); };
     es.onmessage = (ev) => {
@@ -236,7 +248,7 @@ export async function start({ flushMs = 8000, rediscoverMs = 20000 } = {}) {
       const cfg = await discover({ sweep: misses >= 3 });
       if (cfg) misses = 0;
     } else misses = 0;
-    if (state.base && !es) connectStream();
+    connectStream();   // self-guards; re-points itself if the hub has moved
     await flush();
   }, flushMs);
 
