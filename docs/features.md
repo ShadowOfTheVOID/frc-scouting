@@ -593,7 +593,7 @@ it nothing arms the match screen and every scout opens each match by hand. The r
 | **Event level** | regional / dcmp / champs — sets the ranking-point thresholds. |
 | **Our team** | Highlights us in every table and drives the RP outlook. |
 | **Strategy passcode** | Gates picklist editing and the per-scout panel. Blank means open. |
-| **Admin code** | Gates this page — the event key, the API keys, the passcode above. Blank means the panel still opens locked, but unlocking it does not ask for anything. Cleared from the laptop with `--clear-admin-code`. |
+| **Admin password** | Not on this page: it lives in `.env` beside the hub, base64-encoded (which is not encryption). `python3 server/hub.py --set-admin-password` writes it. Unset means the panel still opens locked, but unlocking it does not ask for anything. |
 | **The Blue Alliance** | Official results, per-robot climb, rankings, OPR. The fuel solver's only source. |
 | **Nexus** — required | Live queueing and match status, pit map, pit addresses, inspection, alliance selection. Its `On field` is what arms the match screen on the phones; without it every scout has to tap **THEY'RE ON THE FIELD** by hand, six times an hour. |
 | **Nexus webhook token** | Only if you registered a push webhook. |
@@ -616,17 +616,33 @@ read-only — every box, every dropdown, every button — until **UNLOCK** is pr
 itself again after ten minutes untouched, and on every reload. Nothing on that page is a thing
 anybody needs to do in a hurry.
 
-**The admin code is against somebody else**, and it is optional. Set one and unlocking asks for
-it; the token it hands back lives in that browser tab only, never in storage, and the hub renews
-it while the page is being used. Changing the code signs out every token it ever issued. A team
-that never sets one still gets the lock — the same call the picklist already makes about its own
-passcode, and for the same reason: a team must not find its own hub locked by a default.
+**The admin password is against somebody else**, and it is optional. It lives in a **`.env` file
+beside the hub** — not in a box on the page and not in the database, which is copied to the
+mirror and exported to JSON. Set it with `python3 server/hub.py --set-admin-password`, which
+asks twice and writes the line for you; the same command changes it, and a blank one removes it.
 
-The two codes are separate on purpose. The **strategy passcode** is shared with the strategy
-table and gates the picklist and the AI answers. The **admin code** gates this page. Forgotten?
-Start the hub with `--clear-admin-code` on the laptop — whoever can do that already has the
-database and every key in it, so a code that could not be cleared from the machine it lives on
-would lock a team out and protect nothing.
+The token an unlock hands back lives in that browser tab only, never in storage, and the hub
+renews it while the page is being used. Every token dies when the hub restarts, because a
+restart is when the password in `.env` gets changed. A team that never sets a password still
+gets the lock — the same call the picklist already makes about its own passcode, and for the
+same reason: a team must not find its own hub locked by a default.
+
+The value in the file is the password **base64-encoded, which is not encryption**: anybody who
+can read the file can decode it in one command. It keeps the password out of plain sight in a
+file that gets opened on a projector; the file's permissions (`0600`, set when the hub writes
+it) are what actually protect it.
+
+A value that is there but unusable — not valid base64, or `ADMIN_PASSWORD` written instead of
+`ADMIN_PASSWORD_B64` — **locks the panel and says why**, on startup and on the panel itself. The
+alternative is a typo that silently opens the settings, which is the exact opposite of what the
+person who typed it was doing.
+
+A real environment variable always beats the file, so a machine configured through systemd is
+never overridden by a checkout.
+
+The two secrets are separate on purpose. The **strategy passcode** is shared with the strategy
+table and gates the picklist and the AI answers; it is set on this page and stored as a salted
+hash. The **admin password** gates this page, and is only ever in `.env`.
 
 Server-side, the lock is the second gate and not the only one: `/api/config`, `/api/keycheck` and
 `/api/keytest` still require the hub machine first, and then a valid admin token whenever a code
@@ -684,13 +700,13 @@ Two more things on that page:
 
 ```
 python3 server/hub.py [--port 6059] [--db data/scouting.db] [--no-mdns] [--no-poll]
-                      [--allow-remote-config] [--clear-admin-code]
+                      [--allow-remote-config] [--set-admin-password]
 ```
 
 `--no-mdns` skips answering to `scout.local`. `--allow-remote-config` lets any device on the
-network change hub settings — off by default, and rarely what you want. `--clear-admin-code`
-forgets the code that locks the Setup page and then carries on serving, for when nobody can
-remember it.
+network change hub settings — off by default, and rarely what you want. `--set-admin-password`
+asks for a password twice, writes it into `.env`, and then carries on serving; it is how the
+password is set, changed, and — with a blank answer — removed.
 
 `--no-poll` stops the hub reaching out to Nexus, TBA, FRC Events, Statbotics or Lovat; it still
 serves everything already in the database. Use it to look at a saved event without touching the

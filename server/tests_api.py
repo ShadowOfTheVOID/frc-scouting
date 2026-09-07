@@ -6,6 +6,7 @@ passcode that gates the picklist, the export/import round trip the docs promise
 is a no-op, and the rule that a missing API key reads as unknown rather than as
 zero.  All stdlib, no fixtures on disk beyond a temp database.
 """
+import base64
 import json
 import os
 import shutil
@@ -20,6 +21,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 
 import analytics  # noqa: E402
+import envfile  # noqa: E402
 import hub  # noqa: E402
 from store import Store  # noqa: E402
 
@@ -890,31 +892,99 @@ def test_key_hygiene(L):
     return ok
 
 
+def test_env_file(L):
+    """The `.env` file, which is where the admin password lives.
+
+    Forty lines of parser, and every one of these is somebody's Saturday: an
+    `export` copied out of a shell, quotes around a password with a space in
+    it, a `#` inside a password that is not a comment, and a machine whose real
+    environment must beat a file sitting in the checkout.
+    """
+    ok = True
+    tmp = tempfile.mkdtemp(prefix="frc-env-test-")
+    try:
+        path = os.path.join(tmp, ".env")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("# a comment\n\n"
+                     "export ADMIN_PASSWORD_B64=%s\n"
+                     "SPACED = \"two words\"\n"
+                     "HASHED='pass#word'\n"
+                     "TRAILING=value # and a note\n"
+                     "not a line at all\n" % envfile.encode("hub-6059"))
+        got = envfile.parse(open(path, encoding="utf-8").read())
+        ok &= check("`export`, quotes, comments and junk lines all parse",
+                    got.get("SPACED") == "two words" and got.get("HASHED") == "pass#word"
+                    and got.get("TRAILING") == "value" and "not" not in got, f"({got})")
+
+        os.environ.pop(envfile.ADMIN, None)
+        envfile.load(path)
+        ok &= check("the password comes back out of the file",
+                    envfile.admin_password() == ("hub-6059", None),
+                    f"({envfile.admin_password()})")
+
+        # A host that sets this through systemd must not be overridden by a
+        # file that happens to be sitting in the checkout.
+        os.environ[envfile.ADMIN] = envfile.encode("from-the-machine")
+        envfile.load(path)
+        ok &= check("a real environment variable beats the file",
+                    envfile.admin_password()[0] == "from-the-machine")
+
+        # Written, not appended: a second line would be a password that depends
+        # on which one the reader wins with.
+        os.environ.pop(envfile.ADMIN, None)
+        envfile.write(envfile.ADMIN, envfile.encode("second"), path)
+        envfile.write(envfile.ADMIN, envfile.encode("third"), path)
+        text = open(path, encoding="utf-8").read()
+        ok &= check("writing the password twice leaves one line, not three",
+                    text.count(envfile.ADMIN + "=") == 1
+                    and envfile.parse(text)[envfile.ADMIN] == envfile.encode("third"),
+                    f"({text.count(envfile.ADMIN + '=')} lines)")
+        ok &= check("and every other line survives being rewritten",
+                    envfile.parse(text).get("HASHED") == "pass#word")
+        ok &= check("the file it writes is readable by nobody else",
+                    (os.stat(path).st_mode & 0o077) == 0,
+                    oct(os.stat(path).st_mode & 0o777))
+
+        # It is base64, and base64 is not encryption. The test says so too, so
+        # nobody reads this as a claim it never made.
+        ok &= check("the stored form is decodable by anyone with the file - it is not encrypted",
+                    base64.b64decode(envfile.parse(text)[envfile.ADMIN]).decode() == "third")
+    finally:
+        os.environ.pop(envfile.ADMIN, None)
+        shutil.rmtree(tmp, ignore_errors=True)
+    return ok
+
+
 def test_admin_panel(L):
     """The settings are an admin panel, not a page anyone at the laptop can retype.
 
     Two separate things, and they are separate on purpose. The **lock** is
     against an accident - a hub is set up once and then left alone for two
     days, on a laptop that sits on the scoring table with people around it. The
-    **code** is against somebody else, and is optional: a team that never sets
-    one must not find its own hub locked, which is the same call the picklist
-    already makes about its passcode.
+    **password** is against somebody else, it lives in `.env` rather than in any
+    box on the page, and it is optional: a team that never sets one must not
+    find its own hub locked, which is the same call the picklist already makes
+    about its passcode.
     """
     ok = True
     was = L.store.get("eventKey")
+    os.environ.pop(envfile.ADMIN, None)
+    os.environ.pop(envfile.ADMIN_PLAIN, None)
 
     code, c = L.req("/api/config")
-    ok &= check("with no admin code the settings are open, and say so",
-                c["admin"] == {"set": False, "unlocked": True}, f"({c['admin']})")
+    ok &= check("with no admin password the settings are open, and say so",
+                c["admin"]["set"] is False and c["admin"]["unlocked"] is True
+                and c["admin"]["source"] == "none", f"({c['admin']})")
     code, _ = L.req("/api/config", {"ourTeam": "6059"})
     ok &= check("and a save goes through", code == 200 and L.store.get("ourTeam") == "6059")
 
-    L.req("/api/config", {"adminCode": "hub-6059"})
+    os.environ[envfile.ADMIN] = envfile.encode("hub-6059")
     code, c = L.req("/api/config")
-    ok &= check("setting an admin code locks the settings behind it",
-                c["admin"] == {"set": True, "unlocked": False}, f"({c['admin']})")
-    ok &= check("and the code itself never comes back out",
-                "hub-6059" not in json.dumps(c) and "adminCode" not in c)
+    ok &= check("a password in the environment locks the settings behind it",
+                c["admin"]["set"] is True and c["admin"]["unlocked"] is False
+                and c["admin"]["source"] == "env", f"({c['admin']})")
+    ok &= check("and the password itself never comes back out",
+                "hub-6059" not in json.dumps(c) and envfile.encode("hub-6059") not in json.dumps(c))
 
     code, r = L.req("/api/config", {"ourTeam": "254"})
     ok &= check("a save without it is refused, and says which button to press",
@@ -926,7 +996,7 @@ def test_admin_panel(L):
         ok &= check(f"{path} is behind the same lock", code == 403, f"({code})")
 
     code, r = L.req("/api/admin/unlock", {"code": "hub-6058"})
-    ok &= check("a wrong admin code is refused", code == 403 and not r.get("token"), f"({r})")
+    ok &= check("a wrong password is refused", code == 403 and not r.get("token"), f"({r})")
     code, r = L.req("/api/admin/unlock", {"code": "hub-6059"})
     tok = r.get("token")
     ok &= check("the right one hands back a token", code == 200 and bool(tok))
@@ -943,20 +1013,32 @@ def test_admin_panel(L):
     ok &= check("locking again spends the token immediately",
                 code == 403 and L.store.get("ourTeam") == "254", f"({code})")
 
-    # Changing the code invalidates every token it ever handed out, the same as
-    # the strategy passcode.
+    # A value that is there but unusable must lock the panel, never open it: a
+    # typo in .env that read as "no password" would be the worst of both.
     _, r = L.req("/api/admin/unlock", {"code": "hub-6059"})
     hdr = {"X-Admin-Token": r.get("token") or ""}
-    L.req("/api/config", {"adminCode": "hub-6060"}, headers=hdr)
-    code, _ = L.req("/api/config", {"ourTeam": "6059"}, headers=hdr)
-    ok &= check("changing the code signs the old token out", code == 403, f"({code})")
-
-    _, r = L.req("/api/admin/unlock", {"code": "hub-6060"})
-    hdr = {"X-Admin-Token": r.get("token") or ""}
-    L.req("/api/config", {"adminCode": ""}, headers=hdr)
+    os.environ[envfile.ADMIN] = "not base64 at all!!"
     code, c = L.req("/api/config")
-    ok &= check("and clearing it opens the settings back up",
-                c["admin"] == {"set": False, "unlocked": True}, f"({c['admin']})")
+    ok &= check("a password that cannot be read still locks the panel",
+                c["admin"]["set"] is True and c["admin"]["unlocked"] is False
+                and "base64" in (c["admin"]["problem"] or ""), f"({c['admin']})")
+    code, r = L.req("/api/admin/unlock", {"code": "hub-6059"})
+    ok &= check("and nothing unlocks it - the answer says what to fix",
+                code == 403 and "base64" in r.get("error", ""), f"({code} {r})")
+
+    # The name people type out of habit is not read as a password, and is not
+    # silently ignored either.
+    os.environ.pop(envfile.ADMIN, None)
+    os.environ[envfile.ADMIN_PLAIN] = "hub-6059"
+    code, c = L.req("/api/config")
+    ok &= check("ADMIN_PASSWORD without the _B64 is named, not ignored",
+                c["admin"]["set"] is True and envfile.ADMIN in (c["admin"]["problem"] or ""),
+                f"({c['admin']})")
+
+    os.environ.pop(envfile.ADMIN_PLAIN, None)
+    code, c = L.req("/api/config")
+    ok &= check("and with the line gone the settings open back up",
+                c["admin"]["set"] is False and c["admin"]["unlocked"] is True, f"({c['admin']})")
 
     # ---- the event key, which is the switch that changes every screen at once
     ek = L.store.get("eventKey")
@@ -1282,7 +1364,7 @@ def main():
                    test_junk_payload_cannot_blank_the_dashboard,
                    test_clock_correction_never_invents_numbers,
                    test_seats, test_seat_lifetime, test_match_clock, test_reconcile,
-                   test_config_scope, test_key_hygiene, test_admin_panel,
+                   test_config_scope, test_key_hygiene, test_env_file, test_admin_panel,
                    test_trend_series, test_defence_counts_both_ways,
                    test_ai_is_gated_and_grounded,
                    test_nexus_tba_one_row, test_legacy_keys_migrate,

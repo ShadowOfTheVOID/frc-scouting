@@ -60,6 +60,11 @@ sudo systemctl enable --now frc-mirror
 `systemctl edit` and not this file, and not the command line: an argument is
 visible in `ps` to every user on the host, and this repository is public.
 
+A `.env` beside the checkout works too and is read on startup, which is what
+makes this runnable on a laptop for five minutes to see it work — but on a real
+host prefer the systemd lines above. A real environment variable always beats
+the file, so setting both is not ambiguous.
+
 ```
 [Service]
 Environment=MIRROR_PUSH_KEY=the-long-generated-one

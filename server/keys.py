@@ -117,16 +117,17 @@ FIELDS = {
         re.compile(r"^lvt-\S+$"), "Lovat keys start with `lvt-`"),
     "aiKey": Field("AI", "the AI KEY box"),
     "mirrorKey": Field("mirror push key", "the MIRROR PUSH KEY box"),
-    #: Neither of these is a key, and neither is checked like one - but a
-    #: passcode with a space on the end locks a lead out of their own picklist,
-    #: or out of their own settings, and looks identical to one without.
-    #: Trimmed, never rejected.
+    #: Not a key, and not checked like one - but a passcode with a space on the
+    #: end locks a lead out of their own picklist and looks identical to one
+    #: without.  Trimmed, never rejected.
+    #:
+    #: The admin password is not here at all: it lives in `.env` rather than in
+    #: any box on the page, so it never reaches this file.
     "strategyPin": Field("strategy passcode", "the STRATEGY PASSCODE box", code=True),
-    "adminCode": Field("admin code", "the ADMIN CODE box", code=True),
 }
 
-#: The two that are hashed rather than stored, and so are saved through their
-#: own call rather than written to a settings row.
+#: Hashed rather than stored, and so saved through its own call rather than
+#: written to a settings row.
 CODES = tuple(k for k, f in FIELDS.items() if f.code)
 
 

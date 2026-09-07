@@ -69,10 +69,27 @@ It is the same page the server prints as `Admin:` when it starts. Everything abo
 set there: the event, all the API keys, the strategy passcode, and the off-site mirror.
 
 There is **no password out of the box, and nothing generates one.** The panel opens read-only
-and you press **UNLOCK** at the top; with no admin code set, that is the whole of it. If you want
-it to ask for a code too, type one into the **ADMIN CODE** box and save — you choose it, the hub
-stores only a salted hash of it, and nothing anywhere can show it back to you. Forgotten it?
-Start the hub with `--clear-admin-code` on the laptop.
+and you press **UNLOCK** at the top; with no password set, that is the whole of it.
+
+To ask for a password as well, stop the hub and run:
+
+```
+python3 server/hub.py --set-admin-password
+```
+
+It asks twice, then writes the line into a **`.env` file** beside the hub — that is the only
+place the password lives, and the same command is how you change it or remove it later. `.env`
+is in `.gitignore` and must never be committed. There is a `.env.example` in the repository
+showing what goes in it.
+
+> **The stored form is base64, and base64 is not encryption.** Anybody who can read that file
+> can decode it in one command. What it buys is that the password is not sitting in plain sight
+> in a file that gets opened on a projector or read over a shoulder at a scoring table. Keeping
+> the file off shared drives is what actually protects it.
+
+If the line in `.env` is wrong — a typo, or `ADMIN_PASSWORD` instead of `ADMIN_PASSWORD_B64` —
+the hub says so on startup and on the panel itself, and the panel stays **locked** rather than
+opening. A typo must never read as "no password".
 
 On the **laptop itself**, open a browser and go to **http://localhost:6059/**
 
@@ -514,7 +531,8 @@ the fuel column.
 | The QR code will not scan | screen too dim, or too far | Turn brightness up; hold the phone about a foot away |
 | SERVER tab says `off-site mirror RETRYING` | the mirror is unreachable, or the push key is wrong | **TEST KEYS** in the admin panel says which of the two it is. Nothing at the venue is affected either way |
 | The admin panel will not let you type into anything | it opens read-only, on purpose | Press **UNLOCK** at the top. It re-locks after ten minutes and on every reload |
-| It asks for an admin code nobody remembers | somebody set one | Start the hub with `--clear-admin-code` on the laptop |
+| It asks for an admin password nobody remembers | one is set in `.env` | `python3 server/hub.py --set-admin-password` sets a new one, or a blank one removes it |
+| The panel says the password in `.env` cannot be read | the line is malformed | Same command. The hub refuses to unlock rather than letting anybody in, which is why it is not just ignored |
 | The mirror's header has gone red | nothing has reached it for over an hour | The laptop is off, or off the internet. Every number on the mirror is that old — it says so |
 
 If a phone is truly stuck, the scout can keep scouting anyway — everything saves locally — and

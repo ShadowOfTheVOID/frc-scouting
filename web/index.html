@@ -69,7 +69,7 @@
       <div class="eyebrow">ADMIN</div>
       <div class="lockbar">
         <span class="lockstate shut" id="lockState">SETTINGS LOCKED</span>
-        <input id="adminEntry" class="hide" type="password" placeholder="admin code"
+        <input id="adminEntry" class="hide" type="password" placeholder="admin password"
           autocomplete="off" autocapitalize="off" spellcheck="false">
         <button class="go" id="unlock">UNLOCK</button>
         <button class="go hide" id="lock" style="background:var(--btn)">LOCK NOW</button>
@@ -79,6 +79,7 @@
         again after ten minutes and on every reload. This hub is set up once and then left
         alone on a table with people around it — one stray keystroke in the event key box
         would change every screen in the building.</div>
+      <div class="hint" id="lockWhere"></div>
     </div>
   </div>
 
@@ -164,14 +165,6 @@
           <div class="h">From whichever company makes the model picked above. A key from one
             of the other two is refused here rather than saved — that mismatch has no other
             symptom than every AI answer saying the model could not be reached.</div>
-          <div class="say"></div></div>
-        <div class="f" data-key="adminCode"><label>ADMIN CODE<span class="tag"></span></label>
-          <input id="adminCode" placeholder="leave blank for no code" autocomplete="off">
-          <div class="h">Optional, and not the strategy passcode — this one gates <i>this
-            page</i>: the event key, the API keys, the passcode below. Without it the panel
-            still opens locked, which stops an accident; with it, unlocking needs the code.
-            Forgotten it? Start the hub with <code>--clear-admin-code</code> on the laptop —
-            whoever can do that already has the keys anyway.</div>
           <div class="say"></div></div>
         <div class="f" data-key="strategyPin"><label>STRATEGY PASSCODE<span class="tag"></span></label>
           <input id="strategyPin" placeholder="leave blank for no lock" autocomplete="off">
@@ -271,6 +264,35 @@ function applyLock() {
   }
 }
 
+/**
+ * Where the admin password is configured, and never what it is.
+ *
+ * It lives in `.env` beside the hub and nowhere else - not in a box on this
+ * page, and not in the database, which is copied to the mirror and exported to
+ * JSON. So the page's job is to say which of the three states this hub is in,
+ * because "the panel will not let me in" and "the panel lets anybody in" are
+ * both things somebody finds out at the wrong moment otherwise.
+ */
+function showPassword(admin) {
+  const el = $('#lockWhere');
+  el.textContent = '';
+  if (admin.problem) {
+    // A password that is there but unusable locks the panel rather than
+    // opening it, so this is the only thing on screen that can say why.
+    el.innerHTML = '<b style="color:var(--red-alert)">The admin password in .env cannot be '
+      + 'read.</b> ';
+    el.append(admin.problem);
+    return;
+  }
+  if (admin.set) {
+    el.textContent = 'Unlocking needs the admin password from the .env file beside the hub. '
+      + 'To change it, stop the hub and run: python3 server/hub.py --set-admin-password';
+    return;
+  }
+  el.textContent = 'No admin password is set, so UNLOCK is just this button. To ask for one '
+    + 'as well, run: python3 server/hub.py --set-admin-password';
+}
+
 /** Ten minutes of nobody touching it is a page nobody is using. */
 function keepAwake() {
   clearTimeout(idleTimer);
@@ -292,7 +314,7 @@ async function doUnlock() {
     try { await reload(); } catch { /* offline */ }
   } catch (e) {
     $('#lockSay').textContent = e.status === 403
-      ? ((e.body && e.body.error) || 'That is not the admin code.')
+      ? ((e.body && e.body.error) || 'That is not the admin password.')
       : 'Could not unlock: ' + e.message;
     if (adminSet) $('#adminEntry').focus();
   }
@@ -340,6 +362,7 @@ async function reload() {
   showSaved(c.saved || {});
   showMirror(c);
   adminSet = !!(c.admin || {}).set;
+  showPassword(c.admin || {});
   // The hub is the authority on whether this tab is still past the lock: an
   // expired token has to close the panel here too, not just be refused there.
   if (adminToken && !(c.admin || {}).unlocked) adminToken = null;
@@ -527,7 +550,7 @@ function buildModelPicker(ai) {
 }
 
 const SECRETS = ['tbaKey','nexusKey','nexusToken','frcEventsUser','frcEventsToken',
-                'lovatKey','aiKey','strategyPin','adminCode','mirrorKey'];
+                'lovatKey','aiKey','strategyPin','mirrorKey'];
 
 /** What the boxes currently say, as the hub wants it. */
 function typed() {
@@ -586,15 +609,6 @@ async function save(extra = {}) {
     $('#status').textContent = 'Saved. Fetching event data…'
       + (fixed ? ' Read the notes under the boxes.' : ' Now press TEST KEYS.');
     for (const k of SECRETS) $('#'+k).value = '';
-    // A new admin code signs out every token it ever handed out, this tab's
-    // included - which is the right thing and looks like a bug unless it is
-    // said out loud.
-    if ('adminCode' in body) {
-      adminToken = null;
-      $('#status').textContent = body.adminCode
-        ? 'Admin code saved. The panel locked itself — unlock it with the new code.'
-        : 'Admin code cleared. The panel still opens locked; unlocking it no longer asks.';
-    }
     try { await reload(); } catch { /* offline */ }
   } catch (e) {
     // Nothing was saved, and the boxes still hold what was typed - so this is

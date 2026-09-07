@@ -21,8 +21,10 @@
     </p>
     <p class="hint" style="margin:14px 0 0">
       This is deliberate: nobody on the venue network can overwrite your keys or change the
-      event, and there is no password to remember unless your team chooses to set one. The
-      panel opens read-only even on the hub laptop, so nothing there changes by accident.
+      event, and there is no password unless your team sets one — with
+      <code class="mono">python3 server/hub.py --set-admin-password</code> on the laptop, which
+      keeps it in a <code class="mono">.env</code> file there. The panel opens read-only even on
+      the hub laptop, so nothing changes by accident.
     </p>
     <div style="display:flex;gap:8px;margin-top:18px">
       <a class="lk" href="/scout" style="display:inline-block;padding:9px 16px;border-radius:8px;

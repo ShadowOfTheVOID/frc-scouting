@@ -1,3 +1,7 @@
+# The admin password, and on a mirror host its two secrets. `.env.example` is
+# the committed one; this is the filled-in copy and it never goes near git.
+.env
+
 # Runtime state — never commit. Holds the event database, which contains the
 # strategy passcode hash, unlock tokens, and any API keys the hub was given.
 data/

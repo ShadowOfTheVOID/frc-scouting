@@ -34,6 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ai
 import analytics
 import discover
+import envfile
 import keys as keyhygiene
 import lovat as lovat_report
 import offsite
@@ -745,15 +746,28 @@ class Hub:
         return self._token_ok("unlockTokens", tok)
 
     # -------------------------------------------------------------- admin
+    #
+    # The admin password is not stored here at all: it lives in `.env`, read at
+    # startup, and this hub only ever compares against it.  One place to set
+    # it, one place to look when it does not work, and a password that never
+    # goes into the database that gets copied to a mirror and exported to JSON.
 
-    def set_admin_code(self, code):
-        self._set_code("adminCode", "adminTokens", code)
+    def admin_password(self):
+        return envfile.admin_password()
 
     def admin_set(self):
-        return bool(self.store.get("adminCode"))
+        """Whether unlocking needs a password - including when it needs one
+        nobody can supply, because the value in `.env` is unusable."""
+        password, problem = self.admin_password()
+        return bool(password or problem)
 
     def check_admin(self, code):
-        return self._check_code("adminCode", code)
+        password, problem = self.admin_password()
+        if problem:
+            return False           # a broken password locks, it does not open
+        if not password:
+            return True            # none set: the panel's own lock is the guard
+        return hmac.compare_digest(password, (code or "").strip())
 
     def issue_admin_token(self):
         return self._issue("adminTokens", self.ADMIN_MINUTES * 60)
@@ -761,10 +775,10 @@ class Hub:
     def admin_token_ok(self, tok):
         """Whether this request may change settings.
 
-        Open when no admin code is set, the same call the picklist makes: a
-        team that has not set one up must not find its own hub locked. The
-        Setup page still opens locked either way - the lock is what stops an
-        accident, and the code is what stops somebody else.
+        Open when no password is set, the same call the picklist makes: a team
+        that has not set one up must not find its own hub locked. The panel
+        still opens locked either way - the lock is what stops an accident, and
+        the password is what stops somebody else.
         """
         if not self.admin_set():
             return True
@@ -1942,8 +1956,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _locked_out(self):
         return self._json({
-            "error": "The hub settings are locked. Press UNLOCK on the Setup page and "
-                     "enter the admin code.",
+            "error": "The hub settings are locked. Press UNLOCK on the admin page and "
+                     "enter the admin password.",
             "locked": True,
         }, 403)
 
@@ -2075,7 +2089,12 @@ class Handler(BaseHTTPRequestHandler):
                 # the asking page is currently past it. The panel opens locked
                 # either way: the code stops somebody else, the lock stops an
                 # accident, and a team with no code still gets the second one.
-                "admin": {"set": h.admin_set(), "unlocked": self._admin_ok()},
+                "admin": {"set": h.admin_set(), "unlocked": self._admin_ok(),
+                          # Where it is configured, never what it is, and the
+                          # reason when it is there but unusable - a panel that
+                          # nobody can unlock has to say why on the panel.
+                          "source": "env" if h.admin_set() else "none",
+                          "problem": h.admin_password()[1]},
                 "ourTeam": h.cfg("ourTeam"),
                 "status": h.status,
                 "multipliers": h.store.get("multipliers") or rules.BUCKET_PRIORS,
@@ -2263,12 +2282,6 @@ class Handler(BaseHTTPRequestHandler):
                                 provider.strip() or ai.provider_for(model) or "none")
             if "strategyPin" in cleaned:
                 h.set_pin(cleaned["strategyPin"])
-            # Last, because it can sign this very request's token out: a lead
-            # setting or changing the admin code is asked to unlock again, and
-            # everything else in the same save has already landed.
-            if "adminCode" in cleaned:
-                h.set_admin_code(cleaned["adminCode"])
-                h.note("info", "admin code " + ("set" if cleaned["adminCode"] else "cleared"))
             if h.cfg("eventKey") and "eventKey" in body:
                 h.store.put_event(h.cfg("eventKey"), level=body.get("eventLevel"))
             _poll_all(h)
@@ -2325,8 +2338,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True})
             if not h.check_admin(body.get("code")):
                 time.sleep(0.6)                  # blunt the guessing rate
-                h.note("warn", "an admin code was refused at the hub")
-                return self._json({"ok": False, "error": "That is not the admin code."}, 403)
+                h.note("warn", "an admin password was refused at the hub")
+                problem = h.admin_password()[1]
+                return self._json({"ok": False,
+                                   "error": problem or "That is not the admin password."}, 403)
             return self._json({"ok": True, "token": h.issue_admin_token(),
                                "minutes": h.ADMIN_MINUTES})
 
@@ -2665,7 +2680,44 @@ class Server(ThreadingHTTPServer):
     request_queue_size = 128
 
 
+def _set_admin_password():
+    """Ask for a password twice and write it into `.env`.  True if it was.
+
+    This exists because the alternative is telling a scouting lead to base64
+    something by hand and create a dotfile on a Windows laptop, where Explorer
+    hides the extension and will happily make `.env.txt`. Nothing about a
+    password should require that.
+    """
+    import getpass
+    print("\n  A blank password removes it: the panel still opens locked, and\n"
+          "  unlocking it is then just the button.\n")
+    try:
+        first = getpass.getpass("  new admin password: ")
+        again = getpass.getpass("  the same one again: ")
+    except (EOFError, KeyboardInterrupt):
+        print("\n  nothing changed")
+        return False
+    if first != again:
+        print("  those two do not match - nothing changed")
+        return False
+    if not first.strip():
+        path = envfile.write(envfile.ADMIN, "")
+        print(f"  admin password removed from {path}")
+        return True
+    path = envfile.write(envfile.ADMIN, envfile.encode(first))
+    os.environ[envfile.ADMIN] = envfile.encode(first)
+    print(f"  written to {path}, base64-encoded - which is not encryption:\n"
+          "  anyone who can read that file can read the password. Keep the file\n"
+          "  off shared drives and out of the repository (.gitignore has it).")
+    return True
+
+
 def main():
+    # Before anything reads an environment variable. A real one always wins
+    # over the file - a mirror host sets these through systemd, and a checkout
+    # must never quietly override the machine.
+    from_file = envfile.load()
+
     ap = argparse.ArgumentParser(description="FRC 2026 REBUILT scouting server")
     ap.add_argument("--port", type=int, default=PORT)
     ap.add_argument("--db", default=None)
@@ -2676,21 +2728,21 @@ def main():
     ap.add_argument("--allow-remote-config", action="store_true",
                     help="let any device on the network change hub settings and API keys "
                          "(default: the hub machine only)")
-    ap.add_argument("--clear-admin-code", action="store_true",
-                    help="forget the admin code that locks the settings, then carry on "
-                         "serving (for when nobody can remember it)")
+    ap.add_argument("--set-admin-password", action="store_true",
+                    help="type a new admin password and write it into .env, then carry on "
+                         "serving. This is the only way it is set, and the way back in when "
+                         "nobody can remember it")
     args = ap.parse_args()
+
+    if args.set_admin_password and not _set_admin_password():
+        return 1
 
     store = Store(args.db) if args.db else Store()
     hub = Hub(store)
-    # The way back in. Whoever can run this already has the database and every
-    # key in it, so a code that could not be cleared from the machine it lives
-    # on would lock a team out of their own hub and protect nothing.
-    if args.clear_admin_code:
-        had = hub.admin_set()
-        hub.set_admin_code(None)
-        print("  admin code cleared - the settings are unlocked" if had
-              else "  no admin code was set")
+    # Every unlock dies with the process. The panel opens locked on every
+    # reload anyway, and a token surviving a restart would outlive a password
+    # changed in .env while the hub was stopped - which is when it is changed.
+    store.set("adminTokens", {})
     Handler.hub = hub
     Handler.allow_remote_config = args.allow_remote_config
 
@@ -2722,6 +2774,18 @@ def main():
             responder.start()
 
     print(discover.banner(args.port))
+    # Where the admin password came from, and never what it is. A hub whose
+    # .env has a typo in it is a hub nobody can unlock, and the person who can
+    # fix that is standing in front of this window.
+    password, problem = envfile.admin_password()
+    if problem:
+        print(f"  !! {problem}\n")
+    elif password:
+        print("  Admin password: loaded from %s\n"
+              % (".env" if envfile.ADMIN in from_file else "the environment"))
+    else:
+        print("  Admin password: none set - UNLOCK on the admin page is one button.\n"
+              "                  `python3 server/hub.py --set-admin-password` sets one.\n")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

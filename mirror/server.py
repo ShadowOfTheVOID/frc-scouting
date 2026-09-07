@@ -45,6 +45,18 @@ sys.path.insert(0, _HERE)
 
 from mirrordb import Store  # noqa: E402
 
+# The two secrets may come from a `.env` beside the checkout as well as from the
+# environment, which is what makes a mirror runnable on a laptop for five
+# minutes to see it work. Guarded, because this directory is meant to survive
+# being copied somewhere on its own: without the hub's half of the repository
+# there is no .env reader, and systemd's own Environment= lines - which is what
+# a real host should use anyway - do not need one.
+try:
+    sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "server"))
+    import envfile                                        # noqa: E402
+except ImportError:                                       # pragma: no cover
+    envfile = None
+
 WEB_ROOT = os.path.join(_HERE, "web")
 #: The fonts and the font declarations are the hub's, byte for byte, so the
 #: mirror reads as the same application rather than a lookalike. Nothing else
@@ -473,6 +485,10 @@ class Server(socketserver.ThreadingMixIn, HTTPServer):
 
 
 def main():
+    # First, so every default below sees it. A real environment variable still
+    # wins over the file - see server/envfile.py.
+    if envfile:
+        envfile.load()
     ap = argparse.ArgumentParser(
         description="Off-site mirror for the REBUILT scouting hub")
     ap.add_argument("--port", type=int, default=int(os.environ.get("MIRROR_PORT") or PORT))
