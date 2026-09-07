@@ -62,7 +62,7 @@ PLACEHOLDER = re.compile(
     r"^(?:<.*>|\{.*\}|\[.*\]|x{6,}|\.{3,}|your[-_ ]?|paste|api[-_ ]?key$|key[-_ ]?here"
     r"|enter|none|null|n/a|todo)", re.I)
 
-#: Keys these five vendors issue, in a form that cannot be anything else.  Used
+#: Keys these vendors issue, in a form that cannot be anything else.  Used
 #: only to catch a key filed under the wrong box - never to bless one, because
 #: "does not match" has to keep meaning "we do not know".
 SIGNATURES = (
@@ -70,16 +70,26 @@ SIGNATURES = (
     ("aiKey", re.compile(r"^sk-ant-"), "an Anthropic (Claude) key"),
     ("aiKey", re.compile(r"^AIza[\w-]{10,}$"), "a Google (Gemini) key"),
     ("aiKey", re.compile(r"^sk-proj-"), "an OpenAI key"),
+    ("aiKey", re.compile(r"^sk-or-"), "an OpenRouter key"),
 )
 
 #: Which company an AI key belongs to, for the one mismatch worth refusing: a
 #: Claude key under a Gemini model reads as "the model could not be reached"
 #: forever, and nothing on any screen says why.
+#:
+#: OpenRouter is in here for both directions: its key under a Claude model is
+#: the same silent failure, and it is the one vendor whose key gets pasted
+#: while the model beside it still names the maker rather than the router.
 AI_VENDOR = (
     (re.compile(r"^sk-ant-"), "anthropic", "Claude (Anthropic)"),
     (re.compile(r"^AIza[\w-]{10,}$"), "gemini", "Gemini (Google)"),
+    (re.compile(r"^sk-or-"), "openrouter", "OpenRouter"),
     (re.compile(r"^sk-proj-"), "openai", "OpenAI"),
 )
+
+#: Every vendor above, by the name a person reads on the Setup page.  Built
+#: from the same tuple so a fifth one is added in a single place.
+AI_VENDOR_NAMES = {vendor: name for _, vendor, name in AI_VENDOR}
 
 #: Nothing any of these vendors issues comes close.  A paste past this is a
 #: file, a page of HTML, or the whole JSON response.
@@ -280,14 +290,29 @@ def check(field, raw, ai_provider=None):
             out["notes"].append("that was `username:token` - the username came out of it "
                                 "too, and is filled in above")
 
-    if field == "aiKey" and ai_provider in ("anthropic", "gemini", "openai"):
+    if field == "aiKey" and ai_provider in AI_VENDOR_NAMES:
         for sig, vendor, vendor_name in AI_VENDOR:
             if sig.match(value) and vendor != ai_provider:
-                want = dict(anthropic="Claude (Anthropic)", gemini="Gemini (Google)",
-                            openai="OpenAI")[ai_provider]
-                out["error"] = ("That key belongs to %s, but the model picked above is %s. "
-                                "Pick a model from %s instead, or paste that company's key."
-                                % (vendor_name, want, want))
+                want = AI_VENDOR_NAMES[ai_provider]
+                # The two OpenRouter directions are the likeliest of these,
+                # because the model name reads the same either way:
+                # `claude-opus-5` is bought from Anthropic, and
+                # `anthropic/claude-opus-5` is the same model through
+                # OpenRouter. Only one of them takes any given key.
+                if vendor == "openrouter":
+                    out["error"] = ("That is an OpenRouter key, but the model picked above "
+                                    "goes straight to %s. Pick the same model from the "
+                                    "OpenRouter group instead, or paste a %s key."
+                                    % (want, want))
+                elif ai_provider == "openrouter":
+                    out["error"] = ("That key belongs to %s, but the model picked above goes "
+                                    "through OpenRouter. Pick that model from the %s group "
+                                    "instead, or paste an OpenRouter key."
+                                    % (vendor_name, vendor_name))
+                else:
+                    out["error"] = ("That key belongs to %s, but the model picked above is "
+                                    "%s. Pick a model from %s instead, or paste that "
+                                    "company's key." % (vendor_name, want, want))
                 return out
 
     out["value"] = value

@@ -605,8 +605,9 @@ it nothing arms the match screen and every scout opens each match by hand. The r
 | **Nexus webhook token** | Only if you registered a push webhook. |
 | **FRC Events** | The official result a few minutes before TBA posts it. Does not feed the solver. A username and a token, and pasting the joined `username:token` — or the base64 `Basic` blob out of their documentation — into the token box fills in both. |
 | **Lovat API key** | Other teams' scouting for this event. Your scouting lead makes one in the Lovat Dashboard under Settings → API keys; it starts `lvt-`, and your team has to be verified on Lovat first. Polled once every five minutes — Lovat allows one request every three seconds per key, so the hub stays well inside it. The export is scoped to what your Lovat account is allowed to see, so a short list is a setting on their side, not a failure on ours. |
-| **AI model** | One list, grouped Claude / Gemini / OpenAI, each option priced per million tokens. Picking a model picks the company that makes it, so there is no provider field to get wrong. Starts on **Claude Opus 5**, so pasting a key is enough — you never have to touch the list. *none* turns the three panels below off entirely, and stays off even with a key in the box. **other** takes a typed model id for anything released after this list was written; the name decides where it is sent. |
-| **AI key** | The key for whoever makes the model you picked. A key from one of the other two is refused here rather than saved: that mismatch has no symptom anywhere except every AI answer reading *the model could not be reached*. |
+| **AI model** | One list, grouped Claude / Gemini / OpenAI / OpenRouter, each option priced per million tokens. Picking a model picks who it is sent to, so there is no provider field to get wrong. Starts on **Claude Opus 5**, so pasting a key is enough — you never have to touch the list. *none* turns the three panels below off entirely, and stays off even with a key in the box. **other** takes a typed model id for anything released after this list was written; the name decides where it is sent. |
+| **OpenRouter** | The fourth group, and not a model-maker: one key and one bill in front of everybody else's models, including the open-weight ones nobody else sells. Its ids name the maker first — `anthropic/claude-opus-5` — and a slash in the id is the whole routing rule, so the same model bought direct and bought through OpenRouter stay two different choices with two different keys. The list shows three; **other** takes any of the hundreds it carries. Prices are the makers' own; OpenRouter takes its cut when the credit is bought. |
+| **AI key** | The key for whoever the model above goes to. A key from any of the others is refused here rather than saved: that mismatch has no symptom anywhere except every AI answer reading *the model could not be reached*. The pair worth naming is an `sk-or-` key under `claude-opus-5` rather than `anthropic/claude-opus-5` — the two read the same and only one of them takes it. |
 | **Mirror address** | Optional. The root of an off-site mirror, e.g. `https://systemoverload.org`. A trailing slash or a pasted `/api/push` is trimmed, and a bare hostname gets `https://`. Blank sends nothing anywhere. |
 | **Mirror push key** | Whatever `MIRROR_PUSH_KEY` is on that host. The write key, and not the passcode people type to read the site. |
 | Statbotics | EPA. No key needed. |
@@ -677,7 +678,8 @@ was wrong.
 
 Four pastes are **refused** rather than stored, each naming what to do instead: a key that
 belongs in one of the other boxes (a `lvt-` key in the TBA box), a web address, the example
-text, and an AI key from a different company than the model picked above it. Nothing is saved
+text, and an AI key from a different company than the model picked above it — OpenRouter
+included, in both directions. Nothing is saved
 at all when a box is refused, so a save is a re-press rather than a re-type of eight keys.
 
 Everything else is saved with a **warning** and no argument — a TBA key that is not 64
@@ -691,7 +693,10 @@ Two more things on that page:
   stored". Each answer is one line: accepted, rejected, rate-limited, or "we could not reach
   them" — which are four different problems that look identical everywhere else, because at a
   competition a source that is down has to read as *we do not know* rather than as an error.
-  The AI key is checked against the vendor's free model list, so it costs nothing. Lovat's 403
+  The AI key is checked against the vendor's free model list, so it costs nothing — except for
+  OpenRouter, whose model list is served to anybody and would bless a key revoked last week, so
+  the key is put to the route that needs one and the model id checked against the catalogue
+  separately. Both are free. Lovat's 403
   is called what it is: your team is not verified on their side, and a second key will fail the
   same way. The **off-site mirror** is on that list too, and it is the one that matters most to
   test early: it is asked twice, once openly (*is there a mirror at this address*) and once with

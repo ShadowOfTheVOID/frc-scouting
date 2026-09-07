@@ -1,9 +1,9 @@
-"""One small adapter over three chat APIs, and the rules every prompt carries.
+"""One small adapter over four chat APIs, and the rules every prompt carries.
 
 Raw HTTP on purpose.  The hub runs on a competition laptop with a stock Python
 and no packages - CI installs nothing, deliberately - so a vendor SDK is not
 available to us, and one HTTP path is also the only way to serve Anthropic,
-OpenAI and Gemini from a single adapter.
+OpenAI, Gemini and OpenRouter from a single adapter.
 
 Like every client in sources.py this returns None on failure rather than
 raising.  A model that is unreachable at a venue is the normal case, not an
@@ -20,7 +20,8 @@ import time
 import sources
 
 #: Every model the Setup page offers, in the order it offers them: Claude,
-#: then Gemini, then OpenAI.  One list, because it has to drive three things -
+#: then Gemini, then OpenAI, then the same three through OpenRouter.  One list,
+#: because it has to drive three things -
 #: the dropdown, which provider a model belongs to, and the shape of the
 #: request that model accepts - and three copies of that would drift.
 #:
@@ -43,12 +44,25 @@ MODELS = [
     ("gpt-5.6-sol",       "openai",    "GPT-5.6 Sol",       "$4 / $20",     True,  False),
     ("gpt-5.6-terra",     "openai",    "GPT-5.6 Terra",     "$2 / $12",     True,  False),
     ("gpt-5.6-luna",      "openai",    "GPT-5.6 Luna",      "$0.20 / $1.20", True, False),
+    # OpenRouter is not a model-maker: it is one key and one bill in front of
+    # everybody else's models, which for a team already juggling six services
+    # is the whole point of it.  Its ids are always `vendor/model`, and any of
+    # the hundreds it carries can be typed into the MODEL ID box - these three
+    # are here so the list shows what the ids look like.  The prices are the
+    # makers' own; OpenRouter takes its cut when the credit is bought, not per
+    # token.
+    ("anthropic/claude-opus-5",  "openrouter", "Claude Opus 5 (OpenRouter)",
+     "$5 / $25", True, False),
+    ("google/gemini-3.7-flash",  "openrouter", "Gemini 3.7 Flash (OpenRouter)",
+     "$0.75 / $3.75", True, False),
+    ("openai/gpt-5.6-terra",     "openrouter", "GPT-5.6 Terra (OpenRouter)",
+     "$2 / $12", True, False),
 ]
 
 BY_ID = {m[0]: m for m in MODELS}
 
 PROVIDERS = {"anthropic": "Claude (Anthropic)", "gemini": "Gemini (Google)",
-             "openai": "OpenAI"}
+             "openai": "OpenAI", "openrouter": "OpenRouter"}
 
 #: The default, in both senses: what the Setup page starts on, and what a hub
 #: that has a key but has never picked a model uses. Turning the features off
@@ -70,6 +84,9 @@ EFFORT = {
     "openai": ("reasoning_effort", "low"),
     # thinkingLevel and thinkingBudget together are a 400; only ever send this.
     "gemini": ("thinkingConfig", {"thinkingLevel": "LOW"}),
+    # OpenRouter takes one knob for every model it carries and translates it
+    # into whatever the maker underneath actually wants.
+    "openrouter": ("reasoning", {"effort": "low"}),
 }
 
 #: Prepended to every system prompt.  The app's whole doctrine is that its
@@ -95,6 +112,10 @@ Absolute rules:
   scouts and is unverified.
 - Be brief and plain. No preamble, no encouragement, no advice about scouting."""
 
+#: OpenRouter's catalogue. Public and unauthenticated, so it can say whether a
+#: model id exists but never whether a key is good.
+OPENROUTER_MODELS = "https://openrouter.ai/api/v1/models"
+
 OUT_OF_ROOM = "the answer ran out of room - try again"
 DECLINED = "the model declined to answer that"
 UNREACHABLE = "the model could not be reached"
@@ -110,6 +131,12 @@ def provider_for(model_id):
     m = (model_id or "").strip().lower()
     if m in BY_ID:
         return BY_ID[m][1]
+    # A slash is what an OpenRouter id has and no maker's own id does: they
+    # name the maker first, `anthropic/claude-opus-5`.  Checked before the
+    # prefixes below, so a model routed through OpenRouter is never mistaken
+    # for the same model bought direct - different endpoint, different key.
+    if "/" in m:
+        return "openrouter"
     if m.startswith("claude"):
         return "anthropic"
     if m.startswith("gemini"):
@@ -216,6 +243,21 @@ class Client:
                     {"Authorization": "Bearer " + self.key,
                      "content-type": "application/json"}, payload)
 
+        if self.provider == "openrouter":
+            # OpenAI's shape, deliberately - that is what OpenRouter serves -
+            # but `max_tokens` rather than `max_completion_tokens`, which is
+            # the name it documents for every model it fronts.
+            payload = {"model": self.model, "max_tokens": max_tokens,
+                       "messages": [{"role": "system", "content": system}] + msg}
+            if effort:
+                payload[effort[0]] = effort[1]
+            return ("https://openrouter.ai/api/v1/chat/completions",
+                    {"Authorization": "Bearer " + self.key,
+                     # What OpenRouter shows beside the spend on their own
+                     # dashboard. It names the app, never the team or the event.
+                     "X-Title": "FRC Scouting Hub",
+                     "content-type": "application/json"}, payload)
+
         payload = {"systemInstruction": {"parts": [{"text": system}]},
                    "contents": [{"role": "user", "parts": [{"text": user}]}],
                    "generationConfig": {"maxOutputTokens": max_tokens}}
@@ -229,18 +271,24 @@ class Client:
     def verify(self):
         """Ask the vendor whether this key works, without spending anything.
 
-        All three list their models on a GET that needs the same key as a
-        completion and costs nothing, so the TEST KEYS button can answer for
-        real rather than by guessing at the shape of the string.  The model is
-        checked against that list too: a key can be perfectly good while the
-        model beside it is one this account cannot reach, and those two failures
-        are indistinguishable from the panel that just says "unreachable".
+        The three makers list their models on a GET that needs the same key as
+        a completion and costs nothing, and OpenRouter has a route that answers
+        for the key alone, so the TEST KEYS button can answer for real rather
+        than by guessing at the shape of the string.  The model is checked as
+        well: a key can be perfectly good while the model beside it is one this
+        account cannot reach, or one nobody carries under that id, and all of
+        those failures are indistinguishable from the panel that just says
+        "unreachable".
         """
-        if self.provider == OFF or not self.model:
+        if not self.model:
             return sources.verdict("unset", "no model chosen")
+        # A typed id that routes nowhere used to land in the line above and
+        # read as "no model chosen", which is the one thing it is not.
         if self.provider not in PROVIDERS:
             return sources.verdict("bad", f"no idea which company makes `{self.model}` - "
-                                          "pick a model from the list instead")
+                                          "pick a model from the list, or put its maker in "
+                                          "front of it (`meta-llama/llama-4-scout`) to go "
+                                          "through OpenRouter")
         if not self.key:
             return sources.verdict("unset", "a model is chosen but no key is saved")
         url, headers = self._models_request()
@@ -248,29 +296,51 @@ class Client:
         if body is None:
             return sources._rejection(status, PROVIDERS[self.provider])
         ids = self._model_ids(body)
+        if self.provider == "openrouter" and not ids:
+            # /key proved the key and says nothing about models; the catalogue
+            # lists the models and needs no key, which is exactly why it cannot
+            # be the call the key is tested against. Both are free.
+            listing, _ = sources._request(OPENROUTER_MODELS, timeout=15)
+            ids = self._model_ids(listing)
         if ids and not any(self.model == i or i.startswith(self.model) for i in ids):
+            # OpenRouter's catalogue is the same for everybody, so a miss there
+            # is a typo in the id and not an account that cannot reach it.
+            router = self.provider == "openrouter"
+            miss = "does not carry a model called" if router else "does not list"
+            scope = "" if router else " for this account"
             return sources.verdict(
-                "warn", f"the key works, but {PROVIDERS[self.provider]} does not list "
-                        f"`{self.model}` for this account - check the model name")
+                "warn", f"the key works, but {PROVIDERS[self.provider]} {miss} "
+                        f"`{self.model}`{scope} - check the model name")
         return sources.verdict("ok", f"key accepted for {self.label or self.model}")
 
     def _models_request(self):
-        """The free "what models do I have" route for each provider."""
+        """The free route that proves the key, per provider.
+
+        For the three makers that is their model list; for OpenRouter it is
+        /key, because their model list is served to anybody who asks and would
+        come back a cheerful 200 on a key that was revoked last week.
+        """
         if self.provider == "anthropic":
             return ("https://api.anthropic.com/v1/models",
                     {"x-api-key": self.key, "anthropic-version": "2023-06-01"})
         if self.provider == "openai":
             return "https://api.openai.com/v1/models", {"Authorization": "Bearer " + self.key}
+        if self.provider == "openrouter":
+            # Not the model list: OpenRouter serves that to anyone, so a
+            # revoked key would come back "ok". This route is the one that
+            # answers for the key itself, and it is free too.
+            return ("https://openrouter.ai/api/v1/key",
+                    {"Authorization": "Bearer " + self.key})
         return ("https://generativelanguage.googleapis.com/v1beta/models",
                 {"x-goog-api-key": self.key})
 
-    @staticmethod
-    def _model_ids(body):
-        """Model ids out of any of the three shapes, or [] if it is a fourth.
+    def _model_ids(self, body):
+        """Model ids out of any of the shapes above, or [] if it is another.
 
         An empty list means "we could not tell", which reads downstream as no
         complaint about the model - the key was accepted and that is the thing
-        being tested here.
+        being tested here.  OpenRouter's /key answers with an object rather
+        than a list of models, so it lands here as exactly that.
         """
         if not isinstance(body, dict):
             return []
@@ -278,9 +348,11 @@ class Client:
         out = []
         for r in rows if isinstance(rows, list) else []:
             if isinstance(r, dict):
-                # Gemini answers "models/gemini-3.7-flash"; the other two do not.
                 name = r.get("id") or r.get("name") or ""
-                out.append(name.rsplit("/", 1)[-1])
+                # Gemini answers "models/gemini-3.7-flash" and wants the tail.
+                # An OpenRouter id is `vendor/model` all the way through, so
+                # cutting at the slash there would compare half a name.
+                out.append(name.rsplit("/", 1)[-1] if self.provider == "gemini" else name)
         return [o for o in out if o]
 
     def _text(self, body):
@@ -292,7 +364,9 @@ class Client:
                 return self._finish("\n".join(p for p in parts if p),
                                     out_of_room=stop == "max_tokens",
                                     declined=stop == "refusal")
-            if self.provider == "openai":
+            # OpenRouter answers in OpenAI's shape and normalises the finish
+            # reason into OpenAI's words, whichever maker actually replied.
+            if self.provider in ("openai", "openrouter"):
                 choice = (body.get("choices") or [{}])[0]
                 txt = (choice.get("message") or {}).get("content") or ""
                 return self._finish(txt, out_of_room=choice.get("finish_reason") == "length",

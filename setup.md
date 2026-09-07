@@ -63,7 +63,7 @@ Blue Alliance), **EVENT LEVEL**, and **OUR TEAM** (`6059`).
 | THE BLUE ALLIANCE | optional | free | [thebluealliance.com/account](https://www.thebluealliance.com/account) |
 | FRC EVENTS USERNAME + TOKEN | optional | free | [frc-events.firstinspires.org](https://frc-events.firstinspires.org/services/API) |
 | LOVAT API KEY | optional | free | [lovat.app](https://lovat.app) — start a week early |
-| AI MODEL + AI KEY | optional | cents per answer | Anthropic, Google or OpenAI |
+| AI MODEL + AI KEY | optional | cents per answer | Anthropic, Google, OpenAI or OpenRouter |
 | Statbotics | — | free | nothing to do, no key exists |
 
 Do all of this **at home**. A key that turns out to be wrong is not a thing you can replace on
@@ -123,9 +123,10 @@ Everything Lovat sends stays in its own column and its own colour. It never chan
 numbers — the solver and the picklist do not read it.
 
 **AI — optional, off until you pick a model.** Pick from the one **AI MODEL** dropdown (Claude,
-then Gemini, then OpenAI, price beside each name) and paste that company's key underneath.
-Picking the model picks the company, so there is nothing to match up — and a key from the wrong
-company is refused rather than failing silently all weekend. It starts on **Claude Opus 5**.
+then Gemini, then OpenAI, then OpenRouter, price beside each name) and paste that company's key
+underneath. Picking the model picks who it goes to, so there is nothing to match up — and a key
+from the wrong one is refused rather than failing silently all weekend. It starts on
+**Claude Opus 5**.
 
 - **Claude** — [console.anthropic.com](https://console.anthropic.com) → **API keys** →
   **Create key**. Starts `sk-ant-`. Needs a little credit on the account.
@@ -133,6 +134,11 @@ company is refused rather than failing silently all weekend. It starts on **Clau
   **Create API key**. Starts `AIza`.
 - **OpenAI** — [platform.openai.com/api-keys](https://platform.openai.com/api-keys) →
   **Create new secret key**. Starts `sk-proj-`. Needs credit on the account.
+- **OpenRouter** — [openrouter.ai/keys](https://openrouter.ai/keys) → **Create key**. Starts
+  `sk-or-`. One key and one bill for all of the above and a few hundred more; buy credit on the
+  account first. Its model ids name the maker in front — `anthropic/claude-opus-5` — and that
+  slash is what sends it to OpenRouter rather than to Anthropic. Anything not in the dropdown
+  goes in **other — type a model id**.
 
 An answer costs between a fraction of a cent and a few cents, and only ever happens when
 somebody presses a button. Leave the model on *none* and none of it appears.

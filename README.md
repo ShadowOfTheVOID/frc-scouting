@@ -117,7 +117,7 @@ runs without them, just with less live data.
 | **The Blue Alliance** | official match results, per-robot climb | [thebluealliance.com/account](https://www.thebluealliance.com/account) |
 | **FRC Events** | the official result a few minutes before TBA posts it | [frc-events.firstinspires.org](https://frc-events.firstinspires.org/services/API) |
 | **Lovat** | what other teams' scouts recorded about the same robots | [lovat.app](https://lovat.app) — see below |
-| **AI model** | summaries of your scout notes, and a read of the next match | Claude, Gemini or OpenAI — see below |
+| **AI model** | summaries of your scout notes, and a read of the next match | Claude, Gemini, OpenAI or OpenRouter — see below |
 | Statbotics | EPA next to your own numbers | nothing to do — no key needed |
 
 The fuel numbers always come from The Blue Alliance, whichever other keys you set. FRC Events
@@ -129,8 +129,9 @@ page are worth knowing before the Saturday:
 - It takes the wrapping off a paste for you. The header name, the quotes, a line break from an
   email — all of it comes off, and the box shows you what will actually be saved. A key that
   belongs in one of the other boxes is refused and told where to go instead, and so is an AI key
-  from a different company than the model above it. Nothing is saved at all when a box is
-  refused, so fixing that one box and pressing save again is enough.
+  from a different company than the model above it — including an OpenRouter key under a model
+  that goes straight to its maker, which reads identically and is not the same thing. Nothing is
+  saved at all when a box is refused, so fixing that one box and pressing save again is enough.
 - **TEST KEYS asks each vendor whether the key works.** `SET` beside a box only ever meant that
   something is stored there. This is what tells you the difference between a key that is wrong
   and a service that has nothing to say yet — and at a competition those look identical
@@ -206,13 +207,21 @@ on the CREW tab. It only ever reads the numbers already on this hub — it canno
 up, it is told to cite the match and the scout behind every claim, and it never changes a
 number or the picklist order. If you leave it on *none*, none of it appears.
 
-Pick from one dropdown, grouped Claude, then Gemini, then OpenAI, with the price beside each
-name. Picking the model picks the company, so the key you paste underneath is just that
-company's key — there is nothing to match up. It starts on **Claude Opus 5**, so if that suits
-you, pasting a key is the whole job. Any of them will do this job; the list spans a
-50× price range and the cheap end is genuinely fine for summarising scout notes. An answer
-costs somewhere between a fraction of a cent and a few cents depending on which you pick, and
-only ever happens when somebody presses a button.
+Pick from one dropdown, grouped Claude, then Gemini, then OpenAI, then **OpenRouter**, with the
+price beside each name. Picking the model picks who it is sent to, so the key you paste
+underneath is just that one's key — there is nothing to match up. It starts on **Claude Opus
+5**, so if that suits you, pasting a key is the whole job. Any of them will do this job; the
+list spans a 50× price range and the cheap end is genuinely fine for summarising scout notes.
+An answer costs somewhere between a fraction of a cent and a few cents depending on which you
+pick, and only ever happens when somebody presses a button.
+
+**OpenRouter** is the fourth group and is not a model-maker: it is one key and one bill in front
+of everybody else's models, which for a team that would rather not open three billing accounts
+in February is the point of it. Its model ids name the maker first —
+`anthropic/claude-opus-5` — and that slash is how the hub knows to send it there. The dropdown
+lists three of them; **other — type a model id** takes any of the hundreds OpenRouter carries,
+including the open-weight ones nobody else sells. The prices are the makers' own, and
+OpenRouter takes its cut when you buy the credit rather than per answer.
 
 Also set the **event key** (like `2026casf` — the code on frc.events or The Blue Alliance) and
 **our team** (6059). Click **SAVE & REFRESH**.
