@@ -23,6 +23,7 @@ sys.path.insert(0, _HERE)
 import analytics  # noqa: E402
 import envfile  # noqa: E402
 import hub  # noqa: E402
+import offsite  # noqa: E402
 from store import Store  # noqa: E402
 
 EK = "2026test"
@@ -1367,6 +1368,127 @@ def test_legacy_keys_migrate(L):
     return ok
 
 
+def test_collection_path_is_intact(L):
+    """What a scout logs must arrive unchanged, and be readable everywhere.
+
+    The battery work touched the paths around this - when a save is flushed,
+    how often the phone polls, when the hub bothers to rebuild - so this pins
+    the thing none of that may alter: the observation itself. Every field a
+    scout can produce goes in, and has to come back identical through the store,
+    the raw endpoint, the export, and the analytics the picklist reads.
+    """
+    ok = True
+    now = time.time()
+    mk = f"{EK}_qm1"
+    # Deliberately awkward: sub-second interval edges, a hold that crosses a
+    # window boundary, a zero preload (which is not the same as unanswered),
+    # and every yes/no.
+    payload = {
+        "intervals": [{"start": 12.34, "end": 19.87, "phase": "auto", "intensity": "dumping"},
+                      {"start": 41.02, "end": 58.44, "phase": "shift1", "intensity": "trickle"}],
+        "feedIntervals": [{"start": 61.5, "end": 66.25}],
+        "defenseIntervals": [{"start": 70.0, "end": 88.75}],
+        "preload": 0, "autoTower": "Level1", "endgameTower": "Level3",
+        "driverRating": 5, "defenseRating": 3,
+        "died": False, "tipped": True, "noShow": False, "fouls": True,
+        "note": "crossed a window edge mid-hold",
+        "startPosition": "left", "autoFailed": False, "defenseTarget": 201,
+        "clockShared": True, "clockBy": "AK",
+    }
+    rec = {"eventKey": EK, "matchKey": mk, "team": 101, "scoutId": "PATH",
+           "deviceId": "path-test", "alliance": "red", "station": 1,
+           "updatedAt": now, "payload": payload}
+    code, r = L.req("/api/sync", {"scout": [rec]})
+    ok &= check("a record posts", code == 200 and r.get("applied"))
+
+    stored = [e for e in L.store.scout_entries(EK, mk) if e["scoutId"] == "PATH"]
+    ok &= check("it is stored exactly once", len(stored) == 1)
+    if stored:
+        got = stored[0]["payload"]
+        for k, v in payload.items():
+            ok &= check(f"payload.{k} survives the round trip", got.get(k) == v,
+                        "" if got.get(k) == v else f"sent {v!r}, got {got.get(k)!r}")
+        ok &= check("the scout's own updatedAt is kept, not the server's",
+                    abs(stored[0]["updatedAt"] - now) < 1e-6)
+
+    # The same row through the endpoint the dashboard and the export read.
+    _, raw = L.req(f"/api/scout?event={EK}&match={mk}")
+    mine = [e for e in raw if e["scoutId"] == "PATH"]
+    ok &= check("/api/scout returns it with its intervals intact",
+                len(mine) == 1 and mine[0]["payload"]["intervals"] == payload["intervals"])
+    _, dump = L.req(f"/api/export?event={EK}")
+    ok &= check("the export carries it too",
+                any(e.get("scoutId") == "PATH" for e in (dump.get("scout") or [])))
+
+    # And a newer edit still wins, which is the rule the whole queue rests on.
+    L.req("/api/sync", {"scout": [{**rec, "updatedAt": now + 5,
+                                   "payload": {**payload, "note": "edited"}}]})
+    after = [e for e in L.store.scout_entries(EK, mk) if e["scoutId"] == "PATH"]
+    ok &= check("a later edit replaces it rather than duplicating",
+                len(after) == 1 and after[0]["payload"]["note"] == "edited")
+    L.req("/api/sync", {"scout": [{**rec, "updatedAt": now - 5,
+                                   "payload": {**payload, "note": "stale"}}]})
+    after = [e for e in L.store.scout_entries(EK, mk) if e["scoutId"] == "PATH"]
+    ok &= check("and an older one is refused", after[0]["payload"]["note"] == "edited")
+
+    # The memoized analytics must see it - this is the path the ETag work
+    # rewrote, so it is the one worth proving reaches the picklist.
+    summary = analytics.event_summary(L.store, EK)
+    ok &= check("the memoized analytics include the new observation",
+                (summary["teams"].get(101) or {}).get("matchesScouted", 0) > 0)
+    return ok
+
+
+def test_scope_lists_are_complete(L):
+    """Every kv row a handler reads must be named in its scope list.
+
+    This is a check and not a comment because the failure is silent: a scope
+    left out means the endpoint answers 304 over data that really did change,
+    and the strategy team reads a stale number with nothing on screen to say so.
+    Anyone adding a `store.get` to one of these handlers should see this fail.
+    """
+    ok = True
+    reads = []
+    real_get, real_mutate = Store.get, Store.mutate
+
+    def spy_get(self, key, default=None):
+        reads.append(Store.kv_scope(key)); return real_get(self, key, default)
+
+    def spy_mutate(self, key, fn, default=None):
+        reads.append(Store.kv_scope(key)); return real_mutate(self, key, fn, default)
+
+    h, st = L.hub, L.store
+    cases = [
+        ("STATE_SCOPES", hub.STATE_SCOPES,
+         {"events", "teams", "matches", "flags", "pit_entries"}, lambda: (
+             st.event(EK), st.teams(EK), st.matches(EK), st.get("nexusLive"),
+             h.nexus_data("pits", EK, {}), h.nexus_data("pitMap", EK),
+             h.nexus_data("inspection", EK, {}), h.nexus_data("alliances", EK, []),
+             st.flags(EK), h.seats(), st.get("matchClocks"), st.get("clockFixes"),
+             st.pit_entries(EK), h.event_data("rankings", EK, {}),
+             h.event_data("epa", EK, {}), h.event_data("earlyScores", EK, {}))),
+        ("ANALYTICS_SCOPES", hub.ANALYTICS_SCOPES,
+         {"matches", "teams", "scout_entries", "solved"},
+         lambda: analytics._event_summary(st, EK, include_scouts=True)),
+        ("CREW_SCOPES", hub.CREW_SCOPES, {"scout_entries"}, lambda: h.crew()),
+        ("SEATLOG_SCOPES", hub.SEATLOG_SCOPES, set(), lambda: h.seat_history()),
+        ("BUNDLE_SCOPES", offsite.BUNDLE_SCOPES,
+         {"events", "teams", "matches", "flags", "scout_entries", "pit_entries",
+          "photos", "solved"}, lambda: offsite.build_bundle(h, EK)),
+    ]
+    try:
+        Store.get, Store.mutate = spy_get, spy_mutate
+        for name, declared, tables, fn in cases:
+            reads.clear()
+            fn()
+            missing = ({r for r in reads if r.startswith("kv:")} | tables) - set(declared)
+            ok &= check(f"{name} names everything its handler reads",
+                        not missing, "" if not missing else f"missing {sorted(missing)}")
+    finally:
+        Store.get, Store.mutate = real_get, real_mutate
+    return ok
+
+
 def test_cheap_polling(L):
     """An unchanged poll must cost a bare 304, and a changed one must not.
 
@@ -1532,7 +1654,8 @@ def main():
                    test_concurrent_writes, test_score_report,
                    test_scout_data_is_lead_only,
                    test_cheap_polling, test_write_counters, test_static_revalidates,
-                   test_nexus_broadcasts_only_on_change):
+                   test_nexus_broadcasts_only_on_change, test_scope_lists_are_complete,
+                   test_collection_path_is_intact):
             print(f"\n{fn.__name__.replace('test_', '').replace('_', ' ')}")
             passed &= fn(L)
         print()

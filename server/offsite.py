@@ -92,7 +92,7 @@ BUNDLE_SCOPES = ("events", "teams", "matches", "flags", "scout_entries",
                  "kv:rankings", "kv:epa", "kv:lovat", "kv:alliances", "kv:pits",
                  "kv:pitMap", "kv:inspection", "kv:matchClocks", "kv:clockFixes",
                  "kv:multipliers", "kv:multipliersFittedFrom", "kv:picklist",
-                 "kv:ourTeam")
+                 "kv:ourTeam", "kv:hubId")
 
 
 def build_bundle(hub, event_key):

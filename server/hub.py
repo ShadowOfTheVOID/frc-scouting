@@ -59,10 +59,12 @@ PORT = 6059
 BOOT = uuid.uuid4().hex[:8]
 
 NEXUS_POLL_SECONDS = 20
-# The schedule and the live status are what arm the phones, so they stay on the
-# fast tick. The pit map, pit list, inspection status and alliance table change
-# a handful of times a day between them, and asking Nexus for all five every
-# twenty seconds was four wasted round trips out of every five.
+# The pit map, the pit list and inspection status change a handful of times a
+# day between them - a pit map is fixed once the venue is set up - so they do
+# not need the fast tick. The live status does, because `On field` is what arms
+# the phones. So does the alliance table: during selection the picklist crosses
+# teams off by itself as they are picked, and a board two minutes behind the
+# room is worse than no board at all.
 NEXUS_SLOW_POLL_SECONDS = 120
 TBA_POLL_SECONDS = 45
 # EPA is a season-long fit; it barely moves inside one event, so polling it
@@ -104,7 +106,10 @@ ANALYTICS_SCOPES = ("matches", "teams", "scout_entries", "solved",
 SEATLOG_SCOPES = ("kv:seatLog",)
 # `connected` on a crew row is read from the live SSE subscriber set, which no
 # store write touches - hence the subscriber generation mixed in at the call.
-CREW_SCOPES = ("kv:seats", "kv:devices", "scout_entries")
+# `kv:eventKey` because crew() reads it to find the entries to scan. Every tag
+# already carries the event key on its own, so this is belt and braces - but a
+# scope list that is complete on its own reading is worth more than one scope.
+CREW_SCOPES = ("kv:seats", "kv:devices", "kv:eventKey", "scout_entries")
 
 # How often an idle stream writes its comment frame. Every one of these wakes
 # six phones' radios for a byte, all day. There is no proxy between a phone and
@@ -518,43 +523,49 @@ class Hub:
         return True
 
     def poll_nexus(self):
-        """Live event status only - the call that arms the phones.
+        """Live event status and the alliance table - the two that must be fast.
 
-        Split from its four siblings below because this is the one that has to
-        be fast: `On field` is what opens the match screen on six phones, so a
-        slower tick here is directly a later arm. The other four are not like
-        that at all.
+        `On field` is what opens the match screen on six phones, so a slower
+        tick here is directly a later arm. Alliances are here for the other
+        end of the event: during selection the picklist crosses teams off as
+        they are picked, and that is a twenty-minute window where being two
+        minutes stale is being wrong. The three in poll_nexus_slow below are
+        genuinely not like that.
         """
         ek = self.event_key()
         nx = self.nexus()
         if not (ek and nx.ok):
             return
         self.apply_nexus_event(nx.event(ek))
+        self._nexus_side("alliances", nx.alliances, ek)
 
     def poll_nexus_slow(self):
-        """Pit map, pit list, inspection, alliances.
+        """Pit map, pit list, inspection status.
 
-        Between them these change a handful of times a day - a pit map is fixed
-        once the venue is set up, and alliance selection is twenty minutes of one
-        afternoon. Asking for all four every twenty seconds alongside the status
-        call was four wasted round trips in five, on a laptop running off its
-        battery next to the field.
+        A pit map is fixed once the venue is set up and the pit list barely
+        moves after Thursday. Asking for these alongside the status call every
+        twenty seconds was three wasted round trips in five, on a laptop running
+        off its battery next to the field.
         """
         ek = self.event_key()
         nx = self.nexus()
         if not (ek and nx.ok):
             return
         for name, fn in (("pits", nx.pits), ("pitMap", nx.pit_map),
-                         ("inspection", nx.inspection), ("alliances", nx.alliances)):
-            data = fn(ek)
-            if data is None:
-                # 404 (no pit map at this event) or a transient failure: keep what
-                # we have for THIS event rather than blanking the screen.
-                continue
-            key = f"{name}:{ek}"
-            if self.store.get(key) != data:
-                self.store.set(key, data)
-                self.broadcast(name, data)
+                         ("inspection", nx.inspection)):
+            self._nexus_side(name, fn, ek)
+
+    def _nexus_side(self, name, fn, ek):
+        """One of Nexus's per-event side payloads, stored and pushed on change."""
+        data = fn(ek)
+        if data is None:
+            # 404 (no pit map at this event) or a transient failure: keep what
+            # we have for THIS event rather than blanking the screen.
+            return
+        key = f"{name}:{ek}"
+        if self.store.get(key) != data:
+            self.store.set(key, data)
+            self.broadcast(name, data)
 
     def event_data(self, name, ek, default=None):
         """Per-event cached payload. Never falls back to another event's data."""

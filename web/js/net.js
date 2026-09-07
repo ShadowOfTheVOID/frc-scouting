@@ -310,6 +310,12 @@ export function connectStream() {
 // discovery rounds and a quarter of a million probe requests; it now costs
 // about sixty rounds and one sweep.
 const BACKOFF_MS = [8000, 15000, 30000, 60000];
+// The subnet sweep is expensive - up to 508 probes - but it is also the only
+// thing that finds a hub which has moved to another address. Rate-limited, NOT
+// once-per-episode: a sweep that happens to run while the laptop is still
+// booting finds nothing, and a phone that then never sweeps again is a phone
+// that never comes back on its own.
+const SWEEP_EVERY_MS = 3 * 60 * 1000;
 
 /** Start discovery, streaming, and a periodic flush. Safe to call once per page. */
 export async function start({ flushMs = 8000, rediscoverMs = 20000 } = {}) {
@@ -318,7 +324,7 @@ export async function start({ flushMs = 8000, rediscoverMs = 20000 } = {}) {
   await flush();
 
   let misses = 0;
-  let swept = false;        // one sweep per offline episode, not one per tick
+  let lastSweep = 0;
   let waitUntil = 0;
   let timer = null;
 
@@ -327,14 +333,17 @@ export async function start({ flushMs = 8000, rediscoverMs = 20000 } = {}) {
     if (!state.online || !state.base) {
       misses += 1;
       // Three quiet ticks in a row means the address we know is dead rather
-      // than busy - that is when it is worth sweeping the subnet. Once: the
-      // hub does not move again while we are still looking for it.
-      const found = await discover({ sweep: misses >= 3 && !swept });
-      if (misses >= 3) swept = true;
-      if (found) { misses = 0; swept = false; waitUntil = 0; }
+      // than busy - that is when a sweep is worth its cost. It used to run on
+      // every tick from then on; now it runs at most once every few minutes,
+      // but it does keep running for as long as the hub is missing.
+      const due = Date.now() - lastSweep > SWEEP_EVERY_MS;
+      const sweep = misses >= 3 && due;
+      if (sweep) lastSweep = Date.now();
+      const found = await discover({ sweep });
+      if (found) { misses = 0; lastSweep = 0; waitUntil = 0; }
       else waitUntil = Date.now() + BACKOFF_MS[Math.min(misses - 1, BACKOFF_MS.length - 1)];
     } else {
-      misses = 0; swept = false; waitUntil = 0;
+      misses = 0; lastSweep = 0; waitUntil = 0;
     }
     connectStream();   // self-guards; re-points itself if the hub has moved
     await flush();
@@ -363,9 +372,9 @@ export async function start({ flushMs = 8000, rediscoverMs = 20000 } = {}) {
   });
 
   window.addEventListener('online', () => {
-    // A genuinely new episode: the radio came back, so the hub is worth
-    // sweeping for again even if we already swept while it was down.
-    swept = false; misses = 0; waitUntil = 0;
+    // The radio came back, so the hub is worth looking for properly right now
+    // whatever the rate limit says.
+    misses = 0; lastSweep = Date.now(); waitUntil = 0;
     discover({ sweep: true }).then(flush);
   });
   document.addEventListener('visibilitychange', () => {
