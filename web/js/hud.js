@@ -3,6 +3,7 @@
 
 import * as db from './db.js';
 import * as net from './net.js';
+import { every, idleWatch } from './timers.js';
 import * as fs from './fullscreen.js';
 import { loadRules, phases, phaseAt, hubActive, matchSeconds, intensityBuckets, rules as gameRules } from './game2026.js';
 
@@ -108,10 +109,29 @@ const fmt = (t) => {
 const rateOf = (id) => (intensityBuckets().find((b) => b.id === id) || { prior: 3.5 }).prior;
 function buzz(ms = 12) { if (navigator.vibrate) { try { navigator.vibrate(ms); } catch {} } }
 
+/**
+ * Standby goes dark when nobody is touching the phone.
+ *
+ * The screen stays awake - a scout has to see the match arm itself, and once a
+ * phone sleeps the browser suspends the page and it can neither show that nor
+ * buzz about it. But there is no reason for it to be *bright* through a
+ * six-minute gap between matches. The `.idle` class in hud.css drops the
+ * background to black and takes down the scanlines, the two full-screen radial
+ * gradients and every glow, which on the OLED panels these phones have is most
+ * of the draw. Any touch brings it straight back, as does the match arming and
+ * the countdown coming inside a minute.
+ */
+const standbyIdle = idleWatch(60000, {
+  onIdle: () => { if (screen === 'standby') $('#s-standby').classList.add('idle'); },
+  onWake: () => $('#s-standby').classList.remove('idle'),
+});
+
 function show(name) {
   screen = name;
   for (const s of SCREENS) $(`#s-${s}`).classList.toggle('hide', s !== name);
   if (name === 'live' || name === 'standby') acquireWake(); else releaseWake();
+  // Arriving anywhere is activity: never land on an already-dark screen.
+  standbyIdle.wake();
 }
 
 // Keep-awake for the whole match; released at the buzzer.
@@ -187,13 +207,23 @@ function newEntry(match, team) {
 }
 
 let saveTimer = null;
-function autosave() {
+/**
+ * Bank the entry in IndexedDB shortly after the scout stops fiddling.
+ *
+ * No `net.flush()` here any more. Every save already queues the row, and the
+ * flush tick in net.js picks it up within eight seconds; forcing a send on top
+ * of it meant each of the thirty-odd shooting runs in a match cost two
+ * IndexedDB transactions, four more reads around them and its own HTTP POST.
+ * The three places where the send really is the point - DONE after the buzzer,
+ * HAND OVER, and claiming a chair - still flush explicitly.
+ */
+function autosave(ms = 400) {
   if (PRACTICE) return;              // nothing a trainee does is ever stored
   clearTimeout(saveTimer);
   saveTimer = setTimeout(async () => {
     if (!entry || !entry.team) return;
-    try { await db.saveScout(entry); net.flush(); } catch (e) { console.error(e); }
-  }, 400);
+    try { await db.saveScout(entry); } catch (e) { console.error(e); }
+  }, ms);
 }
 
 const ballsSoFar = () =>
@@ -472,9 +502,19 @@ function renderRunbar() {
   const el = $('#lvRunbar');
   const total = matchSeconds();
   const ivs = entry ? entry.payload.intervals : [];
-  el.innerHTML = ivs.map((iv) =>
-    `<span class="r ${iv.intensity}" style="left:${(iv.start / total) * 100}%;width:${Math.max(0.8, ((iv.end - iv.start) / total) * 100)}%"></span>`
-  ).join('') + `<span class="cur" style="left:${Math.min(100, (clock.elapsed() / total) * 100)}%"></span>`;
+  // The runs only change when one is logged or undone; the cursor moves every
+  // tick. Rebuilding the whole bar for the cursor threw away and reparsed a
+  // span per logged run five times a second for the length of a match.
+  const last = ivs[ivs.length - 1];
+  const sig = `${ivs.length}:${last ? last.end : ''}`;
+  if (el.dataset.sig !== sig) {
+    el.dataset.sig = sig;
+    el.innerHTML = ivs.map((iv) =>
+      `<span class="r ${iv.intensity}" style="left:${(iv.start / total) * 100}%;width:${Math.max(0.8, ((iv.end - iv.start) / total) * 100)}%"></span>`
+    ).join('') + '<span class="cur"></span>';
+  }
+  const cur = el.lastElementChild;
+  if (cur) cur.style.left = `${Math.min(100, (clock.elapsed() / total) * 100)}%`;
 }
 
 function renderLive() {
@@ -559,12 +599,18 @@ function renderAfter() {
 /**
  * A row of one-tap choices bound to a payload field.
  *
- * Rebuilt on every render rather than diffed - a handful of nodes, and it keeps
- * the selected state honest when the entry is swapped out underneath it.
+ * Rebuilt when the options or the selection change, and skipped when they have
+ * not. The rebuild is what keeps the selected state honest when the entry is
+ * swapped out underneath it; doing it unconditionally is what had the standby
+ * screen destroying and recreating a dozen nodes and their click handlers five
+ * times a second, for hours, between matches.
  */
 function buildPicks(sel, options, key, { toggle = true, onSet } = {}) {
   const el = $(sel);
   if (!el) return;
+  const sig = options.map((o) => o.id).join('|') + '#' + String(entry ? entry.payload[key] : null);
+  if (el.dataset.sig === sig) return;
+  el.dataset.sig = sig;
   el.innerHTML = '';
   for (const opt of options) {
     const d = document.createElement('div');
@@ -605,7 +651,7 @@ function buildSteps(sel, labels, key) {
   [...el.children].forEach((d, i) => d.classList.toggle('on', entry.payload[key] === i + 1));
 }
 
-$('#afNote').oninput = () => { entry.payload.note = $('#afNote').value; autosave(); };
+$('#afNote').oninput = () => { entry.payload.note = $('#afNote').value; autosave(1200); };
 $('#btnSend').onclick = async () => {
   if (!entry || !entry.team) return;
   entry.payload.note = $('#afNote').value;
@@ -639,6 +685,29 @@ function shortCode(label) {
   return m ? `${m[1].toUpperCase()}${m[2]}` : label.slice(0, 4);
 }
 
+/** Seconds until this seat's next match takes the field, or null if unknown. */
+function untilNextMatch() {
+  const m = currentMatch;
+  const eta = m && m.times && (m.times.estimatedOnFieldTime || m.times.estimatedQueueTime);
+  return eta ? Math.max(0, (eta - Date.now()) / 1000) : null;
+}
+
+/**
+ * The parts of standby that move without anybody touching anything.
+ *
+ * Everything else on the screen changes only when something happens - a match
+ * is logged, the hub says the schedule moved, the scout taps a chip - so it is
+ * rendered from those events instead of from a timer. This is what is left, and
+ * it is one text node a second.
+ */
+function tickStandby() {
+  const secs = untilNextMatch();
+  $('#sbCountdown').textContent = secs == null ? '--:--' : fmt(secs);
+  // Bright again before the robot is on the field, so nobody comes back to a
+  // dark phone at the wrong moment.
+  if (secs != null && secs < 60) standbyIdle.wake();
+}
+
 function renderStandby() {
   $('#sbSeat').textContent = `${seat.alliance.toUpperCase()} ${seat.station}`;
   $('#sbMeta').textContent = `${seat.scout} · ${history.length} ${history.length === 1 ? 'MATCH' : 'MATCHES'} IN`;
@@ -657,11 +726,7 @@ function renderStandby() {
     ? `open the match screen for ${t} now`
     : 'open the match screen — it will ask which team';
 
-  const eta = m && m.times && (m.times.estimatedOnFieldTime || m.times.estimatedQueueTime);
-  if (eta) {
-    const secs = Math.max(0, (eta - Date.now()) / 1000);
-    $('#sbCountdown').textContent = fmt(secs);
-  } else $('#sbCountdown').textContent = '--:--';
+  tickStandby();
 
   buildPicks('#sbStart', START_ZONES, 'startPosition', { onSet: renderStandby });
   buildPicks('#sbPreload',
@@ -967,14 +1032,27 @@ async function main() {
     window.__teams = s.teams || [];
     db.cacheSet('state', s);
     if (!currentMatch) loadMatch(nextScoutableMatch());
+    // The schedule and the match statuses live on this screen, and the timer
+    // no longer redraws it on the off-chance.
+    if (screen === 'standby') renderStandby();
   };
-  try { applyState(await net.api('/api/state')); }
-  catch { applyState(await db.cacheGet('state')); }
+  // Conditional: the hub answers 304 when nothing has moved, and then there is
+  // no body to parse, no ~60KB blob to write back into IndexedDB, and no
+  // re-render. That matters here because the hub broadcasts on a poll and every
+  // phone in the building answers at once.
+  let heardFromHub = false;
+  const pullState = () => net.apiCached('/api/state')
+    .then(({ changed, value }) => { heardFromHub = true; if (changed) applyState(value); })
+    .catch(() => {});
+  await pullState();
+  // Only when the hub could not be reached at all. An event the hub says is
+  // empty is an answer; yesterday's schedule out of IndexedDB is not.
+  if (!heardFromHub) applyState(await db.cacheGet('state'));
 
   await refreshHistory();
 
-  net.on('nexus', () => net.api('/api/state').then(applyState).catch(() => {}));
-  net.on('results', () => net.api('/api/state').then(applyState).catch(() => {}));
+  net.on('nexus', pullState);
+  net.on('results', pullState);
   net.on('solved', ({ matchKey }) => markReconciled(matchKey));
 
   // another scout started this match: adopt their clock and jump into the HUD
@@ -1021,17 +1099,33 @@ async function main() {
   booted = true;
   verifySeat();
 
-  setInterval(() => {
-    if (screen === 'live') {
-      renderLive();
-      if (clock.running && clock.elapsed() >= matchSeconds()) {
-        clock.pause(); buzz(40); releaseWake();
-        $('#afNote').value = entry.payload.note || '';
-        show('after'); renderAfter();
-      }
-    } else if (screen === 'standby') renderStandby();
-    else if (screen === 'bumped') paintBumpWait();
-  }, 200);
+  // The live screen keeps its 200ms tick. It is the match clock and the buzzer,
+  // it runs about two and a half minutes at a time, and precision there is worth
+  // far more than the saving. `every` pauses it while the page is hidden and
+  // runs it once on the way back, so the buzzer check catches up; the clock
+  // itself is computed from timestamps, so pausing the render never moves it.
+  every(200, () => {
+    if (screen !== 'live') return;
+    renderLive();
+    if (clock.running && clock.elapsed() >= matchSeconds()) {
+      clock.pause(); buzz(40); releaseWake();
+      $('#afNote').value = entry.payload.note || '';
+      show('after'); renderAfter();
+    }
+  });
+
+  // Standby and the bump screen are where a phone spends the day, and neither
+  // has anything on it that changes five times a second. This is the countdown,
+  // once a second - and not even that once the screen has gone dark with the
+  // next match still minutes out. Everything else on those screens is rendered
+  // from the event that changed it.
+  every(1000, () => {
+    if (screen === 'standby') {
+      const secs = untilNextMatch();
+      if (standbyIdle.idle && secs != null && secs > 60) return;
+      tickStandby();
+    } else if (screen === 'bumped') paintBumpWait();
+  });
 
   window.addEventListener('beforeunload', (e) => {
     if (entry && entry.payload.intervals.length && !net.state.online) { e.preventDefault(); e.returnValue = ''; }

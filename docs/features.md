@@ -91,6 +91,12 @@ Also on this screen:
 
 The screen keeps itself awake and jumps into the HUD by itself when the match takes the field.
 
+After a minute with nobody touching it the screen goes black, keeping the countdown, the robot
+and the seat readable in grey — it is still awake, so nothing about the auto-arm changes, it
+just stops lighting pixels for an empty room. A tap brings it back, and so does the match
+arming or the countdown coming inside a minute. On an OLED phone this is most of a day's
+battery; see [Battery](how-it-works.md#battery).
+
 ### LIVE MATCH
 
 The only screen that matters, and it has two controls.
@@ -826,4 +832,9 @@ rather than an error when no provider is set.
 
 The stream pushes `nexus`, `matchStatus`, `matchStart`, `results`, `earlyScores`, `scout`,
 `solved`, `seats`, `picklist`, `rankings`, `epa`, `lovat` and `calibration`, so a client can
-react instead of polling.
+react instead of polling. Each is a notification, not the data — the client re-fetches, and
+`nexus` only fires when Nexus actually said something new rather than on every poll.
+
+`/api/state`, `/api/analytics`, `/api/crew` and `/api/seatlog` support `If-None-Match` and
+answer `304` when nothing they read has been written since. `/api/config` deliberately does
+not: it carries `serverTime`, which is what every phone corrects its clock skew against.

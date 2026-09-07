@@ -8,6 +8,7 @@ import socket
 import struct
 import subprocess
 import threading
+import time
 
 MDNS_ADDR = "224.0.0.251"
 MDNS_PORT = 5353
@@ -83,8 +84,25 @@ def local_ipv4s():
     return sorted(set(usable), key=lambda ip: (score(ip), ip))
 
 
-def urls(port):
-    return [f"http://{ip}:{port}" for ip in local_ipv4s()]
+# Enumerating the interfaces forks ifconfig/ip/ipconfig with a four second
+# timeout. /api/diag calls this, and the dashboard used to fetch /api/diag every
+# thirty seconds, so the hub laptop was spawning a process a minute for a list
+# of addresses that changes when somebody moves the laptop to another network -
+# not twice a minute for eight hours.
+_URLS_TTL = 300.0
+_urls_cache = {}
+_urls_lock = threading.Lock()
+
+
+def urls(port, max_age=_URLS_TTL):
+    with _urls_lock:
+        hit = _urls_cache.get(port)
+        if hit and time.time() - hit[0] < max_age:
+            return list(hit[1])
+    out = [f"http://{ip}:{port}" for ip in local_ipv4s()]
+    with _urls_lock:
+        _urls_cache[port] = (time.time(), list(out))
+    return out
 
 
 def banner(port):

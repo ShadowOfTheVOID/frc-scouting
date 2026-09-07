@@ -147,31 +147,40 @@ async function load() {
 
 // ------------------------------------------------------------------ header
 
+// What the banner last said. `ago()` rounds to whole minutes, so for most of
+// any given minute this rewrites the identical string - and rewriting innerHTML
+// means parsing that markup again and rebuilding the nodes for it. This page is
+// read on phones, by people who leave it open.
+let lastBanner = '';
+
 function freshness() {
   const b = state.bundle || {};
   const at = b.capturedAt;
   const el = $('#freshness');
   const secs = at ? Math.max(0, nowServer() - at) : Infinity;
-  el.textContent = at ? ago(at) : 'NO DATA';
+  const label = at ? ago(at) : 'NO DATA';
+  if (el.textContent !== label) el.textContent = label;
   el.className = secs < 300 ? '' : secs < 3600 ? 'stale' : 'cold';
   $('#freshSub').textContent = 'FROM THE HUB';
 
   const banner = $('#banner');
   // Under five minutes the hub is plainly still pushing, and a banner that is
   // always on is a banner nobody reads. It still says this is a copy.
+  let html;
   if (secs < 300) {
     banner.className = 'banner';
-    banner.innerHTML = `<b>This is a mirror.</b> A copy the hub pushed ${esc(ago(at))} — `
+    html = `<b>This is a mirror.</b> A copy the hub pushed ${esc(ago(at))} — `
       + 'read-only, and it never sees a scout tap. Everything live happens on the hub.';
   } else if (secs < 3600) {
     banner.className = 'banner';
-    banner.innerHTML = `<b>Last update ${esc(ago(at))}.</b> The hub may have moved networks, `
+    html = `<b>Last update ${esc(ago(at))}.</b> The hub may have moved networks, `
       + 'or lost internet. Numbers below are that old.';
   } else {
     banner.className = 'banner cold';
-    banner.innerHTML = `<b>Stale — last update ${esc(ago(at))}.</b> Nothing here has been `
+    html = `<b>Stale — last update ${esc(ago(at))}.</b> Nothing here has been `
       + 'refreshed since. Treat every number as historical.';
   }
+  if (html !== lastBanner) { lastBanner = html; banner.innerHTML = html; }
 }
 
 // ------------------------------------------------------------------ render
@@ -512,9 +521,16 @@ async function refresh() {
   try { await boot(); } catch { freshness(); }
 }
 setInterval(() => { if (!document.hidden) refresh(); }, 60000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
-// The age on screen has to keep moving even when nothing new arrives.
-setInterval(() => { if (state.bundle) freshness(); }, 15000);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  freshness();          // the age is wrong the instant it comes back
+  refresh();
+});
+// The age on screen has to keep moving even when nothing new arrives - but not
+// while the page is in a pocket. The 60s pull above already checks this; this
+// one did not, so a tab left open kept rewriting the banner all afternoon.
+// Repainted on the way back so it is never showing a stale age on screen.
+setInterval(() => { if (state.bundle && !document.hidden) freshness(); }, 15000);
 
 try { state.token = localStorage.getItem(TOKEN_KEY); } catch { /* private mode */ }
 boot().catch(() => showLock());

@@ -16,9 +16,23 @@ as zero.
 """
 import math
 import statistics as st
+import threading
+import weakref
 
 import rules
 import solve
+
+# What event_summary reads.  Kept here, beside the reads themselves, and mirrored
+# by ANALYTICS_SCOPES in hub.py for the matching ETag.
+SCOPES = ("matches", "teams", "scout_entries", "solved",
+          "kv:rankings", "kv:epa", "kv:lovat", "kv:multipliers")
+
+# Per store, not global: a snapshot restore opens a second Store over the
+# restored file, and a fresh one starts every counter at zero - so a global
+# cache could hand it an answer computed from a different database that happens
+# to share a version string. Weak, so closing a store drops its cache with it.
+_caches = weakref.WeakKeyDictionary()
+_cache_lock = threading.Lock()
 
 
 def _mean(xs):
@@ -30,13 +44,39 @@ def _stdev(xs):
 
 
 def event_summary(store, event_key, include_scouts=False):
-    """Per-team aggregates.
+    """Per-team aggregates, memoized until something it reads is written.
 
     `include_scouts` gates the per-scout quality scores. They name individuals
     and grade them, and /api/analytics is readable by anything on the venue
     wifi, so the hub only fills that block in for the strategy lead - see
     Handler.do_GET. Everything else on this payload is about robots.
+
+    This walks every scouting row at the event and every match x alliance x
+    robot, re-running the phase split and the interval weighting, and it used to
+    do all of that again for every caller: two dashboards polling, both CSV
+    exports, the mirror push every sixty seconds, and - the one that hurt - the
+    AI panel, which the picklist fires on every keystroke in its search box.
+    The key is the store's write counters for exactly the scopes read below, so
+    a stale answer is not possible: any write to any of them changes the key.
     """
+    key = (event_key, include_scouts, store.version_for(*SCOPES))
+    with _cache_lock:
+        hit = _caches.setdefault(store, {}).get(key)
+    if hit is not None:
+        return hit
+    out = _event_summary(store, event_key, include_scouts)
+    with _cache_lock:
+        cache = _caches.setdefault(store, {})
+        # Four covers the lead and the room, at the current version and the one
+        # before it. Past that, every remaining entry is a version nobody can
+        # ask for again, so the whole thing goes.
+        if len(cache) > 4:
+            cache.clear()
+        cache[key] = out
+    return out
+
+
+def _event_summary(store, event_key, include_scouts=False):
     matches = store.matches(event_key)
     # Exact side-tables, both straight from an API. Absent is the normal case
     # (no key, or Statbotics down) and must read as "unknown", never as zero.

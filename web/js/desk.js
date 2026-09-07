@@ -5,6 +5,7 @@ import * as db from './db.js';
 import * as net from './net.js';
 import * as chart from './chart.js';
 import { loadRules, rpThresholds, rules as gameRules } from './game2026.js';
+import { every, coalesce } from './timers.js';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -328,10 +329,30 @@ function score(t) {
   const rel = 1 - Math.min(1, (o.diedRate + o.noShowRate) / 100);
   const stock = (o.stockpileRate || 0) / 100;
   const def = (o.defense || 0) / 5;
-  const maxFuel = Math.max(1, ...Object.values(ANALYTICS.teams).map((x) => x.estimated.avgFuel));
+  const maxFuel = maxFuelAcross(ANALYTICS);
   return W.climb * (climb * .6 + l3 * .4) + W.reliability * rel +
          W.stockpile * stock + W.fuel * (s.avgFuel / maxFuel) + W.defense * def;
 }
+/**
+ * The best average fuel at the event, for normalising one team against it.
+ *
+ * This used to be computed inside score(), which is called once per team - so
+ * ranking N teams built N copies of an N-element array and spread all N into
+ * Math.max, for one number that is the same every time. Quadratic, and the
+ * spread would eventually hit the argument limit outright on a big event.
+ */
+let maxFuelFor = null, maxFuelVal = 1;
+function maxFuelAcross(an) {
+  if (an === maxFuelFor) return maxFuelVal;
+  let m = 1;
+  for (const t of Object.values(an.teams)) {
+    const v = t.estimated.avgFuel;
+    if (v > m) m = v;
+  }
+  maxFuelFor = an; maxFuelVal = m;
+  return m;
+}
+
 function takenTeams() {
   const out = new Set();
   for (const a of (STATE && STATE.alliances) || []) for (const t of a || []) if (t) out.add(Number(t));
@@ -351,9 +372,24 @@ function computedRank() {
     .map((t) => ({ t, s: score(t) })).sort((a, b) => b.s - a.s)
     .map((r, i) => ({ ...r, was: i + 1 }));
 }
+
+// Scoring and sorting every team, from scratch, on every call - and it is
+// called at least twice per refresh, plus once per keystroke in the picklist
+// search and once per filter toggle. The answer only depends on the analytics
+// object, which board is showing, and that board's hand-ordering.
+let rankCache = null;
 function ranked() {
-  const base = computedRank();
   const order = activeOrder();
+  // The weights are mutated in place by the sliders on this very panel, so they
+  // have to be in the key - the object identity alone would never change.
+  const key = [PICK_MODE, Object.values(activeWeights()).join(','), order.join(',')].join('|');
+  if (rankCache && rankCache.an === ANALYTICS && rankCache.key === key) return rankCache.out;
+  const out = rankedUncached(order);
+  rankCache = { an: ANALYTICS, key, out };
+  return out;
+}
+function rankedUncached(order) {
+  const base = computedRank();
   if (!order.length) return base;
   const left = new Map(base.map((r) => [r.t.team, r]));   // still in score order
   const out = [];
@@ -445,7 +481,11 @@ function passesFilters(t, taken, ourZone) {
 function wireFilters() {
   const q = $('#pkSearch');
   if (!q) return;
-  q.oninput = () => { FILTERS.q = q.value; saveFilters(); renderPicklist(); };
+  // Debounced. renderPicklist re-scores and re-sorts every team and ends in a
+  // POST to /api/ai/picklist, and the hub rebuilds the whole event's analytics
+  // to answer that - all of it, per character typed into a search box.
+  const search = coalesce(() => { saveFilters(); renderPicklist(); }, 200);
+  q.oninput = () => { FILTERS.q = q.value; search(); };
   for (const [sel, key] of [['#pkClimb', 'climb'], ['#pkRate', 'rate'], ['#pkMinN', 'minMatches']]) {
     const el = $(sel);
     el.onchange = () => { FILTERS[key] = Number(el.value); saveFilters(); renderPicklist(); };
@@ -821,7 +861,12 @@ function renderScoutPanel() {
 let CREW = [];
 let SEATLOG = [];
 const CREW_COLS = '80px 1fr 110px 130px 120px';
-const ago = (s) => s == null ? '—' : s < 60 ? `${s}s ago` : s < 3600 ? `${Math.round(s / 60)}m ago` : `${Math.round(s / 3600)}h ago`;
+const ago = (s) => s == null ? '—' : s < 60 ? `${Math.round(s)}s ago` : s < 3600 ? `${Math.round(s / 60)}m ago` : `${Math.round(s / 3600)}h ago`;
+// The hub sends instants; the age is worked out here. It used to send the age
+// itself, which meant two identical polls a second apart were different bytes
+// and the endpoint could never answer "nothing has changed" - and the board
+// froze between polls instead of counting up.
+const secsSince = (at) => (at == null ? null : Math.max(0, net.serverNow() - at));
 
 function renderCrew() {
   const seated = CREW.filter((c) => c.scoutId);
@@ -839,8 +884,11 @@ function renderCrew() {
   for (const c of seated) {
     const who = `${String(c.scoutId).toUpperCase()} on ${stationLabel(c.seat)}`;
     if (!c.connected) problems.push(`${who} — app is not open on their phone`);
-    else if (c.lastSeenSec != null && c.lastSeenSec > 180) problems.push(`${who} — gone quiet ${ago(c.lastSeenSec)}, check their wifi`);
-    else if (c.lastMatchAgoSec != null && c.lastMatchAgoSec > 25 * 60) problems.push(`${who} — nothing logged in ${ago(c.lastMatchAgoSec)}`);
+    // 240s, not 180: an idle stream now writes its keepalive every 45s and the
+    // hub records "last heard" off that at most once a minute, so the quietest
+    // a perfectly healthy phone can look is about a minute and a half.
+    else if (secsSince(c.lastSeenAt) > 240) problems.push(`${who} — gone quiet ${ago(secsSince(c.lastSeenAt))}, check their wifi`);
+    else if (secsSince(c.lastMatchAt) > 25 * 60) problems.push(`${who} — nothing logged in ${ago(secsSince(c.lastMatchAt))}`);
   }
   $('#crewAlert').innerHTML = problems.length
     ? `<div class="callout" style="margin:0 0 4px"><div class="h">GO TALK TO SOMEONE</div>
@@ -861,8 +909,8 @@ function renderCrew() {
         ${c.scoutId ? `<button class="x" data-unseat="${c.seat}" data-device="${esc(c.deviceId || '')}" style="margin-left:8px">FREE</button>` : ''}</span>
       <span class="num" style="color:${ok ? 'var(--green-soft)' : 'var(--red-alert)'};font:800 10.5px Barlow,sans-serif;letter-spacing:.1em">
         ${c.scoutId ? (ok ? 'LIVE' : 'NOT SEEN') : '—'}</span>
-      <span class="num">${ago(c.lastSeenSec)}</span>
-      <span class="num">${c.lastMatch ? esc(shortCode(c.lastMatch)) + ' · ' + ago(c.lastMatchAgoSec) : '—'}</span>
+      <span class="num">${ago(secsSince(c.lastSeenAt))}</span>
+      <span class="num">${c.lastMatch ? esc(shortCode(c.lastMatch)) + ' · ' + ago(secsSince(c.lastMatchAt)) : '—'}</span>
     </div>`;
   }).join('');
 
@@ -1641,7 +1689,35 @@ function renderServer() {
 }
 
 // ══════════════════════════════════════════════════════════════ refresh
-function renderAll() {
+// One render function per tab. Tabs are switched with a class, so a hidden pane
+// is still in the document and was still being rebuilt: every refresh generated,
+// parsed and inserted the markup for all ten, and re-bound every handler on
+// them, when nine were display:none. Scatter plots with a circle per team,
+// full team tables, the log listing - all of it, for nobody.
+const TAB_RENDER = {
+  crew: () => renderCrew(),
+  live: () => renderLive(),
+  teams: () => renderTeams(),
+  graphs: () => renderGraphs(),
+  picklist: () => renderPicklist(),
+  health: () => renderHealth(),
+  seats: () => renderSeats(),
+  server: () => renderServer(),
+  match: () => renderMatchPreview(),
+  team: () => renderTeamDetail(),
+};
+let currentTab = 'crew';
+const dirtyTabs = new Set();
+
+/** Draw one tab now, whether or not it was marked dirty. */
+function renderTab(name) {
+  const fn = TAB_RENDER[name];
+  if (!fn) return;
+  dirtyTabs.delete(name);
+  try { fn(); } catch (e) { console.error(e); }
+}
+
+function renderHeader() {
   $('#evTitle').textContent = STATE && STATE.event && STATE.event.name
     ? `${STATE.event.name.toUpperCase()} · STRATEGY` : 'REBUILT · STRATEGY';
   const played = STATE ? (STATE.matches || []).filter((m) => m.breakdown).length : 0;
@@ -1650,21 +1726,56 @@ function renderAll() {
   $('#evSub').textContent = STATE
     ? `QUAL ${played} / ${total} · ${(STATE.teams || []).length} TEAMS${ago != null ? ` · SYNC ${ago}s` : ''}`
     : 'NO EVENT · 0 TEAMS';
-  renderLive(); renderTeams(); renderPicklist(); renderHealth();
-  renderMatchPreview(); renderTeamDetail(); renderGraphs();
-  renderSeats(); renderServer(); renderCrew();
 }
 
+function renderAll() {
+  renderHeader();
+  for (const name of Object.keys(TAB_RENDER)) {
+    if (name === currentTab) renderTab(name);
+    else dirtyTabs.add(name);   // drawn on the way in, from data already here
+  }
+}
+
+/**
+ * Pull whatever has changed, and redraw only if something did.
+ *
+ * Three things were wrong with doing this the obvious way. The six fetches were
+ * sequentially awaited, so the round trips added up instead of overlapping.
+ * Nothing was conditional, so ~165KB of identical JSON crossed the wire every
+ * time. And it ended in a blanket re-render whether or not a single byte had
+ * moved. At idle this ran on a 30s timer, a 7s timer and every one of twelve
+ * broadcast types - about twenty requests a minute to say nothing had happened.
+ */
 async function refresh() {
-  try { STATE = await net.api('/api/state'); db.cacheSet('state', STATE); }
-  catch { STATE = await db.cacheGet('state'); }
-  try { ANALYTICS = await net.api('/api/analytics'); db.cacheSet('analytics', ANALYTICS); }
-  catch { ANALYTICS = await db.cacheGet('analytics'); }
+  const pull = async (path, fallback) => {
+    try { return await net.apiCached(path); }
+    catch { return { changed: false, value: undefined, failed: true, fallback }; }
+  };
+  const [st, an, crew, seatlog, diag] = await Promise.all([
+    pull('/api/state'), pull('/api/analytics'), pull('/api/crew'), pull('/api/seatlog'),
+    // The one endpoint worth asking for only when it is on screen: building it
+    // forks ifconfig/ip/ipconfig on the hub laptop.
+    currentTab === 'server' ? pull('/api/diag') : Promise.resolve({ changed: false }),
+  ]);
+
+  let moved = false;
+  if (st.changed) { STATE = st.value; db.cacheSet('state', STATE); moved = true; }
+  else if (st.failed && !STATE) { STATE = await db.cacheGet('state'); moved = true; }
+  if (an.changed) { ANALYTICS = an.value; db.cacheSet('analytics', ANALYTICS); moved = true; }
+  else if (an.failed && !ANALYTICS) { ANALYTICS = await db.cacheGet('analytics'); moved = true; }
+  if (crew.changed) { CREW = crew.value; moved = true; }
+  if (seatlog.changed) { SEATLOG = seatlog.value; moved = true; }
+  if (diag.changed) { DIAG = diag.value; moved = true; }
+
+  // The header carries the sync age, which moves with the clock rather than
+  // with the data, so it is repainted either way. It is three text nodes.
+  renderHeader();
+  if (moved) renderAll();
+}
+
+/** Settings, which change only when somebody saves them or the solver refits. */
+async function refreshConfig() {
   try { CONFIG = await net.api('/api/config'); } catch {}
-  try { DIAG = await net.api('/api/diag'); } catch {}
-  try { CREW = await net.api('/api/crew'); } catch { CREW = CREW || []; }
-  try { SEATLOG = await net.api('/api/seatlog'); } catch { SEATLOG = SEATLOG || []; }
-  renderAll();
 }
 
 async function main() {
@@ -1677,7 +1788,15 @@ async function main() {
   const goTab = (name) => {
     for (const x of $$('#tabs button')) x.classList.toggle('on', x.dataset.tab === name);
     for (const t of TABS) { const el = $(`#t-${t}`); if (el) el.classList.toggle('hide', t !== name); }
+    currentTab = name;
+    // Panes are only drawn while they are the one on screen, so a tab that
+    // went stale in the background is caught up here, from data already in
+    // hand - no fetch, and nothing to wait for.
+    if (dirtyTabs.has(name)) renderTab(name);
     if (name === 'picklist') renderEditBar();
+    // The SERVER tab is the only reader of /api/diag, and refresh() skips it
+    // otherwise; opening the tab should not mean waiting 30s to see anything.
+    if (name === 'server') refresh();
   };
   window.__goTab = goTab;
   for (const b of $$('#tabs button')) b.onclick = () => goTab(b.dataset.tab);
@@ -1695,9 +1814,16 @@ async function main() {
   // them - alliance selection arrives inside 'nexus' - so that listener had
   // never fired, and the four below it were only ever picked up by the 30s
   // poll below.
+  // Coalesced. The hub fires several of these together - a TBA poll that lands
+  // new results broadcasts `results`, `solved` and `scout` within milliseconds
+  // of each other - and each one used to be its own full refresh.
+  const nudge = coalesce(refresh, 750);
   for (const t of ['nexus', 'results', 'scout', 'calibration', 'matchStatus', 'seats',
                    'matchStart', 'lovat', 'solved', 'rankings', 'epa', 'earlyScores'])
-    net.on(t, refresh);
+    net.on(t, nudge);
+  // Settings are not in refresh() any more: /api/config carries serverTime, so
+  // it can never answer 304, and nothing on it changes without one of these.
+  net.on('calibration', () => refreshConfig().then(renderAll));
 
   // The picklist is the one thing refresh() does not re-read, so it needs its
   // own listener - and it is the one that matters most. Two dashboards are open
@@ -1711,15 +1837,17 @@ async function main() {
   });
   wireAsk();
   wireImport();
-  setInterval(refresh, 30000);
-  // the crew board is the lead's live view; keep it fresher than the rest
-  setInterval(async () => {
-    try {
-      CREW = await net.api('/api/crew');
-      SEATLOG = await net.api('/api/seatlog');
-      renderCrew();
-    } catch {}
-  }, 7000);
+  // One timer now, not two. It used to be a 30s full refresh plus a 7s crew
+  // poll, on top of a refresh per broadcast; every one of those sent complete
+  // payloads. This is a single conditional pass, so a quiet ten seconds costs
+  // four empty 304s, and anything that actually happens arrives over the stream
+  // in between. It stops while the tab is hidden and runs once on the way back -
+  // a dashboard on a second monitor with the lid shut is not being read.
+  //
+  // Kept at ten seconds rather than relaxed further because a phone dropping
+  // off the wifi is not something the hub can broadcast: the crew board only
+  // learns it by asking.
+  every(10000, refresh);
 }
 
 main().catch((e) => { console.error(e); $('#evSub').textContent = 'FAILED: ' + e.message; });

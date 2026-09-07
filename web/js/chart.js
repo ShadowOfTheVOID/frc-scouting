@@ -20,6 +20,8 @@
  * layer once the markup is in the document.
  */
 
+import { perFrame } from './timers.js';
+
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -300,8 +302,12 @@ export function wire(root) {
       if (g) g.setAttribute('hidden', '');
     };
 
+    // All three of these read layout (getBoundingClientRect, offsetWidth) and
+    // rewrite the tooltip, and the scatter one walks every dot on the chart.
+    // Firing that per pointermove forces a synchronous layout per mouse move
+    // for frames the browser was never going to paint separately.
     if (model.kind === 'line') {
-      svg.addEventListener('pointermove', (ev) => {
+      svg.addEventListener('pointermove', perFrame((ev) => {
         const { x } = at(ev);
         // The crosshair snaps to the nearest match, so the reader aims at a
         // match rather than at a 2px line.
@@ -320,9 +326,9 @@ export function wire(root) {
           <span>${esc(s.label)}</span></div>`).join('');
         show(`<div class="hd">${esc(model.x[best].label)}</div>${rows}
           ${model.unit ? `<div class="u">${esc(model.unit)}</div>` : ''}`, ev);
-      });
+      }));
     } else if (model.kind === 'bars') {
-      svg.addEventListener('pointermove', (ev) => {
+      svg.addEventListener('pointermove', perFrame((ev) => {
         const m = ev.target.closest('.bar');
         if (!m) return hide();
         const r = model.rows[+m.dataset.row], si = +m.dataset.series;
@@ -330,9 +336,9 @@ export function wire(root) {
           <i style="background:${model.series[si].color}"></i>
           <b>${nice(r.values[si], 1)}</b><span>${esc(model.series[si].label)}</span></div>
           ${model.unit ? `<div class="u">${esc(model.unit)}</div>` : ''}`, ev);
-      });
+      }));
     } else {
-      svg.addEventListener('pointermove', (ev) => {
+      svg.addEventListener('pointermove', perFrame((ev) => {
         // Nearest point rather than a direct hit: a 10px dot is a pinpoint.
         const r = svg.getBoundingClientRect();
         const mx = ((ev.clientX - r.left) / r.width) * vb.width;
@@ -347,7 +353,7 @@ export function wire(root) {
         show(`<div class="hd">${esc(p.label)}</div>
           <div class="row"><b>${nice(p.x, 1)}</b><span>${esc(model.xLabel)}</span></div>
           <div class="row"><b>${nice(p.y, 1)}</b><span>${esc(model.yLabel)}</span></div>`, ev);
-      });
+      }));
     }
     svg.addEventListener('pointerleave', hide);
   }

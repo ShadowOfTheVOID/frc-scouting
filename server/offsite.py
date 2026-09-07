@@ -84,6 +84,17 @@ def _digest(bundle):
     ).hexdigest()
 
 
+# Every scope build_bundle below reads. Checked before the bundle is built at
+# all: the digest was doing that job, but only after serialising the entire
+# event and hashing it, once a minute, forever, to discover nothing had moved.
+BUNDLE_SCOPES = ("events", "teams", "matches", "flags", "scout_entries",
+                 "pit_entries", "photos", "solved",
+                 "kv:rankings", "kv:epa", "kv:lovat", "kv:alliances", "kv:pits",
+                 "kv:pitMap", "kv:inspection", "kv:matchClocks", "kv:clockFixes",
+                 "kv:multipliers", "kv:multipliersFittedFrom", "kv:picklist",
+                 "kv:ourTeam")
+
+
 def build_bundle(hub, event_key):
     """Everything about one event, in one object.
 
@@ -103,8 +114,11 @@ def build_bundle(hub, event_key):
     internet, behind one shared passcode, is not the place to relax that.
     """
     store = hub.store
-    summary = analytics.event_summary(store, event_key)
-    summary.pop("scouts", None)
+    # A copy, minus the per-scout block. event_summary memoizes and hands back
+    # the object it cached, so popping a key off it here would quietly strip
+    # that block from the copy the lead's dashboard is about to be served.
+    summary = {k: v for k, v in analytics.event_summary(store, event_key).items()
+               if k != "scouts"}
 
     csv = {}
     for table in ("teams", "lovat"):
@@ -274,11 +288,22 @@ def push_once(hub, force=False):
     if not ek:
         return {"ok": False, "reason": "no event selected"}
 
+    stale = time.time() - float(state.get("pushedAt") or 0) > HEARTBEAT_SECONDS
+    version = hub.store.version_for(*BUNDLE_SCOPES)
+    if (state.get("version") == version and state.get("event") == ek
+            and not stale and not force):
+        return {"ok": True, "skipped": "unchanged", "pushedAt": state.get("pushedAt"),
+                "revision": state.get("revision")}
+
     bundle = build_bundle(hub, ek)
     unchanged = (state.get("digest") == bundle["digest"]
                  and state.get("event") == ek)
-    stale = time.time() - float(state.get("pushedAt") or 0) > HEARTBEAT_SECONDS
     if unchanged and not stale and not force:
+        # The write counters moved but the bundle did not - a poll rewriting a
+        # value with the same contents, typically. Record the version so the
+        # cheap check above catches it next time.
+        state["version"] = version
+        hub.store.set("mirrorState", state)
         return {"ok": True, "skipped": "unchanged", "pushedAt": state.get("pushedAt"),
                 "revision": state.get("revision")}
 
@@ -301,7 +326,8 @@ def push_once(hub, force=False):
             sent = (pbody or {}).get("stored", 0) if pcode == 200 else 0
 
     state.update({
-        "event": ek, "digest": bundle["digest"], "pushedAt": time.time(),
+        "event": ek, "digest": bundle["digest"], "version": version,
+        "pushedAt": time.time(),
         "revision": body.get("revision"), "bytes": body.get("bytes"),
         "photosPending": max(0, int(body.get("photosMissing") or 0) - sent),
         "error": None, "erroredAt": None,
