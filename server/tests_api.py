@@ -768,6 +768,124 @@ def test_config_scope(L):
     return ok
 
 
+def test_key_hygiene(L):
+    """What gets pasted into the API key boxes, and what the hub makes of it.
+
+    Every one of these is a real paste: the header name still attached, the
+    quotes off a code sample, a key split over two lines by an email client,
+    the Lovat key in the TBA box.  All of them used to be stored verbatim, and
+    the only symptom for the rest of the event was a service that quietly
+    returned nothing - which reads on every screen exactly like "nobody
+    scouted that robot".
+    """
+    ok = True
+    was = L.store.get("eventKey")
+    for f in ("tbaKey", "nexusKey", "nexusToken", "frcEventsUser", "frcEventsToken",
+              "lovatKey", "aiKey", "mirrorKey"):
+        L.req("/api/config", {f: ""})
+
+    good = "a" * 64
+    code, r = L.req("/api/config", {"tbaKey": '  "X-TBA-Auth-Key: %s"  ' % good})
+    ok &= check("a key pasted with its header name and quotes is saved as the key",
+                code == 200 and L.store.get("tbaKey") == good, f"({L.store.get('tbaKey')!r})")
+    ok &= check("and the page is told what was taken off it",
+                bool(r.get("notes", {}).get("tbaKey")), f"({r.get('notes')})")
+
+    code, _ = L.req("/api/config", {"nexusKey": "nx-abc\n  def"})
+    ok &= check("a key split across two lines is joined back up",
+                L.store.get("nexusKey") == "nx-abcdef", f"({L.store.get('nexusKey')!r})")
+
+    code, r = L.req("/api/config", {"lovatKey": "Bearer lvt-realkey"})
+    ok &= check("a `Bearer` scheme is not part of the key",
+                L.store.get("lovatKey") == "lvt-realkey", f"({L.store.get('lovatKey')!r})")
+
+    # The one worth refusing: eight boxes on one page, and a key in the wrong
+    # one breaks two services while both still say SET.
+    code, r = L.req("/api/config", {"tbaKey": "lvt-thisisalovatkey"})
+    ok &= check("a Lovat key in the TBA box is refused, and named",
+                code == 400 and "LOVAT" in r["problems"]["tbaKey"], f"({code} {r})")
+    ok &= check("and nothing at all was saved by that request",
+                L.store.get("tbaKey") == good, f"({L.store.get('tbaKey')!r})")
+
+    for name, body, field in (
+            ("a web address", {"tbaKey": "https://www.thebluealliance.com/account"}, "tbaKey"),
+            ("the example text", {"nexusKey": "<your-api-key>"}, "nexusKey"),
+            ("an email address", {"lovatKey": "lead@team6059.org"}, "lovatKey"),
+            ("nothing but punctuation", {"aiKey": '"  "'}, "aiKey"),
+            ("a whole file", {"mirrorKey": "x" * 500}, "mirrorKey")):
+        code, r = L.req("/api/config", body)
+        ok &= check(f"{name} in a key box is refused",
+                    code == 400 and field in r.get("problems", {}), f"({code} {r})")
+
+    # A Claude key under a Gemini model has no symptom anywhere but "the model
+    # could not be reached", forever.
+    code, r = L.req("/api/config", {"aiModel": "gemini:gemini-3.7-flash",
+                                    "aiKey": "sk-ant-api03-notreal"})
+    ok &= check("an AI key from the wrong company is refused for the model beside it",
+                code == 400 and "aiKey" in r.get("problems", {}), f"({code} {r})")
+    L.req("/api/config", {"aiModel": "anthropic:claude-opus-5", "aiKey": "sk-ant-api03-notreal"})
+    ok &= check("and accepted for the right one", L.store.get("aiKey") == "sk-ant-api03-notreal")
+
+    # FRC Events' own documentation hands you the two halves joined together.
+    L.req("/api/config", {"frcEventsToken": "someone:tok-12345678"})
+    ok &= check("a `username:token` paste fills in both boxes",
+                L.store.get("frcEventsUser") == "someone"
+                and L.store.get("frcEventsToken") == "tok-12345678",
+                f"({L.store.get('frcEventsUser')!r})")
+    L.req("/api/config", {"frcEventsUser": "", "frcEventsToken": ""})
+    L.req("/api/config", {"frcEventsToken": "Basic bGVhZDp0b2stODc2NTQzMjE="})
+    ok &= check("so does the base64 Basic credential from their docs",
+                L.store.get("frcEventsUser") == "lead"
+                and L.store.get("frcEventsToken") == "tok-87654321",
+                f"({L.store.get('frcEventsUser')!r})")
+
+    # Shape is advisory: a vendor may change its key format, and a hub that
+    # refuses to be configured at a competition is worse than a warning.
+    code, r = L.req("/api/config", {"tbaKey": "short"})
+    ok &= check("an odd-looking key is saved anyway, with a warning",
+                code == 200 and L.store.get("tbaKey") == "short"
+                and "tbaKey" in r.get("warnings", {}), f"({code} {r})")
+
+    code, r = L.req("/api/config", {"eventKey": " https://www.thebluealliance.com/event/2026CASF/ "})
+    ok &= check("an event page address is saved as the event key",
+                L.store.get("eventKey") == "2026casf", f"({L.store.get('eventKey')!r})")
+    code, r = L.req("/api/config", {"eventKey": "casf"})
+    ok &= check("an event key with no year on it is flagged, not refused",
+                code == 200 and "eventKey" in r.get("warnings", {}), f"({r})")
+
+    # A blank box means "leave that key alone" - nobody retypes eight keys to
+    # change the event - so there has to be another way to take one off.
+    L.req("/api/config", {"tbaKey": ""})
+    ok &= check("an emptied box is how a key is forgotten", not L.store.get("tbaKey"))
+
+    code, c = L.req("/api/config")
+    ok &= check("the page is told which boxes hold something, box by box",
+                c["saved"]["tbaKey"] is False and c["saved"]["lovatKey"] is True,
+                f"({c['saved']})")
+    ok &= check("and still never the value of one", "lvt-realkey" not in json.dumps(c))
+
+    # The same rules, run as the boxes are filled in, storing nothing.
+    code, r = L.req("/api/keycheck", {"tbaKey": "X-TBA-Auth-Key: %s" % good,
+                                      "lovatKey": "https://lovat.app"})
+    ok &= check("keycheck answers with the cleaned value and the problems",
+                code == 200 and r["cleaned"]["tbaKey"] == good
+                and "lovatKey" in r["problems"], f"({r})")
+    ok &= check("and saves none of it", not L.store.get("tbaKey"))
+
+    # With nothing configured this touches no network at all, which is the
+    # state CI runs in.
+    for f in ("nexusKey", "lovatKey", "aiKey", "frcEventsUser", "frcEventsToken"):
+        L.req("/api/config", {f: ""})
+    L.req("/api/config", {"aiModel": "none"})
+    code, r = L.req("/api/keytest", {})
+    ok &= check("testing the keys reports every unset one as unset, not as broken",
+                code == 200 and all(v["state"] == "unset" for v in r["checked"].values()),
+                f"({r.get('checked')})")
+
+    L.store.set("eventKey", was)      # hand the shared harness back its event
+    return ok
+
+
 def test_ai_is_gated_and_grounded(L):
     """The AI routes spend real money and must never be reachable by accident.
 
@@ -1070,7 +1188,7 @@ def main():
                    test_junk_payload_cannot_blank_the_dashboard,
                    test_clock_correction_never_invents_numbers,
                    test_seats, test_seat_lifetime, test_match_clock, test_reconcile,
-                   test_config_scope,
+                   test_config_scope, test_key_hygiene,
                    test_trend_series, test_defence_counts_both_ways,
                    test_ai_is_gated_and_grounded,
                    test_nexus_tba_one_row, test_legacy_keys_migrate,

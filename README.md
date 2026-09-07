@@ -85,6 +85,21 @@ runs without them, just with less live data.
 The fuel numbers always come from The Blue Alliance, whichever other keys you set. FRC Events
 only gets you the result sooner.
 
+**Paste the key and press SAVE & REFRESH, then press TEST KEYS.** Two things about that page are
+worth knowing before the Saturday:
+
+- It takes the wrapping off a paste for you. The header name, the quotes, a line break from an
+  email — all of it comes off, and the box shows you what will actually be saved. A key that
+  belongs in one of the other boxes is refused and told where to go instead, and so is an AI key
+  from a different company than the model above it. Nothing is saved at all when a box is
+  refused, so fixing that one box and pressing save again is enough.
+- **TEST KEYS asks each vendor whether the key works.** `SET` beside a box only ever meant that
+  something is stored there. This is what tells you the difference between a key that is wrong
+  and a service that has nothing to say yet — and at a competition those look identical
+  everywhere else, deliberately, because the app is built to keep running when a source goes
+  down. Do this at home. A rejected key found on the Saturday morning is a key you cannot
+  replace on the Saturday morning.
+
 **Why Nexus is the one you cannot skip.** Nexus is what tells the hub a match has taken the
 field, and that is what opens the scouting screen on all six phones. Nothing else carries it —
 The Blue Alliance publishes results after a match, not the fact that one is starting. With no
@@ -109,7 +124,8 @@ It is free, and it takes about ten minutes the first time. Do it at home, not at
    you will recognise later, like `6059 scouting hub`.
 4. **Copy the key immediately.** It starts with `lvt-` and Lovat will not show it to you again.
 5. Paste it into the **Lovat** box at http://localhost:6059/ on the hub laptop, set the event
-   key beside it, and click **SAVE & REFRESH**.
+   key beside it, and click **SAVE & REFRESH**. Then **TEST KEYS** — if your team is still
+   waiting on Lovat's verification, that is what it will say, and no new key will fix it.
 6. Check it worked on the dashboard's **SERVER** tab: the `lovat` service goes green, and the
    **GRAPHS** tab starts counting teams under `teams lovat has`.
 

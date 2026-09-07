@@ -18,6 +18,22 @@
   /* The mirror pane is the full width of the page rather than half of it, and
      a paragraph 1200px wide is a paragraph nobody finishes. */
   #mirrorPane>*{max-width:720px}
+  /* What the hub made of what was pasted, under the box it was pasted into.
+     A key that is wrong has no other symptom anywhere in this app. */
+  .say{margin-top:5px;font:500 11.5px Barlow,sans-serif;line-height:1.5}
+  .say:empty{display:none}
+  .say.bad{color:var(--red-alert)}
+  .say.warn{color:var(--amber)}
+  .say.ok{color:var(--green-soft)}
+  .say.note{color:var(--t4)}
+  .say b{font-weight:800}
+  .f.bad input{border-color:var(--red-alert)}
+  .f.ok input{border-color:var(--green-border)}
+  .tag{float:right;font:800 9px Barlow,sans-serif;letter-spacing:.12em;color:var(--t6)}
+  .tag.on{color:var(--green-soft)}
+  .forget{margin-left:8px;background:none;border:none;padding:0;cursor:pointer;
+    font:800 9px Barlow,sans-serif;letter-spacing:.12em;color:var(--t5);text-decoration:underline}
+  .forget:hover{color:var(--red-alert)}
 </style>
 </head>
 <body>
@@ -39,9 +55,12 @@
     <div class="pane mid">
       <div class="eyebrow">EVENT</div>
       <div class="form">
-        <div class="f"><label>EVENT KEY</label>
+        <div class="f" data-key="eventKey"><label>EVENT KEY</label>
           <input id="eventKey" placeholder="2026casf" autocapitalize="off" autocorrect="off" spellcheck="false">
-          <div class="h">As shown on frc.events or The Blue Alliance. Nexus uses the same key.</div></div>
+          <div class="h">As shown on frc.events or The Blue Alliance. Nexus uses the same key.
+            Paste the whole address of the event page if that is what you have — the key
+            gets taken out of it.</div>
+          <div class="say"></div></div>
         <div class="f"><label>EVENT LEVEL</label>
           <select id="eventLevel">
             <option value="regional">Regional / District — Energized at 100 fuel</option>
@@ -60,30 +79,42 @@
         Nexus is required in practice — it is what arms the match screen on the phones, and
         without it every scout opens each match by hand. The rest are optional; the app runs
         without them, just with less live data.</div>
+      <div class="hint">Paste the key and nothing else — but if the header name, the quotes
+        or a line break come with it, they get taken off and the box shows what will be
+        saved. A key that belongs in another box is refused rather than stored.</div>
       <div class="form">
-        <div class="f"><label>THE BLUE ALLIANCE</label>
+        <div class="f" data-key="tbaKey"><label>THE BLUE ALLIANCE<span class="tag"></span></label>
           <input id="tbaKey" placeholder="X-TBA-Auth-Key" autocomplete="off">
-          <div class="h">Official results and per-robot climb. thebluealliance.com/account</div></div>
-        <div class="f"><label>NEXUS</label>
+          <div class="h">Official results and per-robot climb. thebluealliance.com/account</div>
+          <div class="say"></div></div>
+        <div class="f" data-key="nexusKey"><label>NEXUS<span class="tag"></span></label>
           <input id="nexusKey" placeholder="Nexus-Api-Key" autocomplete="off">
           <div class="h">Required. Its "on field" is what arms the match screen on every
             phone — without it, every scout taps through by hand six times an hour. Also pit
-            map and alliance selection. frc.nexus/api</div></div>
-        <div class="f"><label>NEXUS WEBHOOK TOKEN</label>
+            map and alliance selection. frc.nexus/api</div>
+          <div class="say"></div></div>
+        <div class="f" data-key="nexusToken"><label>NEXUS WEBHOOK TOKEN<span class="tag"></span></label>
           <input id="nexusToken" placeholder="Nexus-Token" autocomplete="off">
-          <div class="h">Only if you registered a push webhook.</div></div>
-        <div class="f"><label>FRC EVENTS USERNAME</label>
+          <div class="h">Only if you registered a push webhook.</div>
+          <div class="say"></div></div>
+        <div class="f" data-key="frcEventsUser"><label>FRC EVENTS USERNAME<span class="tag"></span></label>
           <input id="frcEventsUser" placeholder="your frc-events username" autocomplete="off">
           <div class="h">Posts the official result a few minutes before TBA does. It does not
             feed the fuel solver — TBA stays the only source for that.
-            frc-events.firstinspires.org</div></div>
-        <div class="f"><label>FRC EVENTS TOKEN</label>
-          <input id="frcEventsToken" placeholder="authorization token" autocomplete="off"></div>
-        <div class="f"><label>LOVAT API KEY</label>
+            frc-events.firstinspires.org</div>
+          <div class="say"></div></div>
+        <div class="f" data-key="frcEventsToken"><label>FRC EVENTS TOKEN<span class="tag"></span></label>
+          <input id="frcEventsToken" placeholder="authorization token" autocomplete="off">
+          <div class="h">The token on its own. If what you have is the whole
+            <code>username:token</code> pair, or the base64 one out of their documentation,
+            paste that — both halves get filled in.</div>
+          <div class="say"></div></div>
+        <div class="f" data-key="lovatKey"><label>LOVAT API KEY<span class="tag"></span></label>
           <input id="lovatKey" placeholder="lvt-…" autocomplete="off">
           <div class="h">Other teams' scouting for this event. Your scouting lead makes a key
             in the Lovat Dashboard (Settings → API keys); your team must be verified there
-            first. It is shown next to our own numbers, never mixed into them. lovat.app</div></div>
+            first. It is shown next to our own numbers, never mixed into them. lovat.app</div>
+          <div class="say"></div></div>
         <div class="f"><label>AI MODEL</label>
           <select id="aiModel"></select>
           <div class="h">Summarises scout notes, explains the picklist and answers questions
@@ -95,15 +126,25 @@
             autocapitalize="off" autocorrect="off" spellcheck="false">
           <div class="h">For a model released after this list was written. The name decides
             which company it is sent to.</div></div>
-        <div class="f"><label>AI KEY</label>
+        <div class="f" data-key="aiKey"><label>AI KEY<span class="tag"></span></label>
           <input id="aiKey" placeholder="api key for whoever makes the model above"
-            autocomplete="off"></div>
-        <div class="f"><label>STRATEGY PASSCODE</label>
+            autocomplete="off">
+          <div class="h">From whichever company makes the model picked above. A key from one
+            of the other two is refused here rather than saved — that mismatch has no other
+            symptom than every AI answer saying the model could not be reached.</div>
+          <div class="say"></div></div>
+        <div class="f" data-key="strategyPin"><label>STRATEGY PASSCODE<span class="tag"></span></label>
           <input id="strategyPin" placeholder="leave blank for no lock" autocomplete="off">
           <div class="h">Gates the picklist and every AI answer. Shared, not personal — the hub stores only a hash
-            of the code, never who used it. Changing it signs everyone out.</div></div>
-        <div><button class="go" id="save">SAVE &amp; REFRESH</button></div>
+            of the code, never who used it. Changing it signs everyone out. Spaces on the ends
+            are trimmed — an invisible one is a lockout nobody ever finds.</div>
+          <div class="say"></div></div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button class="go" id="save">SAVE &amp; REFRESH</button>
+          <button class="go" id="test" style="background:var(--btn)">TEST KEYS</button>
+        </div>
         <div class="hint" id="status"></div>
+        <div class="hint" id="testOut"></div>
       </div>
     </div>
   </div>
@@ -124,11 +165,12 @@
             autocapitalize="off" autocorrect="off" spellcheck="false">
           <div class="h">The site root. A trailing slash or a pasted /api/push is fine — it
             gets trimmed. Leave blank to send nothing anywhere.</div></div>
-        <div class="f"><label>MIRROR PUSH KEY</label>
+        <div class="f" data-key="mirrorKey"><label>MIRROR PUSH KEY<span class="tag"></span></label>
           <input id="mirrorKey" placeholder="the key the mirror was started with" autocomplete="off">
           <div class="h">Whatever <code>MIRROR_PUSH_KEY</code> is set to on the mirror. This is
             the write key and it lives only here — it is <b>not</b> the passcode people type to
-            read the site, which is a different string on purpose.</div></div>
+            read the site, which is a different string on purpose.</div>
+          <div class="say"></div></div>
         <div class="btns" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <button class="go" id="pushNow" style="background:var(--btn)">PUSH NOW</button>
           <span class="hint" id="mirrorStatus"></span>
@@ -142,10 +184,13 @@
 import * as net from '/js/net.js';
 const $ = (s) => document.querySelector(s);
 await net.start();
-try {
+
+/** Everything on this page, from the hub. Called on load and after every save. */
+async function reload() {
   const c = await net.api('/api/config');
   $('#eventKey').value = c.eventKey || '';
   $('#eventLevel').value = c.eventLevel || 'regional';
+  $('#ourTeam').value = c.ourTeam || '';
   const bits = [c.keys.tba ? 'TBA SET' : 'NO TBA KEY', c.keys.nexus ? 'NEXUS SET' : 'NO NEXUS KEY'];
   if (c.keys.frcEvents) bits.push('FRC EVENTS SET');
   if (c.keys.lovat) bits.push('LOVAT SET');
@@ -153,9 +198,119 @@ try {
   buildModelPicker(c.ai || {});
   bits.push(c.multipliersFittedFrom ? `CALIBRATED · ${c.multipliersFittedFrom} WINDOWS` : 'PRIORS ONLY');
   bits.push(c.picklistLocked ? 'PICKLIST LOCKED' : 'PICKLIST OPEN');
+  // SET means a string is stored, and has never meant more than that. TEST
+  // KEYS below is the only thing on this page that knows whether one works.
   $('#sub').textContent = bits.join(' · ');
+  showSaved(c.saved || {});
   showMirror(c);
-} catch { $('#sub').textContent = 'HUB NOT REACHABLE'; }
+  return c;
+}
+
+// -------------------------------------------------------------- key boxes
+//
+// Every rule about what a key may look like lives on the hub (server/keys.py)
+// and none of them are repeated here: this page asks. A second copy of them in
+// JavaScript would be a second copy to keep in step, and the half that drifted
+// would be the half that says "that is fine" about a key that is not.
+
+/** The boxes the hub checks, and the row each one sits in. */
+const rows = [...document.querySelectorAll('.f[data-key]')]
+  .map((el) => ({ el, field: el.dataset.key, input: el.querySelector('input'),
+                  say: el.querySelector('.say'), tag: el.querySelector('.tag'),
+                  hint: el.querySelector('input').placeholder,
+                  name: el.querySelector('label').childNodes[0].textContent.trim() }));
+const rowFor = (field) => rows.find((r) => r.field === field);
+
+/** Which boxes already hold something, so a blank one is not read as "none". */
+function showSaved(saved) {
+  for (const r of rows) {
+    if (!r.tag) continue;
+    const on = !!saved[r.field];
+    r.tag.className = on ? 'tag on' : 'tag';
+    r.tag.textContent = on ? 'SAVED' : '';
+    r.input.placeholder = on ? 'saved — type a new one to replace it' : r.hint;
+    if (on) {
+      const b = document.createElement('button');
+      b.className = 'forget'; b.textContent = 'FORGET';
+      b.onclick = () => forget(r);
+      r.tag.append(b);
+    }
+  }
+}
+
+/**
+ * Throw one key away.
+ *
+ * A blank box means "leave what is there alone" - it has to, or every save
+ * would demand all eight keys be retyped - so without this there is no way to
+ * take a key off a hub short of editing the database.
+ */
+async function forget(r) {
+  if (!confirm(`Forget the saved ${r.name}? Nothing here can show it again, so putting it `
+             + 'back means fetching it from where it came from.')) return;
+  r.input.value = '';
+  await net.api('/api/config', { method: 'POST', body: JSON.stringify({ [r.field]: '' }) });
+  await reload();
+  tell(r, 'note', 'Forgotten.');
+}
+
+/**
+ * One line under one box.
+ *
+ * Built as text, never as markup: some of what the hub says back quotes the
+ * event key, which is whatever was typed into the box above.
+ */
+function tell(r, kind, text, lead) {
+  r.say.className = 'say ' + kind;
+  r.say.textContent = '';
+  if (lead) { const b = document.createElement('b'); b.textContent = lead + ' '; r.say.append(b); }
+  r.say.append(text);
+  r.el.classList.toggle('bad', kind === 'bad');
+  r.el.classList.toggle('ok', kind === 'ok');
+}
+
+/**
+ * What the hub makes of what is in the box, before anything is saved.
+ *
+ * The cleaned value goes back into the box on purpose. A key that arrived with
+ * its header name attached is fixed in front of the person who pasted it,
+ * which is the only way they find out it needed fixing - the alternative is a
+ * box that still reads `X-TBA-Auth-Key: abc` and a hub that quietly saved
+ * something else.
+ */
+async function inspect(r) {
+  if (!r.input.value.trim()) { tell(r, '', ''); return; }
+  const asked = r.input.value;
+  const body = { [r.field]: asked, aiModel: $('#aiModel').value };
+  let res;
+  try {
+    res = await net.api('/api/keycheck', { method: 'POST', body: JSON.stringify(body) });
+  } catch { return; }                    // offline: the save will say so
+  // Pressing SAVE blurs the box it was in, so this answer can arrive after the
+  // save has already emptied it - and a line about a key that is no longer on
+  // screen is worse than no line at all.
+  if (r.input.value !== asked) return;
+  if (res.problems[r.field]) { tell(r, 'bad', res.problems[r.field], 'No.'); return; }
+  const cleaned = res.cleaned[r.field];
+  if (cleaned !== undefined && cleaned !== r.input.value) r.input.value = cleaned;
+  for (const [field, value] of Object.entries(res.cleaned)) {
+    // A paste can fill in more than the box it landed in - the FRC Events
+    // username comes out of the token half the time.
+    const other = rowFor(field);
+    if (other && other !== r && !other.input.value.trim()) other.input.value = value;
+  }
+  const notes = (res.notes[r.field] || []).join(', ');
+  if (res.warnings[r.field]) tell(r, 'warn', res.warnings[r.field], notes && `Cleaned up: ${notes}.`);
+  else if (notes) tell(r, 'note', `Cleaned up: ${notes}.`);
+  else tell(r, 'ok', 'Ready to save.');
+}
+
+for (const r of rows) {
+  r.input.addEventListener('blur', () => inspect(r));
+  // A paste is the moment worth catching: it is where the header name, the
+  // quotes and the line break come from, and it is over before blur.
+  r.input.addEventListener('paste', () => setTimeout(() => inspect(r), 0));
+}
 
 /**
  * What the hub last managed to do with the mirror, in one line.
@@ -230,11 +385,16 @@ function buildModelPicker(ai) {
   syncOther();
 }
 
+const SECRETS = ['tbaKey','nexusKey','nexusToken','frcEventsUser','frcEventsToken',
+                'lovatKey','aiKey','strategyPin','mirrorKey'];
+
 $('#save').onclick = async () => {
   const body = { eventKey: $('#eventKey').value.trim(), eventLevel: $('#eventLevel').value,
                  ourTeam: $('#ourTeam').value.trim() };
-  for (const k of ['tbaKey','nexusKey','nexusToken','frcEventsUser','frcEventsToken','lovatKey','aiKey','mirrorKey']) {
-    const v = $('#'+k).value.trim(); if (v) body[k] = v;
+  for (const k of SECRETS) {
+    // A blank box means "leave that one alone": nobody is retyping eight keys
+    // to change the event. FORGET beside the box is how one is taken off.
+    const v = $('#'+k).value; if (v.trim()) body[k] = v;
   }
   // The address is a setting, not a secret, so a blank box means "stop
   // mirroring" rather than "leave it alone" - which is the only way to turn it
@@ -242,21 +402,76 @@ $('#save').onclick = async () => {
   body.mirrorUrl = $('#mirrorUrl').value.trim();
   const picked = $('#aiModel').value;
   body.aiModel = picked === 'other' ? $('#aiOther').value.trim() : picked;
-  const pin = $('#strategyPin').value;
-  if (pin !== '') body.strategyPin = pin.trim();
   $('#status').textContent = 'saving…';
+  for (const r of rows) tell(r, '', '');
   try {
-    await net.api('/api/config', { method:'POST', body: JSON.stringify(body) });
-    $('#status').textContent = 'Saved. Fetching event data…';
-    for (const k of ['tbaKey','nexusKey','nexusToken','frcEventsUser','frcEventsToken',
-                     'lovatKey','aiKey','strategyPin','mirrorKey'])
-      $('#'+k).value = '';
-    try { showMirror(await net.api('/api/config')); } catch { /* offline */ }
-    // The model is a setting, not a secret: it stays on screen, re-read from
-    // the hub so the page shows what was actually saved.
-    try { buildModelPicker((await net.api('/api/config')).ai || {}); } catch { /* offline */ }
-  } catch (e) { $('#status').textContent = 'Failed: ' + e.message; }
+    const res = await net.api('/api/config', { method:'POST', body: JSON.stringify(body) });
+    for (const [field, list] of Object.entries(res.notes || {})) {
+      const r = rowFor(field); if (r) tell(r, 'note', `Saved after cleaning up: ${list.join(', ')}.`);
+    }
+    for (const [field, text] of Object.entries(res.warnings || {})) {
+      const r = rowFor(field); if (r) tell(r, 'warn', text);
+    }
+    const fixed = Object.keys(res.notes || {}).length + Object.keys(res.warnings || {}).length;
+    $('#status').textContent = 'Saved. Fetching event data…'
+      + (fixed ? ' Read the notes under the boxes.' : ' Now press TEST KEYS.');
+    for (const k of SECRETS) $('#'+k).value = '';
+    try { await reload(); } catch { /* offline */ }
+  } catch (e) {
+    // Nothing was saved, and the boxes still hold what was typed - so this is
+    // a re-press, not a re-type, once the named box is fixed.
+    const problems = (e.body && e.body.problems) || {};
+    for (const [field, text] of Object.entries(problems)) {
+      const r = rowFor(field); if (r) tell(r, 'bad', text, 'No.');
+    }
+    $('#status').textContent = Object.keys(problems).length
+      ? 'Nothing was saved. Fix the box marked in red and press save again.'
+      : 'Failed: ' + e.message;
+  }
 };
+
+/**
+ * Ask every vendor whether the key stored here works.
+ *
+ * The one thing on this page that is not a guess. SET beside a box means a
+ * string is stored; this is the difference between a key that is wrong and a
+ * service that simply has nothing to say yet, and those two look identical
+ * everywhere else in the app - by design, because at a competition a source
+ * that is down must read as "we do not know" rather than as an error.
+ */
+$('#test').onclick = async () => {
+  $('#test').disabled = true;
+  $('#testOut').innerHTML = 'asking the vendors…';
+  const WORD = { ok: ['✓', 'var(--green-soft)'], bad: ['✕', 'var(--red-alert)'],
+                 warn: ['!', 'var(--amber)'], down: ['?', 'var(--t4)'],
+                 unset: ['·', 'var(--t6)'] };
+  const NAME = { tba: 'The Blue Alliance', nexus: 'Nexus', frcEvents: 'FRC Events',
+                 lovat: 'Lovat', ai: 'AI model' };
+  try {
+    const res = await net.api('/api/keytest', { method: 'POST', body: '{}' });
+    const out = $('#testOut');
+    out.textContent = '';
+    for (const [k, name] of Object.entries(NAME)) {
+      const v = res.checked[k] || { state: 'down', detail: '' };
+      const [mark, colour] = WORD[v.state] || WORD.down;
+      const line = document.createElement('div');
+      line.style.color = colour;
+      const b = document.createElement('b');
+      b.textContent = `${mark} ${name}`;
+      line.append(b, v.detail ? ' — ' + v.detail : ' — no key saved');
+      out.append(line);
+    }
+  } catch (e) {
+    $('#testOut').textContent = 'Could not test: ' + e.message;
+  } finally { $('#test').disabled = false; }
+};
+
+// Everything above is definitions; this is the page filling itself in, and it
+// goes last on purpose. `reload` renders through `rows`, and a `const` is not
+// hoisted - called from up where it is defined it threw before it could put a
+// single SAVED beside a box, into the same catch that says the hub cannot be
+// reached, which was a lie about a hub that was answering fine.
+try { await reload(); } catch { $('#sub').textContent = 'HUB NOT REACHABLE'; }
 </script>
 </body>
 </html>

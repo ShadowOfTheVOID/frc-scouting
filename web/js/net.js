@@ -147,7 +147,15 @@ export async function api(path, opts = {}) {
   if (res.status === 403) {
     const e = new Error('locked'); e.locked = true; throw e;
   }
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) {
+    // The hub says why in the body - which box was wrong, which key it looked
+    // like instead. Throwing the status alone threw that away, and the Setup
+    // page had nothing to show but "HTTP 400".
+    const body = await res.json().catch(() => null);
+    const e = new Error((body && body.error) || `HTTP ${res.status}`);
+    e.status = res.status; e.body = body;
+    throw e;
+  }
   return res.json();
 }
 

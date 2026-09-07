@@ -226,6 +226,63 @@ class Client:
                 {"x-goog-api-key": self.key, "content-type": "application/json"},
                 payload)
 
+    def verify(self):
+        """Ask the vendor whether this key works, without spending anything.
+
+        All three list their models on a GET that needs the same key as a
+        completion and costs nothing, so the TEST KEYS button can answer for
+        real rather than by guessing at the shape of the string.  The model is
+        checked against that list too: a key can be perfectly good while the
+        model beside it is one this account cannot reach, and those two failures
+        are indistinguishable from the panel that just says "unreachable".
+        """
+        if self.provider == OFF or not self.model:
+            return sources.verdict("unset", "no model chosen")
+        if self.provider not in PROVIDERS:
+            return sources.verdict("bad", f"no idea which company makes `{self.model}` - "
+                                          "pick a model from the list instead")
+        if not self.key:
+            return sources.verdict("unset", "a model is chosen but no key is saved")
+        url, headers = self._models_request()
+        body, status = sources._request(url, headers, timeout=15)
+        if body is None:
+            return sources._rejection(status, PROVIDERS[self.provider])
+        ids = self._model_ids(body)
+        if ids and not any(self.model == i or i.startswith(self.model) for i in ids):
+            return sources.verdict(
+                "warn", f"the key works, but {PROVIDERS[self.provider]} does not list "
+                        f"`{self.model}` for this account - check the model name")
+        return sources.verdict("ok", f"key accepted for {self.label or self.model}")
+
+    def _models_request(self):
+        """The free "what models do I have" route for each provider."""
+        if self.provider == "anthropic":
+            return ("https://api.anthropic.com/v1/models",
+                    {"x-api-key": self.key, "anthropic-version": "2023-06-01"})
+        if self.provider == "openai":
+            return "https://api.openai.com/v1/models", {"Authorization": "Bearer " + self.key}
+        return ("https://generativelanguage.googleapis.com/v1beta/models",
+                {"x-goog-api-key": self.key})
+
+    @staticmethod
+    def _model_ids(body):
+        """Model ids out of any of the three shapes, or [] if it is a fourth.
+
+        An empty list means "we could not tell", which reads downstream as no
+        complaint about the model - the key was accepted and that is the thing
+        being tested here.
+        """
+        if not isinstance(body, dict):
+            return []
+        rows = body.get("data") or body.get("models") or []
+        out = []
+        for r in rows if isinstance(rows, list) else []:
+            if isinstance(r, dict):
+                # Gemini answers "models/gemini-3.7-flash"; the other two do not.
+                name = r.get("id") or r.get("name") or ""
+                out.append(name.rsplit("/", 1)[-1])
+        return [o for o in out if o]
+
     def _text(self, body):
         try:
             if self.provider == "anthropic":

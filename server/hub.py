@@ -34,6 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ai
 import analytics
 import discover
+import keys as keyhygiene
 import lovat as lovat_report
 import offsite
 import rules
@@ -213,6 +214,54 @@ class Hub:
 
     def mirror(self):
         return offsite.Mirror(self.cfg("mirrorUrl"), self.cfg("mirrorKey"))
+
+    def verify_keys(self):
+        """Ask every vendor whether the key saved here actually works.
+
+        This is what the TEST KEYS button on the Setup page is for, and it is
+        the only thing in the app that can tell a lead the difference between
+        the two states that look identical everywhere else: a key that is
+        wrong, and a service with nothing to say yet.  `SET` on that page has
+        only ever meant "a string is stored".
+
+        Five vendors at up to twenty seconds each is over a minute in a row, so
+        they go at once - a lead standing at the laptop pressing a button is
+        the one caller in this file allowed to be in a hurry.
+        """
+        ek = self.event_key()
+        season, _ = _split_event_key(ek)
+        checks = {
+            "tba": lambda: self.tba().verify(),
+            "nexus": lambda: self.nexus().verify(ek),
+            "frcEvents": lambda: self.frc_events().verify(int(season) if season else 2026),
+            "lovat": lambda: self.lovat().verify(ek),
+            "ai": lambda: self.ai().verify(),
+        }
+        out = {}
+
+        def run(name, fn):
+            try:
+                out[name] = fn()
+            except Exception as e:
+                # A vendor is allowed to answer with anything at all, including
+                # something that breaks the client parsing it. That is still an
+                # answer about them, not a reason to 500 the button.
+                out[name] = sources.verdict("down", f"the check itself failed: {e}")
+
+        threads = [threading.Thread(target=run, args=(n, f), daemon=True)
+                   for n, f in checks.items()]
+        for t in threads:
+            t.start()
+        # One deadline for all five, not thirty seconds each in turn - which is
+        # two and a half minutes of a button that looks stuck.
+        deadline = time.time() + 30
+        for t in threads:
+            t.join(timeout=max(0.1, deadline - time.time()))
+        for name in checks:
+            out.setdefault(name, sources.verdict("down", "timed out waiting for an answer"))
+        self.note("info", "api keys tested: "
+                          + ", ".join(f"{n} {v['state']}" for n, v in sorted(out.items())))
+        return {"eventKey": ek, "at": time.time(), "checked": out}
 
     def ai_ceiling(self):
         try:
@@ -1141,6 +1190,51 @@ class Hub:
             self.stop_flag.wait(2.0)
 
 
+#: `2026casf`: the season, then the event's short code.  Advisory only - a new
+#: kind of key one season is not worth a hub that refuses to be configured.
+EVENT_KEY = re.compile(r"^\d{4}[a-z0-9]+$")
+
+
+def _event_key(raw):
+    """What somebody typed into the event key box, as the key every source uses.
+
+    The Blue Alliance and frc.events both put the key in the address bar, so
+    the address is what is on the clipboard about half the time, and both sites
+    display the code capitalised while every API wants it lower case.
+    """
+    s = raw.strip() if isinstance(raw, str) else ""
+    if "://" in s or s.lower().startswith("www."):
+        s = s.rstrip("/").rsplit("/", 1)[-1]
+    return re.sub(r"\s+", "", s).lower()
+
+
+def _event_key_check(raw):
+    """`(key, warning)` - the same answer whether it is being saved or typed."""
+    ek = _event_key(raw)
+    if ek and not EVENT_KEY.match(ek):
+        return ek, ("An event key looks like `2026casf` - the year, then the event's short "
+                    "code. This is saved as typed, but nothing will load if it is wrong.")
+    return ek, None
+
+
+def _ai_provider(h, body):
+    """Which company's AI key this save expects, once its model is applied.
+
+    The model and the key are two boxes filled in together, and the mismatch
+    between them - a Claude key under a Gemini model - is the one AI setup
+    mistake with no symptom at all beyond "the model could not be reached".
+    Checking for it means knowing the provider the same save is about to set,
+    not the one already stored.
+    """
+    if isinstance(body.get("aiModel"), str):
+        provider, _, model = body["aiModel"].strip().rpartition(":")
+        model = model.strip()
+        if model.lower() in ("", "none"):
+            return ai.OFF
+        return provider.strip() or ai.provider_for(model) or ai.OFF
+    return h.ai().provider
+
+
 def _mirror_url(raw):
     """What somebody typed into the mirror box, as an address that works.
 
@@ -1834,6 +1928,11 @@ class Handler(BaseHTTPRequestHandler):
                 "keys": {"tba": bool(h.cfg("tbaKey")), "nexus": bool(h.cfg("nexusKey")),
                          "frcEvents": h.frc_events().ok, "lovat": bool(h.cfg("lovatKey")),
                          "ai": h.ai().ok, "mirror": h.mirror().ok},
+                # Which boxes have something in them, box by box, so the Setup
+                # page can say SAVED beside each one and offer to forget it.
+                # Whether, never what: no key value leaves the hub, and this
+                # route is open to everything on the venue wifi.
+                "saved": {k: bool(h.cfg(k)) for k in keyhygiene.FIELDS},
                 # The address is a setting and the setup page has to show what
                 # is saved; the push key is a secret and never comes back out.
                 "mirror": {"url": h.cfg("mirrorUrl") or None, "ok": h.mirror().ok,
@@ -1968,11 +2067,34 @@ class Handler(BaseHTTPRequestHandler):
                     "error": "Hub settings can only be changed on the hub machine. "
                              "Open http://localhost:%d/ there." % self.server.server_address[1],
                 }, 403)
-            for k in ("eventKey", "tbaKey", "nexusKey", "nexusToken", "eventLevel", "ourTeam",
-                      "frcEventsUser", "frcEventsToken", "lovatKey",
-                      "aiProvider", "aiKey", "aiCallLimit", "mirrorKey"):
+            # Every credential arrives by copy and paste and a good half of them
+            # arrive with something else attached - a header name, the quotes
+            # from a code sample, a line break, or the Lovat key in the TBA box.
+            # None of that used to be noticed: it went into the settings row
+            # verbatim, this page said SET, and the service quietly returned
+            # nothing for the rest of the event.
+            cleaned, problems, warnings, notes = keyhygiene.check_all(
+                {k: body[k] for k in keyhygiene.FIELDS if k in body}, _ai_provider(h, body))
+            if problems:
+                # Nothing is saved when any box is wrong. The boxes still hold
+                # what was typed, so this costs a re-press and not a re-type,
+                # and a half-applied save is the one state nobody can debug.
+                return self._json({"error": "; ".join(problems.values()),
+                                   "problems": problems}, 400)
+            for k in ("eventLevel", "ourTeam", "aiProvider", "aiCallLimit"):
                 if k in body:
                     h.store.set(k, body[k])
+            for k, v in cleaned.items():
+                if k != "strategyPin":       # hashed, never stored as typed
+                    h.store.set(k, v)
+            # An event key is pasted the same way and gets the same treatment:
+            # a whole TBA address, a capitalised code and a stray space are all
+            # what somebody means by "2026casf", and none of them work as typed.
+            if "eventKey" in body:
+                ek, warn = _event_key_check(body["eventKey"])
+                h.store.set("eventKey", ek)
+                if warn:
+                    warnings["eventKey"] = warn
             # A trailing slash, a bare hostname or a copied "/api/push" are all
             # what somebody means by "the mirror address", and none of them
             # work as typed. Normalising here means the setup page can be a
@@ -1993,12 +2115,37 @@ class Handler(BaseHTTPRequestHandler):
                     h.store.set("aiModel", model)
                     h.store.set("aiProvider",
                                 provider.strip() or ai.provider_for(model) or "none")
-            if "strategyPin" in body:
-                h.set_pin(body["strategyPin"])
-            if body.get("eventKey"):
-                h.store.put_event(body["eventKey"], level=body.get("eventLevel"))
+            if "strategyPin" in cleaned:
+                h.set_pin(cleaned["strategyPin"])
+            if h.cfg("eventKey") and "eventKey" in body:
+                h.store.put_event(h.cfg("eventKey"), level=body.get("eventLevel"))
             _poll_all(h)
-            return self._json({"ok": True})
+            # Saved, and everything that was quietly fixed or looks off on the
+            # way in, so the page can say so rather than leaving it to be found
+            # out on the Saturday.
+            return self._json({"ok": True, "warnings": warnings, "notes": notes})
+
+        if p in ("/api/keycheck", "/api/keytest"):
+            # Both are the Setup page's, and the Setup page is the hub laptop.
+            if not (self._is_local() or Handler.allow_remote_config):
+                return self._json({
+                    "error": "Hub settings can only be changed on the hub machine. "
+                             "Open http://localhost:%d/ there." % self.server.server_address[1],
+                }, 403)
+            if p == "/api/keytest":
+                return self._json(h.verify_keys())
+            # The same rules as the save, run as the boxes are filled in and
+            # storing nothing. One copy of the rules, on the server, so what
+            # the page says while you type cannot drift from what the save
+            # does. The values it echoes are the ones just sent to it.
+            cleaned, problems, warnings, notes = keyhygiene.check_all(
+                {k: body[k] for k in keyhygiene.FIELDS if k in body}, _ai_provider(h, body))
+            if "eventKey" in body:
+                cleaned["eventKey"], warn = _event_key_check(body["eventKey"])
+                if warn:
+                    warnings["eventKey"] = warn
+            return self._json({"cleaned": cleaned, "problems": problems,
+                               "warnings": warnings, "notes": notes})
 
         if p == "/api/matchstart":
             # A list here used to reach dict.get() as an unhashable key and take

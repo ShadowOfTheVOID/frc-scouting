@@ -47,6 +47,40 @@ class _Cache:
 CACHE = _Cache()
 
 
+# ------------------------------------------------------- key verification
+#
+# `verify()` on each client exists for one screen: the TEST KEYS button on the
+# Setup page.  Everything else in this file is a poller that treats a failure as
+# "we do not know" and moves on, which is right at a competition and useless to
+# a lead who is trying to find out whether the thing they just pasted is the
+# thing the vendor issued.  So this is the one place a failure is allowed to be
+# specific, and to say whose fault it is.
+
+#: What `verify()` answers with.  `state` is one of:
+#:   ok      the vendor accepted the key
+#:   bad     the vendor rejected it - the key itself is wrong
+#:   warn    the key works but something else does not add up
+#:   down    we could not reach the vendor, so we still do not know
+#:   unset   no key is saved, which is not a failure
+def verdict(state, detail=""):
+    return {"state": state, "detail": detail}
+
+
+def _rejection(status, vendor):
+    """One HTTP status, in the words a scouting lead can act on."""
+    if status in (401, 403):
+        return verdict("bad", f"{vendor} rejected the key - it is not one they issued, "
+                              "or it has been revoked")
+    if status == 429:
+        return verdict("warn", f"{vendor} is rate-limiting us; the key itself looks fine. "
+                               "Wait a minute and test again")
+    if status == 0:
+        return verdict("down", "could not reach them at all - check this laptop is online. "
+                               "Venue wifi often blocks this")
+    return verdict("down", f"{vendor} answered with HTTP {status}, which is their end, "
+                           "not the key")
+
+
 def _request(url, headers=None, timeout=12, use_etag=False, method="GET", data=None, raw=False):
     """`raw` returns the decoded body as text instead of parsed JSON.
 
@@ -115,6 +149,20 @@ class TBA:
 
     def event_oprs(self, key):
         return self._get(f"/event/{key}/oprs")
+
+    def verify(self):
+        """Ask TBA whether this key works.  See `sources.verify` for the shape.
+
+        `/status` is the cheapest route TBA has and it is authenticated, which
+        is the whole requirement: a key that gets a 200 here is a key that will
+        get one everywhere else.
+        """
+        if not self.ok:
+            return verdict("unset")
+        body, status = _request(TBA_BASE + "/status", {"X-TBA-Auth-Key": self.key}, timeout=10)
+        if body is not None:
+            return verdict("ok", "key accepted")
+        return _rejection(status, "The Blue Alliance")
 
 
 def parse_breakdown_2026(match):
@@ -204,6 +252,24 @@ class Nexus:
     def events(self):
         return self._get("/events")
 
+    def verify(self, event_key=None):
+        """Ask Nexus whether this key works.
+
+        The configured event if there is one, because that answers the second
+        question in the same request - a key can be perfectly good and still
+        return nothing for an event Nexus is not covering.
+        """
+        if not self.ok:
+            return verdict("unset")
+        path = f"/event/{event_key}" if event_key else "/events"
+        body, status = _request(NEXUS_BASE + path, {"Nexus-Api-Key": self.key}, timeout=10)
+        if body is not None:
+            return verdict("ok", "key accepted")
+        if status == 404 and event_key:
+            return verdict("warn", f"the key works, but Nexus has nothing for {event_key} - "
+                                   "check the event key, or wait until the event opens")
+        return _rejection(status, "Nexus")
+
 
 # ----------------------------------------------------------- Statbotics
 
@@ -251,6 +317,29 @@ class FRCEvents:
 
     def scores(self, season, event, level="qual"):
         return self._get(f"/{season}/scores/{event}/{level}")
+
+    def verify(self, season=2026):
+        """Ask FRC Events whether this username and token work together.
+
+        Either half being wrong fails the same way, which is why the message
+        says both: people paste the token into the username box constantly.
+        """
+        if not self.ok:
+            return verdict("unset", "username and token are both needed")
+        body, status = self._get_with_status(f"/{season}")
+        if body is not None:
+            return verdict("ok", "username and token accepted")
+        if status in (401, 403):
+            return verdict("bad", "FRC Events rejected them - check the username as well as "
+                                  "the token; they are two different strings")
+        return _rejection(status, "FRC Events")
+
+    def _get_with_status(self, path):
+        import base64
+        cred = base64.b64encode(f"{self.username}:{self.token}".encode()).decode()
+        return _request(FRC_EVENTS_BASE + path,
+                        {"Authorization": f"Basic {cred}", "Accept": "application/json"},
+                        timeout=10)
 
 
 # --------------------------------------------------------------- Lovat
@@ -300,3 +389,39 @@ class Lovat:
                 self.down_until = time.time() + self.BACKOFF_SECONDS
             return None
         return body
+
+    def verify(self, tournament_key=None):
+        """Ask Lovat whether this key works.
+
+        403 is the one that needs saying out loud, because it is not the key: it
+        is a team that has not been verified on Lovat's side, which is a person
+        there approving you and can take days.  A lead who reads "bad key" for
+        that goes and makes a second key, which fails identically.
+
+        The backoff is deliberately ignored - this is a button somebody pressed,
+        not the poller - but a rejection still arms it, because the answer to
+        "is this key good" does not change in the next five minutes.
+        """
+        if not self.ok:
+            return verdict("unset")
+        if not tournament_key:
+            return verdict("warn", "set the event key first - Lovat is asked per tournament, "
+                                   "so there is nothing to test against yet")
+        q = urllib.parse.urlencode({"tournamentKey": tournament_key})
+        body, status = _request(
+            f"{LOVAT_BASE}/analysis/reportcsv?{q}",
+            {"Authorization": f"Bearer {self.key}", "Accept": "text/csv"},
+            raw=True, timeout=20)
+        if body is not None:
+            rows = max(0, len([r for r in body.splitlines() if r.strip()]) - 1)
+            if rows:
+                return verdict("ok", f"key accepted, {rows} row(s) for {tournament_key}")
+            return verdict("warn", "the key works, but Lovat has nothing for "
+                                   f"{tournament_key} - nobody has uploaded this event yet")
+        if status in (401, 403, 429):
+            self.down_until = time.time() + self.BACKOFF_SECONDS
+        if status == 403:
+            return verdict("bad", "Lovat says your team is not verified yet. That is their "
+                                  "check on your team, not a problem with the key - a new "
+                                  "key will fail the same way")
+        return _rejection(status, "Lovat")

@@ -536,7 +536,9 @@ gone quiet — because that is about equipment and the lead has to act on it imm
 And the public accuracy number, SCOUTS vs TBA, is about the data.
 
 Nothing about a scout's identity leaves the hub. `/api/config` returns booleans for which keys
-are set, never a key value, and the passcode is stored only as a salted hash.
+are set, never a key value, and the passcode is stored only as a salted hash. The two routes
+that check and test keys are on the same boundary as the settings they serve: the hub machine
+only.
 
 ### And on the mirror
 
@@ -586,20 +588,52 @@ it nothing arms the match screen and every scout opens each match by hand. The r
 
 | Setting | What it does |
 |---|---|
-| **Event key** | e.g. `2026casf`. The same code on frc.events, The Blue Alliance and Nexus. |
+| **Event key** | e.g. `2026casf`. The same code on frc.events, The Blue Alliance and Nexus. Paste the whole address of the event page and the key is taken out of it; capitals and stray spaces are fixed. |
 | **Event level** | regional / dcmp / champs — sets the ranking-point thresholds. |
 | **Our team** | Highlights us in every table and drives the RP outlook. |
 | **Strategy passcode** | Gates picklist editing and the per-scout panel. Blank means open. |
 | **The Blue Alliance** | Official results, per-robot climb, rankings, OPR. The fuel solver's only source. |
 | **Nexus** — required | Live queueing and match status, pit map, pit addresses, inspection, alliance selection. Its `On field` is what arms the match screen on the phones; without it every scout has to tap **THEY'RE ON THE FIELD** by hand, six times an hour. |
 | **Nexus webhook token** | Only if you registered a push webhook. |
-| **FRC Events** | The official result a few minutes before TBA posts it. Does not feed the solver. |
+| **FRC Events** | The official result a few minutes before TBA posts it. Does not feed the solver. A username and a token, and pasting the joined `username:token` — or the base64 `Basic` blob out of their documentation — into the token box fills in both. |
 | **Lovat API key** | Other teams' scouting for this event. Your scouting lead makes one in the Lovat Dashboard under Settings → API keys; it starts `lvt-`, and your team has to be verified on Lovat first. Polled once every five minutes — Lovat allows one request every three seconds per key, so the hub stays well inside it. The export is scoped to what your Lovat account is allowed to see, so a short list is a setting on their side, not a failure on ours. |
 | **AI model** | One list, grouped Claude / Gemini / OpenAI, each option priced per million tokens. Picking a model picks the company that makes it, so there is no provider field to get wrong. Starts on **Claude Opus 5**, so pasting a key is enough — you never have to touch the list. *none* turns the three panels below off entirely, and stays off even with a key in the box. **other** takes a typed model id for anything released after this list was written; the name decides where it is sent. |
-| **AI key** | The key for whoever makes the model you picked. |
+| **AI key** | The key for whoever makes the model you picked. A key from one of the other two is refused here rather than saved: that mismatch has no symptom anywhere except every AI answer reading *the model could not be reached*. |
 | **Mirror address** | Optional. The root of an off-site mirror, e.g. `https://systemoverload.org`. A trailing slash or a pasted `/api/push` is trimmed, and a bare hostname gets `https://`. Blank sends nothing anywhere. |
 | **Mirror push key** | Whatever `MIRROR_PUSH_KEY` is on that host. The write key, and not the passcode people type to read the site. |
 | Statbotics | EPA. No key needed. |
+
+### What happens to a key on the way in
+
+Every one of these arrives by copy and paste, and what lands in the box is very often not the
+key. So the hub takes the wrapping off before it stores anything: the header name (`X-TBA-Auth-Key:`,
+`Authorization: Bearer`), the quotes off a code sample, a line break from an email client, a
+trailing comma. The box then shows what will actually be saved, with a line underneath saying
+what came off — because a key that needed fixing and got fixed silently is a key nobody knows
+was wrong.
+
+Four pastes are **refused** rather than stored, each naming what to do instead: a key that
+belongs in one of the other boxes (a `lvt-` key in the TBA box), a web address, the example
+text, and an AI key from a different company than the model picked above it. Nothing is saved
+at all when a box is refused, so a save is a re-press rather than a re-type of eight keys.
+
+Everything else is saved with a **warning** and no argument — a TBA key that is not 64
+characters, a Lovat key not starting `lvt-`. A vendor is allowed to change its key format
+without a hub refusing to be configured on a Saturday morning.
+
+Two more things on that page:
+
+- **TEST KEYS** asks every vendor whether the key stored here actually works, and is the only
+  thing in the app that can tell you. `SET` beside a box has never meant more than "a string is
+  stored". Each answer is one line: accepted, rejected, rate-limited, or "we could not reach
+  them" — which are four different problems that look identical everywhere else, because at a
+  competition a source that is down has to read as *we do not know* rather than as an error.
+  The AI key is checked against the vendor's free model list, so it costs nothing. Lovat's 403
+  is called what it is: your team is not verified on their side, and a second key will fail the
+  same way.
+- **FORGET**, beside a box that has something in it, is how a key comes off a hub. A blank box
+  means "leave that one alone" — it has to, or changing the event key would mean retyping every
+  key on the page.
 
 ### Command line
 
