@@ -764,15 +764,31 @@ def test_config_scope(L):
                 f"({c['ai']})")
 
     # The picker is built from this list, so the order it arrives in is the
-    # order a scouting lead reads: Claude, then Gemini, then OpenAI.
+    # order a scouting lead reads: Claude, Gemini, OpenAI, then the same models
+    # through OpenRouter.
     seen = []
     for m in c["ai"]["models"]:
         if m["provider"] not in seen:
             seen.append(m["provider"])
-    ok &= check("the model list is served for the picker, grouped Claude/Gemini/OpenAI",
-                seen == ["anthropic", "gemini", "openai"]
+    ok &= check("the model list is served for the picker, grouped by who answers",
+                seen == ["anthropic", "gemini", "openai", "openrouter"]
                 and all(m["id"] and m["label"] and m["price"] for m in c["ai"]["models"]),
                 f"({len(c['ai']['models'])} models, {seen})")
+    ok &= check("and every provider in it has a name the picker can label a group with",
+                all(p in c["ai"]["providers"] for p in seen), f"({c['ai']['providers']})")
+
+    # An OpenRouter id carries a slash and its own key. Saved as one field, the
+    # two halves cannot end up disagreeing - which on this pair is a whole
+    # weekend of "the model could not be reached".
+    L.req("/api/config", {"aiModel": "openrouter:anthropic/claude-opus-5"})
+    code, c = L.req("/api/config")
+    ok &= check("a model routed through openrouter keeps the maker in its id",
+                c["ai"]["provider"] == "openrouter"
+                and c["ai"]["model"] == "anthropic/claude-opus-5", f"({c['ai']})")
+    L.req("/api/config", {"aiModel": "deepseek/deepseek-v3-imaginary"})
+    code, c = L.req("/api/config")
+    ok &= check("and one typed by hand routes there on the slash alone",
+                c["ai"]["provider"] == "openrouter", f"({c['ai']})")
 
     L.req("/api/config", {"aiModel": "none"})
     code, c = L.req("/api/config")
@@ -843,6 +859,17 @@ def test_key_hygiene(L):
                 code == 400 and "aiKey" in r.get("problems", {}), f"({code} {r})")
     L.req("/api/config", {"aiModel": "anthropic:claude-opus-5", "aiKey": "sk-ant-api03-notreal"})
     ok &= check("and accepted for the right one", L.store.get("aiKey") == "sk-ant-api03-notreal")
+
+    # The same mistake in the direction OpenRouter makes easy: its key pasted
+    # under the maker's own model, because the model name says Claude either way.
+    code, r = L.req("/api/config", {"aiModel": "anthropic:claude-opus-5",
+                                    "aiKey": "sk-or-v1-notreal"})
+    ok &= check("an openrouter key under a model bought direct is refused too",
+                code == 400 and "aiKey" in r.get("problems", {}), f"({code} {r})")
+    L.req("/api/config", {"aiModel": "openrouter:anthropic/claude-opus-5",
+                          "aiKey": "sk-or-v1-notreal"})
+    ok &= check("and accepted once the model beside it goes through OpenRouter",
+                L.store.get("aiKey") == "sk-or-v1-notreal")
 
     # FRC Events' own documentation hands you the two halves joined together.
     L.req("/api/config", {"frcEventsToken": "someone:tok-12345678"})

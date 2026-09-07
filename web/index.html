@@ -153,18 +153,22 @@
           <div class="h">Summarises scout notes, explains the picklist and answers questions
             about the event. It only ever reads the numbers already on this hub — it never
             adds any, and nothing it writes is stored as data. Prices are per million tokens;
-            one answer is a few thousand.</div></div>
+            one answer is a few thousand. The OpenRouter group is the same models through one
+            key and one bill instead of three.</div></div>
         <div class="f hide" id="aiOtherRow"><label>MODEL ID</label>
           <input id="aiOther" placeholder="e.g. claude-opus-5" autocomplete="off"
             autocapitalize="off" autocorrect="off" spellcheck="false">
-          <div class="h">For a model released after this list was written. The name decides
-            which company it is sent to.</div></div>
+          <div class="h">For a model released after this list was written, or any of the
+            hundreds OpenRouter carries. The name decides where it is sent: a name with a
+            slash in it — <code>anthropic/claude-opus-5</code> — goes to OpenRouter, a bare
+            one goes to the company that made it.</div></div>
         <div class="f" data-key="aiKey"><label>AI KEY<span class="tag"></span></label>
           <input id="aiKey" placeholder="api key for whoever makes the model above"
             autocomplete="off">
-          <div class="h">From whichever company makes the model picked above. A key from one
-            of the other two is refused here rather than saved — that mismatch has no other
-            symptom than every AI answer saying the model could not be reached.</div>
+          <div class="h">From whichever company makes the model picked above, or from
+            OpenRouter if that is where it is being sent. A key from any of the others is
+            refused here rather than saved — that mismatch has no other symptom than every AI
+            answer saying the model could not be reached.</div>
           <div class="say"></div></div>
         <div class="f" data-key="strategyPin"><label>STRATEGY PASSCODE<span class="tag"></span></label>
           <input id="strategyPin" placeholder="leave blank for no lock" autocomplete="off">
