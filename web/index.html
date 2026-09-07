@@ -15,6 +15,9 @@
     font:800 11.5px Barlow,sans-serif;letter-spacing:.1em;cursor:pointer}
   .lk{display:inline-block;padding:9px 16px;border-radius:8px;border:1px solid var(--btn);
     font:800 11px Barlow,sans-serif;letter-spacing:.1em;color:var(--t1)}
+  /* The mirror pane is the full width of the page rather than half of it, and
+     a paragraph 1200px wide is a paragraph nobody finishes. */
+  #mirrorPane>*{max-width:720px}
 </style>
 </head>
 <body>
@@ -106,7 +109,7 @@
   </div>
 
   <div class="cols" style="grid-template-columns:1fr">
-    <div class="pane mid">
+    <div class="pane mid" id="mirrorPane">
       <div class="eyebrow">OFF-SITE MIRROR</div>
       <div class="hint">Optional, and the only thing here that sends your event anywhere.
         Every minute this hub packs the whole event — teams, matches, scouting, the picklist,
