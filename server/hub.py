@@ -1074,21 +1074,28 @@ class Hub:
         self.store.mutate("seats", apply, {})
 
     def seats(self):
-        # Read first. store.mutate has to take the SQLite write lock before it
-        # can read (BEGIN IMMEDIATE, and it must - see the note there), and this
-        # is on the read path of /api/seats, /api/state and /api/diag, so a
-        # dashboard refresh was taking the write lock three times a cycle and
-        # queueing behind six phones flushing at the buzzer. Almost every call
-        # expires nothing, so only escalate when there is really a write to do.
-        cur = self.store.get("seats") or {}
-        live = self._live_seats(cur)
-        if live == cur:
-            return live
+        """The chairs that are still held.  A read, and only a read.
 
-        def apply(seats):
-            fresh = self._live_seats(seats)
-            return (fresh if fresh != (seats or {}) else None), fresh
-        return self.store.mutate("seats", apply, {})
+        Two reasons it must not write. store.mutate takes the SQLite write lock
+        before it can read (BEGIN IMMEDIATE, and it must - see the note there),
+        and this is on the read path of /api/seats, /api/state and /api/diag, so
+        a dashboard refresh was taking the write lock three times a cycle and
+        queueing behind six phones flushing at the buzzer.
+
+        The second reason is subtler and was a real bug: /api/state takes its
+        ETag before building the payload, precisely so an unchanged poll can
+        skip the work. Expiring a chair here wrote to `seats` *during* that
+        build - moving the counter the tag had just been derived from - so the
+        tag handed to the client was stale the instant it was issued and the
+        next conditional request got a 200 it did not need. Nothing served was
+        ever wrong, but the 304 was unreliable, which is the whole feature.
+
+        Dropping the write costs nothing: an expired chair is filtered out of
+        every read, and the filtered map is persisted by the next thing that
+        genuinely writes - claim_seat, free_seat and keep_seat_warm all run
+        _live_seats inside their own mutate.
+        """
+        return self._live_seats(self.store.get("seats") or {})
 
     # ---------------------------------------------------------- solving
     # Beyond this it is not a late tap. It used to be a flat 180s, which is

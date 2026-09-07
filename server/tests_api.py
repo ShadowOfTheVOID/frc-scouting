@@ -1501,9 +1501,35 @@ def test_cheap_polling(L):
     invalidation is what is actually tested here.
     """
     ok = True
+
+    # Plant a chair nobody has reported from since this morning. seats() used to
+    # expire that by writing the filtered map back - during the payload build,
+    # after the tag had already been taken - so the tag handed to the client was
+    # stale the instant it was issued and the next poll got a 200 it did not
+    # need. Nothing served was ever wrong, but an unreliable 304 is no 304 at
+    # all. CI caught this only because an earlier test happened to leave such a
+    # chair behind; planted here, it is caught every run.
+    L.store.set("seats", {**(L.store.get("seats") or {}),
+                          "red3": {"scoutId": "GN", "deviceId": "gone",
+                                   "at": time.time() - hub.Hub.SEAT_TTL - 60}})
+    # Nothing may call hub.seats() between planting it and the request below -
+    # a single read used to be enough to sweep it, which is what made this
+    # intermittent rather than reliable in the first place.
+    seats_v = L.store.version_for("kv:seats")
+    _, state_tag, _ = L.cond("/api/state")
+    ok &= check("serving /api/state does not write to seats",
+                L.store.version_for("kv:seats") == seats_v)
+    ok &= check("and the expired chair is filtered out of what it served",
+                "red3" not in (L.req("/api/seats")[1] or {}))
+
     for path in ("/api/state", "/api/analytics", "/api/crew", "/api/seatlog"):
         code, etag, body = L.cond(path)
         ok &= check(f"{path} answers with an ETag", code == 200 and bool(etag))
+        # Serving an endpoint must not move its own tag. This is the check that
+        # would have failed before the fix above.
+        _, again, _ = L.cond(path)
+        ok &= check(f"{path} does not invalidate its own tag by being served",
+                    again == etag)
         code, _, body = L.cond(path, etag)
         ok &= check(f"{path} repeated is a bare 304", code == 304 and body == b"",
                     f"({len(body)} bytes)")
