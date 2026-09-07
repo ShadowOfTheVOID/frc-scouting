@@ -517,9 +517,10 @@ sensitive.
 a bored student cannot flag a team as do-not-pick an hour before alliance selection. And the
 **per-scout quality panel** on HEALTH.
 
-**The hub laptop only.** API keys and event settings. Open `/` from a phone and it politely
-sends you to the laptop. This needs no passcode to enforce: whoever is sitting at the machine
-is the person who should be configuring it.
+**The hub laptop only, and locked on top of that.** API keys and event settings. Open `/` from a
+phone and it politely sends you to the laptop. Being at the laptop is no longer enough on its
+own: the panel opens read-only every time and has to be unlocked deliberately, and a team that
+sets an **admin code** is asked for it. See [The admin panel](#the-admin-panel).
 
 ### Why per-scout scores are not public
 
@@ -592,6 +593,7 @@ it nothing arms the match screen and every scout opens each match by hand. The r
 | **Event level** | regional / dcmp / champs — sets the ranking-point thresholds. |
 | **Our team** | Highlights us in every table and drives the RP outlook. |
 | **Strategy passcode** | Gates picklist editing and the per-scout panel. Blank means open. |
+| **Admin code** | Gates this page — the event key, the API keys, the passcode above. Blank means the panel still opens locked, but unlocking it does not ask for anything. Cleared from the laptop with `--clear-admin-code`. |
 | **The Blue Alliance** | Official results, per-robot climb, rankings, OPR. The fuel solver's only source. |
 | **Nexus** — required | Live queueing and match status, pit map, pit addresses, inspection, alliance selection. Its `On field` is what arms the match screen on the phones; without it every scout has to tap **THEY'RE ON THE FIELD** by hand, six times an hour. |
 | **Nexus webhook token** | Only if you registered a push webhook. |
@@ -602,6 +604,45 @@ it nothing arms the match screen and every scout opens each match by hand. The r
 | **Mirror address** | Optional. The root of an off-site mirror, e.g. `https://systemoverload.org`. A trailing slash or a pasted `/api/push` is trimmed, and a bare hostname gets `https://`. Blank sends nothing anywhere. |
 | **Mirror push key** | Whatever `MIRROR_PUSH_KEY` is on that host. The write key, and not the passcode people type to read the site. |
 | Statbotics | EPA. No key needed. |
+
+### The admin panel
+
+`/` on the hub laptop is an admin panel, and it has two locks because there are two different
+things to stop.
+
+**The lock is against an accident.** A hub is configured once and then left alone for two days,
+on a laptop that sits on the scoring table with people around it. So every pane on the page opens
+read-only — every box, every dropdown, every button — until **UNLOCK** is pressed. It locks
+itself again after ten minutes untouched, and on every reload. Nothing on that page is a thing
+anybody needs to do in a hurry.
+
+**The admin code is against somebody else**, and it is optional. Set one and unlocking asks for
+it; the token it hands back lives in that browser tab only, never in storage, and the hub renews
+it while the page is being used. Changing the code signs out every token it ever issued. A team
+that never sets one still gets the lock — the same call the picklist already makes about its own
+passcode, and for the same reason: a team must not find its own hub locked by a default.
+
+The two codes are separate on purpose. The **strategy passcode** is shared with the strategy
+table and gates the picklist and the AI answers. The **admin code** gates this page. Forgotten?
+Start the hub with `--clear-admin-code` on the laptop — whoever can do that already has the
+database and every key in it, so a code that could not be cleared from the machine it lives on
+would lock a team out and protect nothing.
+
+Server-side, the lock is the second gate and not the only one: `/api/config`, `/api/keycheck` and
+`/api/keytest` still require the hub machine first, and then a valid admin token whenever a code
+is set.
+
+### Switching the event
+
+The event key is the one setting that changes every screen in the building at once, and the tab
+that changed it is the one place that does not show. So the hub refuses that save the first time
+and says what it is holding — *this hub is on 2026casf and holds 412 scouting records for it* —
+and the page offers one button to go through with it.
+
+Nothing is deleted by a switch. Every row is stored under its own event key and comes back the
+moment the old key is set again. The confirmation is asked only when there is something to lose:
+setting the key for the first time, re-saving the same key, or switching away from an event with
+nothing in it are all ordinary, and are asked nothing.
 
 ### What happens to a key on the way in
 
@@ -639,11 +680,13 @@ Two more things on that page:
 
 ```
 python3 server/hub.py [--port 6059] [--db data/scouting.db] [--no-mdns] [--no-poll]
-                      [--allow-remote-config]
+                      [--allow-remote-config] [--clear-admin-code]
 ```
 
 `--no-mdns` skips answering to `scout.local`. `--allow-remote-config` lets any device on the
-network change hub settings — off by default, and rarely what you want.
+network change hub settings — off by default, and rarely what you want. `--clear-admin-code`
+forgets the code that locks the Setup page and then carries on serving, for when nobody can
+remember it.
 
 `--no-poll` stops the hub reaching out to Nexus, TBA, FRC Events, Statbotics or Lovat; it still
 serves everything already in the database. Use it to look at a saved event without touching the

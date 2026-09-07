@@ -92,12 +92,15 @@ class Field:
     `shape` is what the vendor is known to issue and is advisory only - it can
     only ever raise a warning.  `secret` is false for the two boxes that hold a
     name rather than a key, which changes what counts as obviously wrong (an
-    address is a fine username; it is never a key).
+    address is a fine username; it is never a key).  `code` marks the two boxes
+    that hold a passcode this team made up rather than a key a vendor issued:
+    they are trimmed and never anything else.
     """
 
-    def __init__(self, label, where="", shape=None, shape_says="", secret=True):
+    def __init__(self, label, where="", shape=None, shape_says="", secret=True, code=False):
         self.label, self.where = label, where
         self.shape, self.shape_says, self.secret = shape, shape_says, secret
+        self.code = code
 
 
 FIELDS = {
@@ -114,11 +117,17 @@ FIELDS = {
         re.compile(r"^lvt-\S+$"), "Lovat keys start with `lvt-`"),
     "aiKey": Field("AI", "the AI KEY box"),
     "mirrorKey": Field("mirror push key", "the MIRROR PUSH KEY box"),
-    #: Not a key, and not checked like one - but a passcode with a space on the
-    #: end locks a lead out of their own picklist and looks identical to one
-    #: without.  Trimmed, never rejected.
-    "strategyPin": Field("strategy passcode", "the STRATEGY PASSCODE box"),
+    #: Neither of these is a key, and neither is checked like one - but a
+    #: passcode with a space on the end locks a lead out of their own picklist,
+    #: or out of their own settings, and looks identical to one without.
+    #: Trimmed, never rejected.
+    "strategyPin": Field("strategy passcode", "the STRATEGY PASSCODE box", code=True),
+    "adminCode": Field("admin code", "the ADMIN CODE box", code=True),
 }
+
+#: The two that are hashed rather than stored, and so are saved through their
+#: own call rather than written to a settings row.
+CODES = tuple(k for k, f in FIELDS.items() if f.code)
 
 
 def scrub(raw):
@@ -216,7 +225,7 @@ def check(field, raw, ai_provider=None):
     if not raw.strip():
         return out                        # deliberately cleared
 
-    if field == "strategyPin":
+    if spec.code:
         # Trimmed and nothing else: a passcode is allowed to be any short thing
         # a team can shout across a pit, including one that looks like junk.
         out["value"] = raw.strip()

@@ -70,6 +70,13 @@ On the **laptop itself**, open a browser and go to **http://localhost:6059/**
 > politely tell you to go to the laptop. That is on purpose — nobody on the venue wifi can
 > change your settings.
 
+**The page opens locked.** Press **UNLOCK** at the top before you can type into anything. It
+locks itself again after ten minutes and whenever the page is reloaded, because this laptop
+spends two days on a table with people around it and one stray keystroke in the event key box
+changes every screen in the building. If you want it to ask for a code as well as a click, set
+an **admin code** in the panel — and if your team ever forgets it, start the hub with
+`--clear-admin-code` on the laptop.
+
 All of the keys are free. **Nexus is required** — see below. The rest are optional and the app
 runs without them, just with less live data.
 
@@ -85,8 +92,8 @@ runs without them, just with less live data.
 The fuel numbers always come from The Blue Alliance, whichever other keys you set. FRC Events
 only gets you the result sooner.
 
-**Paste the key and press SAVE & REFRESH, then press TEST KEYS.** Two things about that page are
-worth knowing before the Saturday:
+**Unlock, paste the key, press SAVE & REFRESH, then press TEST KEYS.** Three things about that
+page are worth knowing before the Saturday:
 
 - It takes the wrapping off a paste for you. The header name, the quotes, a line break from an
   email — all of it comes off, and the box shows you what will actually be saved. A key that
@@ -99,6 +106,10 @@ worth knowing before the Saturday:
   everywhere else, deliberately, because the app is built to keep running when a source goes
   down. Do this at home. A rejected key found on the Saturday morning is a key you cannot
   replace on the Saturday morning.
+- **Changing the event key is asked about twice.** Once the hub holds scouting for an event,
+  pointing it at a different one refuses the first time and tells you what it is holding. Nothing
+  is ever deleted — the old event comes straight back if you set its key again — but every phone
+  and every screen follows the hub, so it is not a thing to do by leaning on a keyboard.
 
 **Why Nexus is the one you cannot skip.** Nexus is what tells the hub a match has taken the
 field, and that is what opens the scouting screen on all six phones. Nothing else carries it —
@@ -569,7 +580,8 @@ docs/features.md              what every screen and field does
 docs/how-it-works.md          why the tricky parts work the way they do
 ```
 
-`data/` is excluded from git on purpose: it holds your API keys and strategy passcode.
+`data/` is excluded from git on purpose: it holds your API keys, and the salted hashes of the
+strategy passcode and the admin code.
 
 ## Two more documents
 

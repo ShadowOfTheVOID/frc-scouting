@@ -846,10 +846,14 @@ def test_key_hygiene(L):
                 code == 200 and L.store.get("tbaKey") == "short"
                 and "tbaKey" in r.get("warnings", {}), f"({code} {r})")
 
-    code, r = L.req("/api/config", {"eventKey": " https://www.thebluealliance.com/event/2026CASF/ "})
+    # confirmEventSwitch because the harness is seeded: pointing a hub that
+    # holds scouting at another event is asked about once, and test_admin_panel
+    # is where that is checked.
+    code, r = L.req("/api/config", {"eventKey": " https://www.thebluealliance.com/event/2026CASF/ ",
+                                    "confirmEventSwitch": True})
     ok &= check("an event page address is saved as the event key",
                 L.store.get("eventKey") == "2026casf", f"({L.store.get('eventKey')!r})")
-    code, r = L.req("/api/config", {"eventKey": "casf"})
+    code, r = L.req("/api/config", {"eventKey": "casf", "confirmEventSwitch": True})
     ok &= check("an event key with no year on it is flagged, not refused",
                 code == 200 and "eventKey" in r.get("warnings", {}), f"({r})")
 
@@ -881,6 +885,96 @@ def test_key_hygiene(L):
     ok &= check("testing the keys reports every unset one as unset, not as broken",
                 code == 200 and all(v["state"] == "unset" for v in r["checked"].values()),
                 f"({r.get('checked')})")
+
+    L.store.set("eventKey", was)      # hand the shared harness back its event
+    return ok
+
+
+def test_admin_panel(L):
+    """The settings are an admin panel, not a page anyone at the laptop can retype.
+
+    Two separate things, and they are separate on purpose. The **lock** is
+    against an accident - a hub is set up once and then left alone for two
+    days, on a laptop that sits on the scoring table with people around it. The
+    **code** is against somebody else, and is optional: a team that never sets
+    one must not find its own hub locked, which is the same call the picklist
+    already makes about its passcode.
+    """
+    ok = True
+    was = L.store.get("eventKey")
+
+    code, c = L.req("/api/config")
+    ok &= check("with no admin code the settings are open, and say so",
+                c["admin"] == {"set": False, "unlocked": True}, f"({c['admin']})")
+    code, _ = L.req("/api/config", {"ourTeam": "6059"})
+    ok &= check("and a save goes through", code == 200 and L.store.get("ourTeam") == "6059")
+
+    L.req("/api/config", {"adminCode": "hub-6059"})
+    code, c = L.req("/api/config")
+    ok &= check("setting an admin code locks the settings behind it",
+                c["admin"] == {"set": True, "unlocked": False}, f"({c['admin']})")
+    ok &= check("and the code itself never comes back out",
+                "hub-6059" not in json.dumps(c) and "adminCode" not in c)
+
+    code, r = L.req("/api/config", {"ourTeam": "254"})
+    ok &= check("a save without it is refused, and says which button to press",
+                code == 403 and r.get("locked") is True and "UNLOCK" in r["error"],
+                f"({code} {r})")
+    ok &= check("and changed nothing", L.store.get("ourTeam") == "6059")
+    for path in ("/api/keycheck", "/api/keytest"):
+        code, _ = L.req(path, {})
+        ok &= check(f"{path} is behind the same lock", code == 403, f"({code})")
+
+    code, r = L.req("/api/admin/unlock", {"code": "hub-6058"})
+    ok &= check("a wrong admin code is refused", code == 403 and not r.get("token"), f"({r})")
+    code, r = L.req("/api/admin/unlock", {"code": "hub-6059"})
+    tok = r.get("token")
+    ok &= check("the right one hands back a token", code == 200 and bool(tok))
+
+    hdr = {"X-Admin-Token": tok or ""}
+    code, _ = L.req("/api/config", {"ourTeam": "254"}, headers=hdr)
+    ok &= check("which is what a save rides on",
+                code == 200 and L.store.get("ourTeam") == "254", f"({code})")
+    code, c = L.req("/api/config", headers=hdr)
+    ok &= check("and the page is told it is unlocked", c["admin"]["unlocked"] is True)
+
+    code, _ = L.req("/api/admin/lock", {}, headers=hdr)
+    code, _ = L.req("/api/config", {"ourTeam": "6059"}, headers=hdr)
+    ok &= check("locking again spends the token immediately",
+                code == 403 and L.store.get("ourTeam") == "254", f"({code})")
+
+    # Changing the code invalidates every token it ever handed out, the same as
+    # the strategy passcode.
+    _, r = L.req("/api/admin/unlock", {"code": "hub-6059"})
+    hdr = {"X-Admin-Token": r.get("token") or ""}
+    L.req("/api/config", {"adminCode": "hub-6060"}, headers=hdr)
+    code, _ = L.req("/api/config", {"ourTeam": "6059"}, headers=hdr)
+    ok &= check("changing the code signs the old token out", code == 403, f"({code})")
+
+    _, r = L.req("/api/admin/unlock", {"code": "hub-6060"})
+    hdr = {"X-Admin-Token": r.get("token") or ""}
+    L.req("/api/config", {"adminCode": ""}, headers=hdr)
+    code, c = L.req("/api/config")
+    ok &= check("and clearing it opens the settings back up",
+                c["admin"] == {"set": False, "unlocked": True}, f"({c['admin']})")
+
+    # ---- the event key, which is the switch that changes every screen at once
+    ek = L.store.get("eventKey")
+    code, r = L.req("/api/config", {"eventKey": "2026other"})
+    ok &= check("switching a hub that holds scouting is asked about, not done",
+                code == 409 and r["switch"]["from"] == ek and r["switch"]["records"] > 0,
+                f"({code} {r})")
+    ok &= check("and nothing was saved by the asking", L.store.get("eventKey") == ek)
+    code, _ = L.req("/api/config", {"eventKey": ek})
+    ok &= check("re-saving the same event key is not a switch", code == 200)
+    code, _ = L.req("/api/config", {"eventKey": "2026other", "confirmEventSwitch": True})
+    ok &= check("confirmed, it goes through",
+                code == 200 and L.store.get("eventKey") == "2026other")
+    code, _ = L.req("/api/config", {"eventKey": "2026third"})
+    ok &= check("and an event with nothing in it switches away freely",
+                code == 200 and L.store.get("eventKey") == "2026third", f"({code})")
+    ok &= check("the old event's scouting is still in the database, not deleted",
+                len(L.store.scout_entries(ek)) > 0, f"({len(L.store.scout_entries(ek))} rows)")
 
     L.store.set("eventKey", was)      # hand the shared harness back its event
     return ok
@@ -1188,7 +1282,7 @@ def main():
                    test_junk_payload_cannot_blank_the_dashboard,
                    test_clock_correction_never_invents_numbers,
                    test_seats, test_seat_lifetime, test_match_clock, test_reconcile,
-                   test_config_scope, test_key_hygiene,
+                   test_config_scope, test_key_hygiene, test_admin_panel,
                    test_trend_series, test_defence_counts_both_ways,
                    test_ai_is_gated_and_grounded,
                    test_nexus_tba_one_row, test_legacy_keys_migrate,

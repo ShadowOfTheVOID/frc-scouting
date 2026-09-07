@@ -34,6 +34,19 @@
   .forget{margin-left:8px;background:none;border:none;padding:0;cursor:pointer;
     font:800 9px Barlow,sans-serif;letter-spacing:.12em;color:var(--t5);text-decoration:underline}
   .forget:hover{color:var(--red-alert)}
+  /* The lock bar, and what a locked page looks like: readable, obviously not
+     editable, and one button away from being editable. */
+  .lockbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .lockbar input{background:var(--raised);border:1px solid var(--btn);border-radius:8px;
+    padding:9px 12px;color:var(--t0);font:500 13px Barlow,sans-serif;width:200px}
+  .lockstate{font:800 11px Barlow,sans-serif;letter-spacing:.12em}
+  .lockstate.shut{color:var(--amber)}
+  .lockstate.open{color:var(--green-soft)}
+  .pane.dim{opacity:.62}
+  .pane.dim input,.pane.dim select,.pane.dim button{cursor:not-allowed}
+  #switchAsk{border:1px solid var(--red-ring);border-radius:8px;padding:10px 12px;
+    margin-top:8px;color:var(--red-soft)}
+  #switchAsk button{margin-top:8px}
 </style>
 </head>
 <body>
@@ -48,6 +61,24 @@
         <a class="lk" href="/dashboard">DASHBOARD</a>
         <a class="lk" href="/join">JOIN QR</a>
       </div>
+    </div>
+  </div>
+
+  <div class="cols" style="grid-template-columns:1fr">
+    <div class="pane mid" id="lockPane">
+      <div class="eyebrow">ADMIN</div>
+      <div class="lockbar">
+        <span class="lockstate shut" id="lockState">SETTINGS LOCKED</span>
+        <input id="adminEntry" class="hide" type="password" placeholder="admin code"
+          autocomplete="off" autocapitalize="off" spellcheck="false">
+        <button class="go" id="unlock">UNLOCK</button>
+        <button class="go hide" id="lock" style="background:var(--btn)">LOCK NOW</button>
+        <span class="hint" id="lockSay"></span>
+      </div>
+      <div class="hint">Everything below is read-only until you unlock it, and it locks itself
+        again after ten minutes and on every reload. This hub is set up once and then left
+        alone on a table with people around it — one stray keystroke in the event key box
+        would change every screen in the building.</div>
     </div>
   </div>
 
@@ -70,6 +101,7 @@
         <div class="f"><label>OUR TEAM</label>
           <input id="ourTeam" inputmode="numeric" placeholder="6059">
           <div class="h">Optional. Highlights us in every table.</div></div>
+        <div class="hide" id="switchAsk"></div>
       </div>
     </div>
 
@@ -133,6 +165,14 @@
             of the other two is refused here rather than saved — that mismatch has no other
             symptom than every AI answer saying the model could not be reached.</div>
           <div class="say"></div></div>
+        <div class="f" data-key="adminCode"><label>ADMIN CODE<span class="tag"></span></label>
+          <input id="adminCode" placeholder="leave blank for no code" autocomplete="off">
+          <div class="h">Optional, and not the strategy passcode — this one gates <i>this
+            page</i>: the event key, the API keys, the passcode below. Without it the panel
+            still opens locked, which stops an accident; with it, unlocking needs the code.
+            Forgotten it? Start the hub with <code>--clear-admin-code</code> on the laptop —
+            whoever can do that already has the keys anyway.</div>
+          <div class="say"></div></div>
         <div class="f" data-key="strategyPin"><label>STRATEGY PASSCODE<span class="tag"></span></label>
           <input id="strategyPin" placeholder="leave blank for no lock" autocomplete="off">
           <div class="h">Gates the picklist and every AI answer. Shared, not personal — the hub stores only a hash
@@ -185,9 +225,97 @@ import * as net from '/js/net.js';
 const $ = (s) => document.querySelector(s);
 await net.start();
 
+// ------------------------------------------------------------------ the lock
+//
+// This page is an admin panel, and it has two locks rather than one because
+// there are two different things to stop.
+//
+// The **lock** stops an accident. A hub is configured once and then left alone
+// for two days, on a laptop that sits on the scoring table with people around
+// it - so the panel opens read-only, every time, and locks itself again after
+// ten minutes. Nothing here is a thing anybody needs to do in a hurry.
+//
+// The **admin code** stops somebody else, and is optional. A team that never
+// sets one still gets the lock; a team that does is asked for it every time
+// the panel is opened. The token lives in this tab and nowhere else - not in
+// localStorage - so closing the page, or reloading it, locks the hub again.
+
+let adminToken = null;
+let adminSet = false;
+let idleTimer = null;
+
+/** net.api, carrying whatever this tab is currently allowed to do. */
+function admin(path, opts = {}) {
+  return net.api(path, { ...opts,
+    headers: { ...(opts.headers || {}), ...(adminToken ? { 'X-Admin-Token': adminToken } : {}) } });
+}
+
+/** Everything below the lock bar, on or off. */
+function applyLock() {
+  const on = !!adminToken;
+  $('#lockState').textContent = on ? 'SETTINGS UNLOCKED' : 'SETTINGS LOCKED';
+  $('#lockState').className = 'lockstate ' + (on ? 'open' : 'shut');
+  $('#unlock').classList.toggle('hide', on);
+  $('#lock').classList.toggle('hide', !on);
+  $('#adminEntry').classList.toggle('hide', on || !adminSet);
+  for (const el of document.querySelectorAll('.pane:not(#lockPane)')) {
+    el.classList.toggle('dim', !on);
+    for (const c of el.querySelectorAll('input,select,button')) c.disabled = !on;
+  }
+}
+
+/** Ten minutes of nobody touching it is a page nobody is using. */
+function keepAwake() {
+  clearTimeout(idleTimer);
+  if (!adminToken) return;
+  idleTimer = setTimeout(() => doLock('Locked itself — nothing had been touched for ten minutes.'),
+                         10 * 60 * 1000);
+}
+
+async function doUnlock() {
+  $('#lockSay').textContent = '';
+  try {
+    const r = await net.api('/api/admin/unlock', { method: 'POST',
+      body: JSON.stringify({ code: $('#adminEntry').value }) });
+    adminToken = r.token;
+    $('#adminEntry').value = '';
+    $('#lockSay').textContent = `Unlocked. Locks itself again after ten minutes.`;
+    applyLock();
+    keepAwake();
+    try { await reload(); } catch { /* offline */ }
+  } catch (e) {
+    $('#lockSay').textContent = e.status === 403
+      ? ((e.body && e.body.error) || 'That is not the admin code.')
+      : 'Could not unlock: ' + e.message;
+    if (adminSet) $('#adminEntry').focus();
+  }
+}
+
+async function doLock(why) {
+  const tok = adminToken;
+  adminToken = null;
+  applyLock();
+  clearTimeout(idleTimer);
+  $('#lockSay').textContent = why || 'Locked.';
+  if (tok) {
+    try {
+      await net.api('/api/admin/lock', { method: 'POST', body: '{}',
+                                         headers: { 'X-Admin-Token': tok } });
+    } catch { /* the token expires on its own anyway */ }
+  }
+}
+
+$('#unlock').onclick = doUnlock;
+$('#lock').onclick = () => doLock('Locked.');
+$('#adminEntry').addEventListener('keydown', (e) => { if (e.key === 'Enter') doUnlock(); });
+for (const ev of ['input', 'click']) document.addEventListener(ev, keepAwake, true);
+
 /** Everything on this page, from the hub. Called on load and after every save. */
 async function reload() {
-  const c = await net.api('/api/config');
+  // Through `admin`, not `net.api`: the hub decides whether this tab is still
+  // past the lock, and it can only say so if it is shown the token. Reading
+  // this route without one made every unlock undo itself one round trip later.
+  const c = await admin('/api/config');
   $('#eventKey').value = c.eventKey || '';
   $('#eventLevel').value = c.eventLevel || 'regional';
   $('#ourTeam').value = c.ourTeam || '';
@@ -198,11 +326,17 @@ async function reload() {
   buildModelPicker(c.ai || {});
   bits.push(c.multipliersFittedFrom ? `CALIBRATED · ${c.multipliersFittedFrom} WINDOWS` : 'PRIORS ONLY');
   bits.push(c.picklistLocked ? 'PICKLIST LOCKED' : 'PICKLIST OPEN');
+  bits.push((c.admin || {}).set ? 'ADMIN CODE SET' : 'NO ADMIN CODE');
   // SET means a string is stored, and has never meant more than that. TEST
   // KEYS below is the only thing on this page that knows whether one works.
   $('#sub').textContent = bits.join(' · ');
   showSaved(c.saved || {});
   showMirror(c);
+  adminSet = !!(c.admin || {}).set;
+  // The hub is the authority on whether this tab is still past the lock: an
+  // expired token has to close the panel here too, not just be refused there.
+  if (adminToken && !(c.admin || {}).unlocked) adminToken = null;
+  applyLock();
   return c;
 }
 
@@ -249,7 +383,7 @@ async function forget(r) {
   if (!confirm(`Forget the saved ${r.name}? Nothing here can show it again, so putting it `
              + 'back means fetching it from where it came from.')) return;
   r.input.value = '';
-  await net.api('/api/config', { method: 'POST', body: JSON.stringify({ [r.field]: '' }) });
+  await admin('/api/config', { method: 'POST', body: JSON.stringify({ [r.field]: '' }) });
   await reload();
   tell(r, 'note', 'Forgotten.');
 }
@@ -284,7 +418,7 @@ async function inspect(r) {
   const body = { [r.field]: asked, aiModel: $('#aiModel').value };
   let res;
   try {
-    res = await net.api('/api/keycheck', { method: 'POST', body: JSON.stringify(body) });
+    res = await admin('/api/keycheck', { method: 'POST', body: JSON.stringify(body) });
   } catch { return; }                    // offline: the save will say so
   // Pressing SAVE blurs the box it was in, so this answer can arrive after the
   // save has already emptied it - and a line about a key that is no longer on
@@ -337,7 +471,7 @@ function showMirror(c) {
 $('#pushNow').onclick = async () => {
   $('#mirrorStatus').textContent = 'pushing…';
   try {
-    const r = await net.api('/api/mirror/push', { method: 'POST', body: '{}' });
+    const r = await admin('/api/mirror/push', { method: 'POST', body: '{}' });
     showMirror(await net.api('/api/config'));
     if (!r.ok) $('#mirrorStatus').innerHTML =
       `<b style="color:var(--red-alert)">Failed:</b> ${r.reason || 'unknown'}`;
@@ -386,9 +520,10 @@ function buildModelPicker(ai) {
 }
 
 const SECRETS = ['tbaKey','nexusKey','nexusToken','frcEventsUser','frcEventsToken',
-                'lovatKey','aiKey','strategyPin','mirrorKey'];
+                'lovatKey','aiKey','strategyPin','adminCode','mirrorKey'];
 
-$('#save').onclick = async () => {
+/** What the boxes currently say, as the hub wants it. */
+function typed() {
   const body = { eventKey: $('#eventKey').value.trim(), eventLevel: $('#eventLevel').value,
                  ourTeam: $('#ourTeam').value.trim() };
   for (const k of SECRETS) {
@@ -402,10 +537,38 @@ $('#save').onclick = async () => {
   body.mirrorUrl = $('#mirrorUrl').value.trim();
   const picked = $('#aiModel').value;
   body.aiModel = picked === 'other' ? $('#aiOther').value.trim() : picked;
+  return body;
+}
+
+/**
+ * Ask before pointing the hub at a different event.
+ *
+ * The hub refuses that save outright the first time (409) and says what it is
+ * holding. Nothing is deleted by a switch - every row is stored under its own
+ * event key - but every screen in the building changes at once, and the tab
+ * that did it is the one place that does not show.
+ */
+function askSwitch(sw) {
+  const box = $('#switchAsk');
+  box.textContent = '';
+  const p = document.createElement('div');
+  p.textContent = `This hub is on ${sw.from} and holds ${sw.records} scouting record(s) for `
+    + `it. Switching to ${sw.to} hides all of that behind the new event — nothing is deleted, `
+    + `and it comes back if you set ${sw.from} again.`;
+  const go = document.createElement('button');
+  go.className = 'go'; go.textContent = `SWITCH TO ${sw.to.toUpperCase()}`;
+  go.onclick = () => save({ confirmEventSwitch: true });
+  box.append(p, go);
+  box.classList.remove('hide');
+}
+
+async function save(extra = {}) {
+  $('#switchAsk').classList.add('hide');
   $('#status').textContent = 'saving…';
   for (const r of rows) tell(r, '', '');
+  const body = { ...typed(), ...extra };
   try {
-    const res = await net.api('/api/config', { method:'POST', body: JSON.stringify(body) });
+    const res = await admin('/api/config', { method:'POST', body: JSON.stringify(body) });
     for (const [field, list] of Object.entries(res.notes || {})) {
       const r = rowFor(field); if (r) tell(r, 'note', `Saved after cleaning up: ${list.join(', ')}.`);
     }
@@ -416,10 +579,29 @@ $('#save').onclick = async () => {
     $('#status').textContent = 'Saved. Fetching event data…'
       + (fixed ? ' Read the notes under the boxes.' : ' Now press TEST KEYS.');
     for (const k of SECRETS) $('#'+k).value = '';
+    // A new admin code signs out every token it ever handed out, this tab's
+    // included - which is the right thing and looks like a bug unless it is
+    // said out loud.
+    if ('adminCode' in body) {
+      adminToken = null;
+      $('#status').textContent = body.adminCode
+        ? 'Admin code saved. The panel locked itself — unlock it with the new code.'
+        : 'Admin code cleared. The panel still opens locked; unlocking it no longer asks.';
+    }
     try { await reload(); } catch { /* offline */ }
   } catch (e) {
     // Nothing was saved, and the boxes still hold what was typed - so this is
     // a re-press, not a re-type, once the named box is fixed.
+    if (e.status === 409 && e.body && e.body.switch) {
+      askSwitch(e.body.switch);
+      $('#status').textContent = 'Nothing was saved — that would change the event.';
+      return;
+    }
+    if (e.status === 403 && e.body && e.body.locked) {
+      adminToken = null; applyLock();
+      $('#status').textContent = 'Nothing was saved — the panel locked itself. Unlock and try again.';
+      return;
+    }
     const problems = (e.body && e.body.problems) || {};
     for (const [field, text] of Object.entries(problems)) {
       const r = rowFor(field); if (r) tell(r, 'bad', text, 'No.');
@@ -428,7 +610,9 @@ $('#save').onclick = async () => {
       ? 'Nothing was saved. Fix the box marked in red and press save again.'
       : 'Failed: ' + e.message;
   }
-};
+}
+
+$('#save').onclick = () => save();
 
 /**
  * Ask every vendor whether the key stored here works.
@@ -448,7 +632,7 @@ $('#test').onclick = async () => {
   const NAME = { tba: 'The Blue Alliance', nexus: 'Nexus', frcEvents: 'FRC Events',
                  lovat: 'Lovat', ai: 'AI model' };
   try {
-    const res = await net.api('/api/keytest', { method: 'POST', body: '{}' });
+    const res = await admin('/api/keytest', { method: 'POST', body: '{}' });
     const out = $('#testOut');
     out.textContent = '';
     for (const [k, name] of Object.entries(NAME)) {
