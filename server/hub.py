@@ -34,6 +34,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ai
 import analytics
 import discover
+import envfile
+import keys as keyhygiene
 import lovat as lovat_report
 import offsite
 import rules
@@ -213,6 +215,60 @@ class Hub:
 
     def mirror(self):
         return offsite.Mirror(self.cfg("mirrorUrl"), self.cfg("mirrorKey"))
+
+    def verify_keys(self):
+        """Ask every vendor whether the key saved here actually works.
+
+        This is what the TEST KEYS button on the Setup page is for, and it is
+        the only thing in the app that can tell a lead the difference between
+        the two states that look identical everywhere else: a key that is
+        wrong, and a service with nothing to say yet.  `SET` on that page has
+        only ever meant "a string is stored".
+
+        Five vendors at up to twenty seconds each is over a minute in a row, so
+        they go at once - a lead standing at the laptop pressing a button is
+        the one caller in this file allowed to be in a hurry.
+        """
+        ek = self.event_key()
+        season, _ = _split_event_key(ek)
+        checks = {
+            "tba": lambda: self.tba().verify(),
+            "nexus": lambda: self.nexus().verify(ek),
+            "frcEvents": lambda: self.frc_events().verify(int(season) if season else 2026),
+            "lovat": lambda: self.lovat().verify(ek),
+            "ai": lambda: self.ai().verify(),
+            # The mirror is the only one of these that sends anything out
+            # rather than fetching, so "does the key work" is worth knowing
+            # before an event rather than after one - a push that is failing
+            # has no symptom at the venue at all, because everything at the
+            # venue keeps working.
+            "mirror": lambda: self.mirror().verify(),
+        }
+        out = {}
+
+        def run(name, fn):
+            try:
+                out[name] = fn()
+            except Exception as e:
+                # A vendor is allowed to answer with anything at all, including
+                # something that breaks the client parsing it. That is still an
+                # answer about them, not a reason to 500 the button.
+                out[name] = sources.verdict("down", f"the check itself failed: {e}")
+
+        threads = [threading.Thread(target=run, args=(n, f), daemon=True)
+                   for n, f in checks.items()]
+        for t in threads:
+            t.start()
+        # One deadline for all five, not thirty seconds each in turn - which is
+        # two and a half minutes of a button that looks stuck.
+        deadline = time.time() + 30
+        for t in threads:
+            t.join(timeout=max(0.1, deadline - time.time()))
+        for name in checks:
+            out.setdefault(name, sources.verdict("down", "timed out waiting for an answer"))
+        self.note("info", "api keys tested: "
+                          + ", ".join(f"{n} {v['state']}" for n, v in sorted(out.items())))
+        return {"eventKey": ek, "at": time.time(), "checked": out}
 
     def ai_ceiling(self):
         try:
@@ -598,49 +654,138 @@ class Hub:
             self.note("info", f"frc events posted {len(added)} result(s) ahead of tba")
             self.broadcast("earlyScores", {"matches": added})
 
-    # ----------------------------------------------------------- picklist
+    # -------------------------------------------------------- shared codes
     #
-    # A shared passcode, not per-person accounts and not IP allow-listing.
+    # Shared passcodes, not per-person accounts and not IP allow-listing.
     # Nothing about who someone is gets stored - only whether they know the
-    # code - and the lead can rotate it before alliance selection.
+    # code - and the lead can rotate one at any point.
+    #
+    # There are two, and they answer different questions.  The **strategy**
+    # passcode is about the picklist and who may see per-scout numbers; it is
+    # shared with the strategy table and lasts the competition day.  The
+    # **admin** code is about this hub's settings - the event it is pointed at,
+    # the API keys, the passcode itself - and it is the one that stops a hub
+    # being changed by somebody leaning on the laptop between matches.
+    #
+    # Both work the same way underneath, so it is written once.
 
-    def set_pin(self, pin):
-        if not pin:
-            self.store.set("strategyPin", None)
-            self.store.set("unlockTokens", {})
+    #: The strategy passcode lasts the competition day; a lead types it at
+    #: breakfast and is not asked again.  Admin is minutes, renewed on use:
+    #: settings are edited in a burst and then left alone, and a Setup page
+    #: left open on the scoring table is exactly the accident being prevented.
+    STRATEGY_HOURS = 16
+    ADMIN_MINUTES = 20
+
+    def _set_code(self, row, tokens_row, code):
+        if not code:
+            self.store.set(row, None)
+            self.store.set(tokens_row, {})
             return
         salt = secrets.token_hex(8)
-        digest = hashlib.sha256((salt + pin).encode()).hexdigest()
-        self.store.set("strategyPin", {"salt": salt, "hash": digest})
-        self.store.set("unlockTokens", {})      # a new code invalidates old ones
+        digest = hashlib.sha256((salt + code).encode()).hexdigest()
+        self.store.set(row, {"salt": salt, "hash": digest})
+        self.store.set(tokens_row, {})          # a new code invalidates old ones
+
+    def _check_code(self, row, code):
+        rec = self.store.get(row)
+        if not rec:
+            return True                          # no code configured: open
+        want = rec["hash"]
+        got = hashlib.sha256((rec["salt"] + (code or "")).encode()).hexdigest()
+        return hmac.compare_digest(want, got)
+
+    def _issue(self, tokens_row, seconds):
+        tok = secrets.token_urlsafe(18)
+
+        def apply(toks):
+            toks = dict(toks or {})
+            toks[tok] = time.time() + seconds
+            return {k: v for k, v in toks.items() if v > time.time()}, None
+        self.store.mutate(tokens_row, apply, {})
+        return tok
+
+    def _token_ok(self, tokens_row, tok, renew=0):
+        toks = self.store.get(tokens_row) or {}
+        exp = toks.get(tok or "")
+        if not (exp and exp > time.time()):
+            return False
+        if renew:
+            # Renewed on use, so a lead part-way through typing eight keys is
+            # never locked out mid-save, and a panel nobody has touched still
+            # closes itself.
+            def apply(cur):
+                cur = dict(cur or {})
+                if tok in cur:
+                    cur[tok] = time.time() + renew
+                return {k: v for k, v in cur.items() if v > time.time()}, None
+            self.store.mutate(tokens_row, apply, {})
+        return True
+
+    def _drop_token(self, tokens_row, tok):
+        self.store.mutate(tokens_row,
+                          lambda cur: ({k: v for k, v in (cur or {}).items()
+                                        if k != tok and v > time.time()}, None), {})
+
+    # ----------------------------------------------------------- picklist
+
+    def set_pin(self, pin):
+        self._set_code("strategyPin", "unlockTokens", pin)
 
     def pin_set(self):
         return bool(self.store.get("strategyPin"))
 
     def check_pin(self, pin):
-        rec = self.store.get("strategyPin")
-        if not rec:
-            return True                          # no code configured: open
-        want = rec["hash"]
-        got = hashlib.sha256((rec["salt"] + (pin or "")).encode()).hexdigest()
-        return hmac.compare_digest(want, got)
+        return self._check_code("strategyPin", pin)
 
     def issue_token(self):
-        tok = secrets.token_urlsafe(18)
-
-        def apply(toks):
-            toks = dict(toks or {})
-            toks[tok] = time.time() + 16 * 3600    # lasts the competition day
-            return {k: v for k, v in toks.items() if v > time.time()}, None
-        self.store.mutate("unlockTokens", apply, {})
-        return tok
+        return self._issue("unlockTokens", self.STRATEGY_HOURS * 3600)
 
     def token_ok(self, tok):
         if not self.pin_set():
             return True
-        toks = self.store.get("unlockTokens") or {}
-        exp = toks.get(tok or "")
-        return bool(exp and exp > time.time())
+        return self._token_ok("unlockTokens", tok)
+
+    # -------------------------------------------------------------- admin
+    #
+    # The admin password is not stored here at all: it lives in `.env`, read at
+    # startup, and this hub only ever compares against it.  One place to set
+    # it, one place to look when it does not work, and a password that never
+    # goes into the database that gets copied to a mirror and exported to JSON.
+
+    def admin_password(self):
+        return envfile.admin_password()
+
+    def admin_set(self):
+        """Whether unlocking needs a password - including when it needs one
+        nobody can supply, because the value in `.env` is unusable."""
+        password, problem = self.admin_password()
+        return bool(password or problem)
+
+    def check_admin(self, code):
+        password, problem = self.admin_password()
+        if problem:
+            return False           # a broken password locks, it does not open
+        if not password:
+            return True            # none set: the panel's own lock is the guard
+        return hmac.compare_digest(password, (code or "").strip())
+
+    def issue_admin_token(self):
+        return self._issue("adminTokens", self.ADMIN_MINUTES * 60)
+
+    def admin_token_ok(self, tok):
+        """Whether this request may change settings.
+
+        Open when no password is set, the same call the picklist makes: a team
+        that has not set one up must not find its own hub locked. The panel
+        still opens locked either way - the lock is what stops an accident, and
+        the password is what stops somebody else.
+        """
+        if not self.admin_set():
+            return True
+        return self._token_ok("adminTokens", tok, renew=self.ADMIN_MINUTES * 60)
+
+    def end_admin(self, tok):
+        self._drop_token("adminTokens", tok)
 
     def picklist(self):
         # Two lists, because alliance selection asks two different questions:
@@ -1139,6 +1284,73 @@ class Hub:
                     sys.stderr.write(f"[poll] {name}: {e}\n")
             self.status["lastUpdate"] = time.time()
             self.stop_flag.wait(2.0)
+
+
+#: `2026casf`: the season, then the event's short code.  Advisory only - a new
+#: kind of key one season is not worth a hub that refuses to be configured.
+EVENT_KEY = re.compile(r"^\d{4}[a-z0-9]+$")
+
+
+def _event_key(raw):
+    """What somebody typed into the event key box, as the key every source uses.
+
+    The Blue Alliance and frc.events both put the key in the address bar, so
+    the address is what is on the clipboard about half the time, and both sites
+    display the code capitalised while every API wants it lower case.
+    """
+    s = raw.strip() if isinstance(raw, str) else ""
+    if "://" in s or s.lower().startswith("www."):
+        s = s.rstrip("/").rsplit("/", 1)[-1]
+    return re.sub(r"\s+", "", s).lower()
+
+
+def _event_switch(h, body):
+    """What a save would do to the event this hub is already on, or None.
+
+    Only a real switch counts, and only away from an event that has something
+    in it: setting the key for the first time, re-saving the same key, or
+    leaving the box alone are all ordinary and get asked nothing. Nothing is
+    deleted by a switch - every row is stored under its own event key and comes
+    back when the old key does - but every screen in the building changes at
+    once, and that is not something to discover by accident.
+    """
+    if "eventKey" not in body:
+        return None
+    now = h.event_key()
+    want, _ = _event_key_check(body["eventKey"])
+    if not now or not want or now == want:
+        return None
+    records = len(h.store.scout_entries(now)) + len(h.store.pit_entries(now))
+    if not records:
+        return None
+    return {"from": now, "to": want, "records": records}
+
+
+def _event_key_check(raw):
+    """`(key, warning)` - the same answer whether it is being saved or typed."""
+    ek = _event_key(raw)
+    if ek and not EVENT_KEY.match(ek):
+        return ek, ("An event key looks like `2026casf` - the year, then the event's short "
+                    "code. This is saved as typed, but nothing will load if it is wrong.")
+    return ek, None
+
+
+def _ai_provider(h, body):
+    """Which company's AI key this save expects, once its model is applied.
+
+    The model and the key are two boxes filled in together, and the mismatch
+    between them - a Claude key under a Gemini model - is the one AI setup
+    mistake with no symptom at all beyond "the model could not be reached".
+    Checking for it means knowing the provider the same save is about to set,
+    not the one already stored.
+    """
+    if isinstance(body.get("aiModel"), str):
+        provider, _, model = body["aiModel"].strip().rpartition(":")
+        model = model.strip()
+        if model.lower() in ("", "none"):
+            return ai.OFF
+        return provider.strip() or ai.provider_for(model) or ai.OFF
+    return h.ai().provider
 
 
 def _mirror_url(raw):
@@ -1731,6 +1943,24 @@ class Handler(BaseHTTPRequestHandler):
     def _unlocked(self):
         return Handler.hub.token_ok(self.headers.get("X-Strategy-Token"))
 
+    def _admin_ok(self):
+        """Whether this request may change hub settings.
+
+        Two separate gates, and both have to hold. `_is_local` is the boundary
+        that has always been here: settings are entered on the hub machine and
+        nowhere else. This is the second one - the admin code, when a team has
+        set one - and it is what makes the Setup page an admin panel rather
+        than a page anybody at the laptop can retype the event key into.
+        """
+        return Handler.hub.admin_token_ok(self.headers.get("X-Admin-Token"))
+
+    def _locked_out(self):
+        return self._json({
+            "error": "The hub settings are locked. Press UNLOCK on the admin page and "
+                     "enter the admin password.",
+            "locked": True,
+        }, 403)
+
     def _unlocked_strict(self):
         """Like _unlocked, but an unset passcode does not mean "everyone".
 
@@ -1834,6 +2064,11 @@ class Handler(BaseHTTPRequestHandler):
                 "keys": {"tba": bool(h.cfg("tbaKey")), "nexus": bool(h.cfg("nexusKey")),
                          "frcEvents": h.frc_events().ok, "lovat": bool(h.cfg("lovatKey")),
                          "ai": h.ai().ok, "mirror": h.mirror().ok},
+                # Which boxes have something in them, box by box, so the Setup
+                # page can say SAVED beside each one and offer to forget it.
+                # Whether, never what: no key value leaves the hub, and this
+                # route is open to everything on the venue wifi.
+                "saved": {k: bool(h.cfg(k)) for k in keyhygiene.FIELDS},
                 # The address is a setting and the setup page has to show what
                 # is saved; the push key is a secret and never comes back out.
                 "mirror": {"url": h.cfg("mirrorUrl") or None, "ok": h.mirror().ok,
@@ -1850,6 +2085,16 @@ class Handler(BaseHTTPRequestHandler):
                        "providers": dict(ai.PROVIDERS), "models": ai.catalogue(),
                        "default": ai.DEFAULT_MODEL},
                 "picklistLocked": h.pin_set(),
+                # Whether the settings are behind an admin code, and whether
+                # the asking page is currently past it. The panel opens locked
+                # either way: the code stops somebody else, the lock stops an
+                # accident, and a team with no code still gets the second one.
+                "admin": {"set": h.admin_set(), "unlocked": self._admin_ok(),
+                          # Where it is configured, never what it is, and the
+                          # reason when it is there but unusable - a panel that
+                          # nobody can unlock has to say why on the panel.
+                          "source": "env" if h.admin_set() else "none",
+                          "problem": h.admin_password()[1]},
                 "ourTeam": h.cfg("ourTeam"),
                 "status": h.status,
                 "multipliers": h.store.get("multipliers") or rules.BUCKET_PRIORS,
@@ -1968,11 +2213,53 @@ class Handler(BaseHTTPRequestHandler):
                     "error": "Hub settings can only be changed on the hub machine. "
                              "Open http://localhost:%d/ there." % self.server.server_address[1],
                 }, 403)
-            for k in ("eventKey", "tbaKey", "nexusKey", "nexusToken", "eventLevel", "ourTeam",
-                      "frcEventsUser", "frcEventsToken", "lovatKey",
-                      "aiProvider", "aiKey", "aiCallLimit", "mirrorKey"):
+            if not self._admin_ok():
+                return self._locked_out()
+            # Every credential arrives by copy and paste and a good half of them
+            # arrive with something else attached - a header name, the quotes
+            # from a code sample, a line break, or the Lovat key in the TBA box.
+            # None of that used to be noticed: it went into the settings row
+            # verbatim, this page said SET, and the service quietly returned
+            # nothing for the rest of the event.
+            cleaned, problems, warnings, notes = keyhygiene.check_all(
+                {k: body[k] for k in keyhygiene.FIELDS if k in body}, _ai_provider(h, body))
+            if problems:
+                # Nothing is saved when any box is wrong. The boxes still hold
+                # what was typed, so this costs a re-press and not a re-type,
+                # and a half-applied save is the one state nobody can debug.
+                return self._json({"error": "; ".join(problems.values()),
+                                   "problems": problems}, 400)
+            # Pointing the hub at a different event changes every screen in
+            # the building at once, and the tab that did it is the one place it
+            # does not show. Asked for a second time, once, and only when there
+            # is something to lose - a hub being set up for the first time is
+            # not made to confirm anything.
+            switch = _event_switch(h, body)
+            if switch and not body.get("confirmEventSwitch"):
+                return self._json({
+                    "error": "This hub is on %s and holds %d scouting record(s) for it. "
+                             "Switching to %s hides all of it behind the new event."
+                             % (switch["from"], switch["records"], switch["to"]),
+                    "switch": switch,
+                }, 409)
+            for k in ("eventLevel", "ourTeam", "aiProvider", "aiCallLimit"):
                 if k in body:
                     h.store.set(k, body[k])
+            for k, v in cleaned.items():
+                if k not in keyhygiene.CODES:   # hashed, never stored as typed
+                    h.store.set(k, v)
+            # An event key is pasted the same way and gets the same treatment:
+            # a whole TBA address, a capitalised code and a stray space are all
+            # what somebody means by "2026casf", and none of them work as typed.
+            if "eventKey" in body:
+                ek, warn = _event_key_check(body["eventKey"])
+                h.store.set("eventKey", ek)
+                if switch:
+                    h.note("warn", "event switched from %s to %s; %d record(s) for %s are "
+                                   "still in this database, behind the old key"
+                                   % (switch["from"], ek, switch["records"], switch["from"]))
+                if warn:
+                    warnings["eventKey"] = warn
             # A trailing slash, a bare hostname or a copied "/api/push" are all
             # what somebody means by "the mirror address", and none of them
             # work as typed. Normalising here means the setup page can be a
@@ -1993,12 +2280,39 @@ class Handler(BaseHTTPRequestHandler):
                     h.store.set("aiModel", model)
                     h.store.set("aiProvider",
                                 provider.strip() or ai.provider_for(model) or "none")
-            if "strategyPin" in body:
-                h.set_pin(body["strategyPin"])
-            if body.get("eventKey"):
-                h.store.put_event(body["eventKey"], level=body.get("eventLevel"))
+            if "strategyPin" in cleaned:
+                h.set_pin(cleaned["strategyPin"])
+            if h.cfg("eventKey") and "eventKey" in body:
+                h.store.put_event(h.cfg("eventKey"), level=body.get("eventLevel"))
             _poll_all(h)
-            return self._json({"ok": True})
+            # Saved, and everything that was quietly fixed or looks off on the
+            # way in, so the page can say so rather than leaving it to be found
+            # out on the Saturday.
+            return self._json({"ok": True, "warnings": warnings, "notes": notes})
+
+        if p in ("/api/keycheck", "/api/keytest"):
+            # Both are the Setup page's, and the Setup page is the hub laptop.
+            if not (self._is_local() or Handler.allow_remote_config):
+                return self._json({
+                    "error": "Hub settings can only be changed on the hub machine. "
+                             "Open http://localhost:%d/ there." % self.server.server_address[1],
+                }, 403)
+            if not self._admin_ok():
+                return self._locked_out()
+            if p == "/api/keytest":
+                return self._json(h.verify_keys())
+            # The same rules as the save, run as the boxes are filled in and
+            # storing nothing. One copy of the rules, on the server, so what
+            # the page says while you type cannot drift from what the save
+            # does. The values it echoes are the ones just sent to it.
+            cleaned, problems, warnings, notes = keyhygiene.check_all(
+                {k: body[k] for k in keyhygiene.FIELDS if k in body}, _ai_provider(h, body))
+            if "eventKey" in body:
+                cleaned["eventKey"], warn = _event_key_check(body["eventKey"])
+                if warn:
+                    warnings["eventKey"] = warn
+            return self._json({"cleaned": cleaned, "problems": problems,
+                               "warnings": warnings, "notes": notes})
 
         if p == "/api/matchstart":
             # A list here used to reach dict.get() as an unhashable key and take
@@ -2010,6 +2324,26 @@ class Handler(BaseHTTPRequestHandler):
             sid = body.get("scoutId")
             rec = h.start_match(mk.strip(), (str(sid).strip()[:4].upper() if sid else "") or "?")
             return self._json({"ok": True, "clock": rec, "serverTime": time.time()})
+
+        if p in ("/api/admin/unlock", "/api/admin/lock"):
+            # The settings boundary, first: an admin code is not a way to
+            # configure a hub from the stands.
+            if not (self._is_local() or Handler.allow_remote_config):
+                return self._json({
+                    "error": "Hub settings can only be changed on the hub machine. "
+                             "Open http://localhost:%d/ there." % self.server.server_address[1],
+                }, 403)
+            if p == "/api/admin/lock":
+                h.end_admin(self.headers.get("X-Admin-Token"))
+                return self._json({"ok": True})
+            if not h.check_admin(body.get("code")):
+                time.sleep(0.6)                  # blunt the guessing rate
+                h.note("warn", "an admin password was refused at the hub")
+                problem = h.admin_password()[1]
+                return self._json({"ok": False,
+                                   "error": problem or "That is not the admin password."}, 403)
+            return self._json({"ok": True, "token": h.issue_admin_token(),
+                               "minutes": h.ADMIN_MINUTES})
 
         if p == "/api/unlock":
             if not h.check_pin(body.get("pin")):
@@ -2346,7 +2680,44 @@ class Server(ThreadingHTTPServer):
     request_queue_size = 128
 
 
+def _set_admin_password():
+    """Ask for a password twice and write it into `.env`.  True if it was.
+
+    This exists because the alternative is telling a scouting lead to base64
+    something by hand and create a dotfile on a Windows laptop, where Explorer
+    hides the extension and will happily make `.env.txt`. Nothing about a
+    password should require that.
+    """
+    import getpass
+    print("\n  A blank password removes it: the panel still opens locked, and\n"
+          "  unlocking it is then just the button.\n")
+    try:
+        first = getpass.getpass("  new admin password: ")
+        again = getpass.getpass("  the same one again: ")
+    except (EOFError, KeyboardInterrupt):
+        print("\n  nothing changed")
+        return False
+    if first != again:
+        print("  those two do not match - nothing changed")
+        return False
+    if not first.strip():
+        path = envfile.write(envfile.ADMIN, "")
+        print(f"  admin password removed from {path}")
+        return True
+    path = envfile.write(envfile.ADMIN, envfile.encode(first))
+    os.environ[envfile.ADMIN] = envfile.encode(first)
+    print(f"  written to {path}, base64-encoded - which is not encryption:\n"
+          "  anyone who can read that file can read the password. Keep the file\n"
+          "  off shared drives and out of the repository (.gitignore has it).")
+    return True
+
+
 def main():
+    # Before anything reads an environment variable. A real one always wins
+    # over the file - a mirror host sets these through systemd, and a checkout
+    # must never quietly override the machine.
+    from_file = envfile.load()
+
     ap = argparse.ArgumentParser(description="FRC 2026 REBUILT scouting server")
     ap.add_argument("--port", type=int, default=PORT)
     ap.add_argument("--db", default=None)
@@ -2357,10 +2728,21 @@ def main():
     ap.add_argument("--allow-remote-config", action="store_true",
                     help="let any device on the network change hub settings and API keys "
                          "(default: the hub machine only)")
+    ap.add_argument("--set-admin-password", action="store_true",
+                    help="type a new admin password and write it into .env, then carry on "
+                         "serving. This is the only way it is set, and the way back in when "
+                         "nobody can remember it")
     args = ap.parse_args()
+
+    if args.set_admin_password and not _set_admin_password():
+        return 1
 
     store = Store(args.db) if args.db else Store()
     hub = Hub(store)
+    # Every unlock dies with the process. The panel opens locked on every
+    # reload anyway, and a token surviving a restart would outlive a password
+    # changed in .env while the hub was stopped - which is when it is changed.
+    store.set("adminTokens", {})
     Handler.hub = hub
     Handler.allow_remote_config = args.allow_remote_config
 
@@ -2392,6 +2774,18 @@ def main():
             responder.start()
 
     print(discover.banner(args.port))
+    # Where the admin password came from, and never what it is. A hub whose
+    # .env has a typo in it is a hub nobody can unlock, and the person who can
+    # fix that is standing in front of this window.
+    password, problem = envfile.admin_password()
+    if problem:
+        print(f"  !! {problem}\n")
+    elif password:
+        print("  Admin password: loaded from %s\n"
+              % (".env" if envfile.ADMIN in from_file else "the environment"))
+    else:
+        print("  Admin password: none set - UNLOCK on the admin page is one button.\n"
+              "                  `python3 server/hub.py --set-admin-password` sets one.\n")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

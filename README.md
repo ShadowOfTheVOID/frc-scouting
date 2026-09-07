@@ -53,7 +53,7 @@ A black window appears and prints something like this:
   Scouts:    open  http://192.168.1.120:6059/scout
   Dashboard: open  http://192.168.1.120:6059/dashboard
   Join QR:   open  http://localhost:6059/join   on this screen and let scouts scan it
-  Settings:  open  http://localhost:6059/       on this screen (API keys live here)
+  Admin:     open  http://localhost:6059/       on this screen (event, API keys, mirror - press UNLOCK)
 ```
 
 **Leave that black window open.** Closing it stops the server. Minimise it instead.
@@ -62,13 +62,47 @@ A black window appears and prints something like this:
 > **Allow access**. If you click Cancel, phones will not be able to connect and there is no
 > other symptom — it just silently does not work. This is the single most common problem.
 
-### 4. Add your API keys
+### 4. Open the admin panel and add your API keys
+
+**The admin panel is `http://localhost:6059/` — the hub laptop's own browser, at the site root.**
+It is the same page the server prints as `Admin:` when it starts. Everything about this hub is
+set there: the event, all the API keys, the strategy passcode, and the off-site mirror.
+
+There is **no password out of the box, and nothing generates one.** The panel opens read-only
+and you press **UNLOCK** at the top; with no password set, that is the whole of it.
+
+To ask for a password as well, stop the hub and run:
+
+```
+python3 server/hub.py --set-admin-password
+```
+
+It asks twice, then writes the line into a **`.env` file** beside the hub — that is the only
+place the password lives, and the same command is how you change it or remove it later. `.env`
+is in `.gitignore` and must never be committed. There is a `.env.example` in the repository
+showing what goes in it.
+
+> **The stored form is base64, and base64 is not encryption.** Anybody who can read that file
+> can decode it in one command. What it buys is that the password is not sitting in plain sight
+> in a file that gets opened on a projector or read over a shoulder at a scoring table. Keeping
+> the file off shared drives is what actually protects it.
+
+If the line in `.env` is wrong — a typo, or `ADMIN_PASSWORD` instead of `ADMIN_PASSWORD_B64` —
+the hub says so on startup and on the panel itself, and the panel stays **locked** rather than
+opening. A typo must never read as "no password".
 
 On the **laptop itself**, open a browser and go to **http://localhost:6059/**
 
 > Keys can only be entered here, on the hub laptop. Open that address from a phone and it will
 > politely tell you to go to the laptop. That is on purpose — nobody on the venue wifi can
 > change your settings.
+
+**The page opens locked.** Press **UNLOCK** at the top before you can type into anything. It
+locks itself again after ten minutes and whenever the page is reloaded, because this laptop
+spends two days on a table with people around it and one stray keystroke in the event key box
+changes every screen in the building. If you want it to ask for a code as well as a click, set
+an **admin code** in the panel — and if your team ever forgets it, start the hub with
+`--clear-admin-code` on the laptop.
 
 All of the keys are free. **Nexus is required** — see below. The rest are optional and the app
 runs without them, just with less live data.
@@ -84,6 +118,25 @@ runs without them, just with less live data.
 
 The fuel numbers always come from The Blue Alliance, whichever other keys you set. FRC Events
 only gets you the result sooner.
+
+**Unlock, paste the key, press SAVE & REFRESH, then press TEST KEYS.** Three things about that
+page are worth knowing before the Saturday:
+
+- It takes the wrapping off a paste for you. The header name, the quotes, a line break from an
+  email — all of it comes off, and the box shows you what will actually be saved. A key that
+  belongs in one of the other boxes is refused and told where to go instead, and so is an AI key
+  from a different company than the model above it. Nothing is saved at all when a box is
+  refused, so fixing that one box and pressing save again is enough.
+- **TEST KEYS asks each vendor whether the key works.** `SET` beside a box only ever meant that
+  something is stored there. This is what tells you the difference between a key that is wrong
+  and a service that has nothing to say yet — and at a competition those look identical
+  everywhere else, deliberately, because the app is built to keep running when a source goes
+  down. Do this at home. A rejected key found on the Saturday morning is a key you cannot
+  replace on the Saturday morning.
+- **Changing the event key is asked about twice.** Once the hub holds scouting for an event,
+  pointing it at a different one refuses the first time and tells you what it is holding. Nothing
+  is ever deleted — the old event comes straight back if you set its key again — but every phone
+  and every screen follows the hub, so it is not a thing to do by leaning on a keyboard.
 
 **Why Nexus is the one you cannot skip.** Nexus is what tells the hub a match has taken the
 field, and that is what opens the scouting screen on all six phones. Nothing else carries it —
@@ -109,7 +162,8 @@ It is free, and it takes about ten minutes the first time. Do it at home, not at
    you will recognise later, like `6059 scouting hub`.
 4. **Copy the key immediately.** It starts with `lvt-` and Lovat will not show it to you again.
 5. Paste it into the **Lovat** box at http://localhost:6059/ on the hub laptop, set the event
-   key beside it, and click **SAVE & REFRESH**.
+   key beside it, and click **SAVE & REFRESH**. Then **TEST KEYS** — if your team is still
+   waiting on Lovat's verification, that is what it will say, and no new key will fix it.
 6. Check it worked on the dashboard's **SERVER** tab: the `lovat` service goes green, and the
    **GRAPHS** tab starts counting teams under `teams lovat has`.
 
@@ -293,9 +347,15 @@ venue's network, and it means nothing on the internet can reach into the laptop.
 MIRROR_PUSH_KEY=... MIRROR_VIEW_PASSCODE=... python3 mirror/server.py
 ```
 
-**On the hub laptop,** at `http://localhost:6059/`, fill in **OFF-SITE MIRROR**: the address,
-and the same `MIRROR_PUSH_KEY`. Press **PUSH NOW** to check it works. After that it goes by
-itself, about once a minute, and only when something has actually changed.
+**On the hub laptop,** in the admin panel at `http://localhost:6059/` — press **UNLOCK** first —
+fill in **OFF-SITE MIRROR**: the address, and the same `MIRROR_PUSH_KEY`. A trailing slash or a
+pasted `/api/push` is trimmed for you. Then press **TEST KEYS**: it tells you whether there is
+really a mirror at that address and whether it accepts your push key, which are two different
+problems that otherwise look like the same silence. **PUSH NOW** sends the event immediately;
+after that it goes by itself, about once a minute, and only when something has actually changed.
+
+Test it at home. A push that is failing has no symptom at the venue at all — everything there
+keeps working, because that is what the mirror is for.
 
 Two passwords, and they are not the same one on purpose: the **push key** is the write key and
 lives in one settings field on one laptop; the **view passcode** is what people type to read the
@@ -469,7 +529,10 @@ the fuel column.
 | Nothing at all loads | the black window got closed | Double-click the launcher again |
 | The database is damaged, or a whole day looks wrong | anything from a bad shutdown to a full disk | Stop the server. Copy the newest file out of `data/snapshots/` over `data/scouting.db`, delete `data/scouting.db-wal` and `-shm` if they are there, and start it again. The hub writes a snapshot every ten minutes and keeps the last twelve |
 | The QR code will not scan | screen too dim, or too far | Turn brightness up; hold the phone about a foot away |
-| SERVER tab says `off-site mirror RETRYING` | the mirror is unreachable, or the push key is wrong | http://localhost:6059/ says which, on the line under **PUSH NOW**. Nothing at the venue is affected either way |
+| SERVER tab says `off-site mirror RETRYING` | the mirror is unreachable, or the push key is wrong | **TEST KEYS** in the admin panel says which of the two it is. Nothing at the venue is affected either way |
+| The admin panel will not let you type into anything | it opens read-only, on purpose | Press **UNLOCK** at the top. It re-locks after ten minutes and on every reload |
+| It asks for an admin password nobody remembers | one is set in `.env` | `python3 server/hub.py --set-admin-password` sets a new one, or a blank one removes it |
+| The panel says the password in `.env` cannot be read | the line is malformed | Same command. The hub refuses to unlock rather than letting anybody in, which is why it is not just ignored |
 | The mirror's header has gone red | nothing has reached it for over an hour | The laptop is off, or off the internet. Every number on the mirror is that old — it says so |
 
 If a phone is truly stuck, the scout can keep scouting anyway — everything saves locally — and
@@ -553,7 +616,8 @@ docs/features.md              what every screen and field does
 docs/how-it-works.md          why the tricky parts work the way they do
 ```
 
-`data/` is excluded from git on purpose: it holds your API keys and strategy passcode.
+`data/` is excluded from git on purpose: it holds your API keys, and the salted hashes of the
+strategy passcode and the admin code.
 
 ## Two more documents
 

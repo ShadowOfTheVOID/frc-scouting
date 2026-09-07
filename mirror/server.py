@@ -45,6 +45,18 @@ sys.path.insert(0, _HERE)
 
 from mirrordb import Store  # noqa: E402
 
+# The two secrets may come from a `.env` beside the checkout as well as from the
+# environment, which is what makes a mirror runnable on a laptop for five
+# minutes to see it work. Guarded, because this directory is meant to survive
+# being copied somewhere on its own: without the hub's half of the repository
+# there is no .env reader, and systemd's own Environment= lines - which is what
+# a real host should use anyway - do not need one.
+try:
+    sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "server"))
+    import envfile                                        # noqa: E402
+except ImportError:                                       # pragma: no cover
+    envfile = None
+
 WEB_ROOT = os.path.join(_HERE, "web")
 #: The fonts and the font declarations are the hub's, byte for byte, so the
 #: mirror reads as the same application rather than a lookalike. Nothing else
@@ -373,6 +385,20 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True, "token": m.issue_token(),
                                "expiresIn": TOKEN_HOURS * 3600})
 
+        if p == "/api/ping":
+            # The hub's TEST KEYS button, and nothing else. A push proves the
+            # key works but costs a whole event over the venue uplink, so there
+            # has to be something that proves it and costs nothing - otherwise
+            # the only way to find out a push key is wrong is to watch a push
+            # fail, which is exactly the thing nobody is watching.
+            if not m.push_ok(self.headers.get("X-Mirror-Key")):
+                time.sleep(0.5)
+                return self._json({"error": "bad push key"}, 401)
+            return self._json({"ok": True, "protocol": PROTOCOL,
+                               "events": len(m.store.events()),
+                               "lastReceivedAt": m.store.last_received(),
+                               "locked": m.locked()})
+
         if p == "/api/push":
             if not m.push_ok(self.headers.get("X-Mirror-Key")):
                 time.sleep(0.5)
@@ -459,6 +485,10 @@ class Server(socketserver.ThreadingMixIn, HTTPServer):
 
 
 def main():
+    # First, so every default below sees it. A real environment variable still
+    # wins over the file - see server/envfile.py.
+    if envfile:
+        envfile.load()
     ap = argparse.ArgumentParser(
         description="Off-site mirror for the REBUILT scouting hub")
     ap.add_argument("--port", type=int, default=int(os.environ.get("MIRROR_PORT") or PORT))

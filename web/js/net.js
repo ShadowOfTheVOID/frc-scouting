@@ -144,10 +144,19 @@ export async function api(path, opts = {}) {
   const tok = localStorage.getItem('strategyToken');
   if (tok) headers['X-Strategy-Token'] = tok;
   const res = await fetch(state.base + path, { cache: 'no-store', ...opts, headers });
-  if (res.status === 403) {
-    const e = new Error('locked'); e.locked = true; throw e;
+  if (!res.ok) {
+    // The hub says why in the body - which box was wrong, which key it looked
+    // like instead, whether the settings are locked. Throwing the status alone
+    // threw all of that away, and the Setup page had nothing to show but
+    // "HTTP 400".
+    const body = await res.json().catch(() => null);
+    const e = new Error((body && body.error) || (res.status === 403 ? 'locked' : `HTTP ${res.status}`));
+    e.status = res.status;
+    e.body = body;
+    // `locked` is what every caller of a passcode-gated route already reads.
+    if (res.status === 403) e.locked = true;
+    throw e;
   }
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
 

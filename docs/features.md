@@ -19,7 +19,7 @@ One Python process serves all of them. Nothing is installed on any phone.
 | `/scout` | six scouts, on phones | The match HUD. The only screen a scout ever needs. |
 | `/dashboard` | scout lead, strategy | Seven tabs of everything the hub knows. |
 | `/pit` | pit scouts, on phones | The pit map, and a form per robot. |
-| `/` | the hub laptop only | Event key, API keys, passcode. Refuses to open from a phone. |
+| `/` | the hub laptop only | **The admin panel.** Event key, API keys, passcodes, the off-site mirror. Opens read-only and refuses to open at all from a phone. |
 | `/join` | the hub laptop screen | A QR code per network address. Scouts point a camera at it. |
 | `/picklist/print` | the hub laptop | Paper fallback for alliance selection. |
 
@@ -517,9 +517,10 @@ sensitive.
 a bored student cannot flag a team as do-not-pick an hour before alliance selection. And the
 **per-scout quality panel** on HEALTH.
 
-**The hub laptop only.** API keys and event settings. Open `/` from a phone and it politely
-sends you to the laptop. This needs no passcode to enforce: whoever is sitting at the machine
-is the person who should be configuring it.
+**The hub laptop only, and locked on top of that.** API keys and event settings. Open `/` from a
+phone and it politely sends you to the laptop. Being at the laptop is no longer enough on its
+own: the panel opens read-only every time and has to be unlocked deliberately, and a team that
+sets an **admin code** is asked for it. See [The admin panel](#the-admin-panel).
 
 ### Why per-scout scores are not public
 
@@ -536,7 +537,9 @@ gone quiet — because that is about equipment and the lead has to act on it imm
 And the public accuracy number, SCOUTS vs TBA, is about the data.
 
 Nothing about a scout's identity leaves the hub. `/api/config` returns booleans for which keys
-are set, never a key value, and the passcode is stored only as a salted hash.
+are set, never a key value, and the passcode is stored only as a salted hash. The two routes
+that check and test keys are on the same boundary as the settings they serve: the hub machine
+only.
 
 ### And on the mirror
 
@@ -586,30 +589,124 @@ it nothing arms the match screen and every scout opens each match by hand. The r
 
 | Setting | What it does |
 |---|---|
-| **Event key** | e.g. `2026casf`. The same code on frc.events, The Blue Alliance and Nexus. |
+| **Event key** | e.g. `2026casf`. The same code on frc.events, The Blue Alliance and Nexus. Paste the whole address of the event page and the key is taken out of it; capitals and stray spaces are fixed. |
 | **Event level** | regional / dcmp / champs — sets the ranking-point thresholds. |
 | **Our team** | Highlights us in every table and drives the RP outlook. |
 | **Strategy passcode** | Gates picklist editing and the per-scout panel. Blank means open. |
+| **Admin password** | Not on this page: it lives in `.env` beside the hub, base64-encoded (which is not encryption). `python3 server/hub.py --set-admin-password` writes it. Unset means the panel still opens locked, but unlocking it does not ask for anything. |
 | **The Blue Alliance** | Official results, per-robot climb, rankings, OPR. The fuel solver's only source. |
 | **Nexus** — required | Live queueing and match status, pit map, pit addresses, inspection, alliance selection. Its `On field` is what arms the match screen on the phones; without it every scout has to tap **THEY'RE ON THE FIELD** by hand, six times an hour. |
 | **Nexus webhook token** | Only if you registered a push webhook. |
-| **FRC Events** | The official result a few minutes before TBA posts it. Does not feed the solver. |
+| **FRC Events** | The official result a few minutes before TBA posts it. Does not feed the solver. A username and a token, and pasting the joined `username:token` — or the base64 `Basic` blob out of their documentation — into the token box fills in both. |
 | **Lovat API key** | Other teams' scouting for this event. Your scouting lead makes one in the Lovat Dashboard under Settings → API keys; it starts `lvt-`, and your team has to be verified on Lovat first. Polled once every five minutes — Lovat allows one request every three seconds per key, so the hub stays well inside it. The export is scoped to what your Lovat account is allowed to see, so a short list is a setting on their side, not a failure on ours. |
 | **AI model** | One list, grouped Claude / Gemini / OpenAI, each option priced per million tokens. Picking a model picks the company that makes it, so there is no provider field to get wrong. Starts on **Claude Opus 5**, so pasting a key is enough — you never have to touch the list. *none* turns the three panels below off entirely, and stays off even with a key in the box. **other** takes a typed model id for anything released after this list was written; the name decides where it is sent. |
-| **AI key** | The key for whoever makes the model you picked. |
+| **AI key** | The key for whoever makes the model you picked. A key from one of the other two is refused here rather than saved: that mismatch has no symptom anywhere except every AI answer reading *the model could not be reached*. |
 | **Mirror address** | Optional. The root of an off-site mirror, e.g. `https://systemoverload.org`. A trailing slash or a pasted `/api/push` is trimmed, and a bare hostname gets `https://`. Blank sends nothing anywhere. |
 | **Mirror push key** | Whatever `MIRROR_PUSH_KEY` is on that host. The write key, and not the passcode people type to read the site. |
 | Statbotics | EPA. No key needed. |
+
+### The admin panel
+
+`/` on the hub laptop is an admin panel, and it has two locks because there are two different
+things to stop.
+
+**The lock is against an accident.** A hub is configured once and then left alone for two days,
+on a laptop that sits on the scoring table with people around it. So every pane on the page opens
+read-only — every box, every dropdown, every button — until **UNLOCK** is pressed. It locks
+itself again after ten minutes untouched, and on every reload. Nothing on that page is a thing
+anybody needs to do in a hurry.
+
+**The admin password is against somebody else**, and it is optional. It lives in a **`.env` file
+beside the hub** — not in a box on the page and not in the database, which is copied to the
+mirror and exported to JSON. Set it with `python3 server/hub.py --set-admin-password`, which
+asks twice and writes the line for you; the same command changes it, and a blank one removes it.
+
+The token an unlock hands back lives in that browser tab only, never in storage, and the hub
+renews it while the page is being used. Every token dies when the hub restarts, because a
+restart is when the password in `.env` gets changed. A team that never sets a password still
+gets the lock — the same call the picklist already makes about its own passcode, and for the
+same reason: a team must not find its own hub locked by a default.
+
+The value in the file is the password **base64-encoded, which is not encryption**: anybody who
+can read the file can decode it in one command. It keeps the password out of plain sight in a
+file that gets opened on a projector; the file's permissions (`0600`, set when the hub writes
+it) are what actually protect it.
+
+A value that is there but unusable — not valid base64, or `ADMIN_PASSWORD` written instead of
+`ADMIN_PASSWORD_B64` — **locks the panel and says why**, on startup and on the panel itself. The
+alternative is a typo that silently opens the settings, which is the exact opposite of what the
+person who typed it was doing.
+
+A real environment variable always beats the file, so a machine configured through systemd is
+never overridden by a checkout.
+
+The two secrets are separate on purpose. The **strategy passcode** is shared with the strategy
+table and gates the picklist and the AI answers; it is set on this page and stored as a salted
+hash. The **admin password** gates this page, and is only ever in `.env`.
+
+Server-side, the lock is the second gate and not the only one: `/api/config`, `/api/keycheck` and
+`/api/keytest` still require the hub machine first, and then a valid admin token whenever a code
+is set.
+
+### Switching the event
+
+The event key is the one setting that changes every screen in the building at once, and the tab
+that changed it is the one place that does not show. So the hub refuses that save the first time
+and says what it is holding — *this hub is on 2026casf and holds 412 scouting records for it* —
+and the page offers one button to go through with it.
+
+Nothing is deleted by a switch. Every row is stored under its own event key and comes back the
+moment the old key is set again. The confirmation is asked only when there is something to lose:
+setting the key for the first time, re-saving the same key, or switching away from an event with
+nothing in it are all ordinary, and are asked nothing.
+
+### What happens to a key on the way in
+
+Every one of these arrives by copy and paste, and what lands in the box is very often not the
+key. So the hub takes the wrapping off before it stores anything: the header name (`X-TBA-Auth-Key:`,
+`Authorization: Bearer`), the quotes off a code sample, a line break from an email client, a
+trailing comma. The box then shows what will actually be saved, with a line underneath saying
+what came off — because a key that needed fixing and got fixed silently is a key nobody knows
+was wrong.
+
+Four pastes are **refused** rather than stored, each naming what to do instead: a key that
+belongs in one of the other boxes (a `lvt-` key in the TBA box), a web address, the example
+text, and an AI key from a different company than the model picked above it. Nothing is saved
+at all when a box is refused, so a save is a re-press rather than a re-type of eight keys.
+
+Everything else is saved with a **warning** and no argument — a TBA key that is not 64
+characters, a Lovat key not starting `lvt-`. A vendor is allowed to change its key format
+without a hub refusing to be configured on a Saturday morning.
+
+Two more things on that page:
+
+- **TEST KEYS** asks every vendor whether the key stored here actually works, and is the only
+  thing in the app that can tell you. `SET` beside a box has never meant more than "a string is
+  stored". Each answer is one line: accepted, rejected, rate-limited, or "we could not reach
+  them" — which are four different problems that look identical everywhere else, because at a
+  competition a source that is down has to read as *we do not know* rather than as an error.
+  The AI key is checked against the vendor's free model list, so it costs nothing. Lovat's 403
+  is called what it is: your team is not verified on their side, and a second key will fail the
+  same way. The **off-site mirror** is on that list too, and it is the one that matters most to
+  test early: it is asked twice, once openly (*is there a mirror at this address*) and once with
+  the push key (*would a push be accepted*), because a wrong address and a wrong key are
+  otherwise the same silence — and a mirror that is not receiving has no symptom at the venue,
+  where everything keeps working.
+- **FORGET**, beside a box that has something in it, is how a key comes off a hub. A blank box
+  means "leave that one alone" — it has to, or changing the event key would mean retyping every
+  key on the page.
 
 ### Command line
 
 ```
 python3 server/hub.py [--port 6059] [--db data/scouting.db] [--no-mdns] [--no-poll]
-                      [--allow-remote-config]
+                      [--allow-remote-config] [--set-admin-password]
 ```
 
 `--no-mdns` skips answering to `scout.local`. `--allow-remote-config` lets any device on the
-network change hub settings — off by default, and rarely what you want.
+network change hub settings — off by default, and rarely what you want. `--set-admin-password`
+asks for a password twice, writes it into `.env`, and then carries on serving; it is how the
+password is set, changed, and — with a blank answer — removed.
 
 `--no-poll` stops the hub reaching out to Nexus, TBA, FRC Events, Statbotics or Lovat; it still
 serves everything already in the database. Use it to look at a saved event without touching the
