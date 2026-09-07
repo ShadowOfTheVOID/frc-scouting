@@ -85,16 +85,27 @@ Point the DNS at the host and open `https://scouting.systemoverload.org`.
 
 ### 4. Tell the hub about it
 
-On the hub laptop, at `http://localhost:6059/`, in **OFF-SITE MIRROR**:
+On the hub laptop, in the admin panel at `http://localhost:6059/` — press
+**UNLOCK** at the top of that page first, it opens read-only — in
+**OFF-SITE MIRROR**:
 
 - **Mirror address** — `https://scouting.systemoverload.org`. A trailing slash
   or a pasted `/api/push` is fine; it gets trimmed.
 - **Mirror push key** — `MIRROR_PUSH_KEY`.
 
-**Save**, then **PUSH NOW**. It says what happened on the line beside it. From
-then on it goes by itself, about once a minute, and the dashboard's **SERVER**
-tab carries an `off-site mirror` line that turns to `RETRYING` if it stops
-working.
+**Save**, then **TEST KEYS**. That asks this mirror two questions and reports
+them separately, because they have the same symptom and different fixes: is
+there a mirror at that address at all (`/api/status`, open to anyone), and would
+it accept your push key (`/api/ping`, which needs it). **PUSH NOW** then sends
+the event for real and says what happened on the line beside it.
+
+From then on it goes by itself, about once a minute, and the dashboard's
+**SERVER** tab carries an `off-site mirror` line that turns to `RETRYING` if it
+stops working.
+
+> A mirror deployed before `/api/ping` existed answers 404 to the key half, and
+> the hub says so rather than calling the key bad — update the mirror, or press
+> **PUSH NOW**, which has always been the honest test.
 
 ---
 
@@ -144,6 +155,13 @@ Three things do **not**:
 
 No API key ever leaves the hub. The mirror has no use for one — it never calls
 The Blue Alliance, Nexus, Statbotics, Lovat or any model.
+
+One more thing crosses, and it carries nothing: `/api/ping`, a POST that needs
+the push key and answers with the protocol version, how many events are stored
+and when the last push arrived. It exists so the hub's **TEST KEYS** button can
+prove a push key without spending a whole event on a venue uplink to find out.
+It is the same key check `/api/push` makes, and the view passcode is no more a
+key here than it is there.
 
 ---
 

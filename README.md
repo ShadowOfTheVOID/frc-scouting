@@ -53,7 +53,7 @@ A black window appears and prints something like this:
   Scouts:    open  http://192.168.1.120:6059/scout
   Dashboard: open  http://192.168.1.120:6059/dashboard
   Join QR:   open  http://localhost:6059/join   on this screen and let scouts scan it
-  Settings:  open  http://localhost:6059/       on this screen (API keys live here)
+  Admin:     open  http://localhost:6059/       on this screen (event, API keys, mirror - press UNLOCK)
 ```
 
 **Leave that black window open.** Closing it stops the server. Minimise it instead.
@@ -62,7 +62,17 @@ A black window appears and prints something like this:
 > **Allow access**. If you click Cancel, phones will not be able to connect and there is no
 > other symptom — it just silently does not work. This is the single most common problem.
 
-### 4. Add your API keys
+### 4. Open the admin panel and add your API keys
+
+**The admin panel is `http://localhost:6059/` — the hub laptop's own browser, at the site root.**
+It is the same page the server prints as `Admin:` when it starts. Everything about this hub is
+set there: the event, all the API keys, the strategy passcode, and the off-site mirror.
+
+There is **no password out of the box, and nothing generates one.** The panel opens read-only
+and you press **UNLOCK** at the top; with no admin code set, that is the whole of it. If you want
+it to ask for a code too, type one into the **ADMIN CODE** box and save — you choose it, the hub
+stores only a salted hash of it, and nothing anywhere can show it back to you. Forgotten it?
+Start the hub with `--clear-admin-code` on the laptop.
 
 On the **laptop itself**, open a browser and go to **http://localhost:6059/**
 
@@ -320,9 +330,15 @@ venue's network, and it means nothing on the internet can reach into the laptop.
 MIRROR_PUSH_KEY=... MIRROR_VIEW_PASSCODE=... python3 mirror/server.py
 ```
 
-**On the hub laptop,** at `http://localhost:6059/`, fill in **OFF-SITE MIRROR**: the address,
-and the same `MIRROR_PUSH_KEY`. Press **PUSH NOW** to check it works. After that it goes by
-itself, about once a minute, and only when something has actually changed.
+**On the hub laptop,** in the admin panel at `http://localhost:6059/` — press **UNLOCK** first —
+fill in **OFF-SITE MIRROR**: the address, and the same `MIRROR_PUSH_KEY`. A trailing slash or a
+pasted `/api/push` is trimmed for you. Then press **TEST KEYS**: it tells you whether there is
+really a mirror at that address and whether it accepts your push key, which are two different
+problems that otherwise look like the same silence. **PUSH NOW** sends the event immediately;
+after that it goes by itself, about once a minute, and only when something has actually changed.
+
+Test it at home. A push that is failing has no symptom at the venue at all — everything there
+keeps working, because that is what the mirror is for.
 
 Two passwords, and they are not the same one on purpose: the **push key** is the write key and
 lives in one settings field on one laptop; the **view passcode** is what people type to read the
@@ -496,7 +512,9 @@ the fuel column.
 | Nothing at all loads | the black window got closed | Double-click the launcher again |
 | The database is damaged, or a whole day looks wrong | anything from a bad shutdown to a full disk | Stop the server. Copy the newest file out of `data/snapshots/` over `data/scouting.db`, delete `data/scouting.db-wal` and `-shm` if they are there, and start it again. The hub writes a snapshot every ten minutes and keeps the last twelve |
 | The QR code will not scan | screen too dim, or too far | Turn brightness up; hold the phone about a foot away |
-| SERVER tab says `off-site mirror RETRYING` | the mirror is unreachable, or the push key is wrong | http://localhost:6059/ says which, on the line under **PUSH NOW**. Nothing at the venue is affected either way |
+| SERVER tab says `off-site mirror RETRYING` | the mirror is unreachable, or the push key is wrong | **TEST KEYS** in the admin panel says which of the two it is. Nothing at the venue is affected either way |
+| The admin panel will not let you type into anything | it opens read-only, on purpose | Press **UNLOCK** at the top. It re-locks after ten minutes and on every reload |
+| It asks for an admin code nobody remembers | somebody set one | Start the hub with `--clear-admin-code` on the laptop |
 | The mirror's header has gone red | nothing has reached it for over an hour | The laptop is off, or off the internet. Every number on the mirror is that old — it says so |
 
 If a phone is truly stuck, the scout can keep scouting anyway — everything saves locally — and

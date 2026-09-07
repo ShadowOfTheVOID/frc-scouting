@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=1240">
-<title>Hub setup · REBUILT</title>
+<title>Hub admin · REBUILT</title>
 <link rel="stylesheet" href="/css/desk.css">
 <style>
   .form{display:flex;flex-direction:column;gap:14px;max-width:560px}
@@ -54,7 +54,7 @@
   <div class="apphead">
     <div class="bar"></div>
     <div class="in">
-      <div><h1>HUB SETUP</h1><div class="sub" id="sub">checking…</div></div>
+      <div><h1>HUB ADMIN</h1><div class="sub" id="sub">checking…</div></div>
       <span class="sp"></span>
       <div style="display:flex;gap:8px">
         <a class="lk" href="/scout">SCOUT</a>
@@ -192,6 +192,10 @@
   <div class="cols" style="grid-template-columns:1fr">
     <div class="pane mid" id="mirrorPane">
       <div class="eyebrow">OFF-SITE MIRROR</div>
+      <div class="hint">Part of this panel, and locked with the rest of it. <b>TEST KEYS</b> above
+        checks the mirror too: whether there is really a mirror at that address, and whether it
+        accepts your push key — two failures that otherwise look like the same silence, because
+        a push that is failing has no symptom at the venue at all.</div>
       <div class="hint">Optional, and the only thing here that sends your event anywhere.
         Every minute this hub packs the whole event — teams, matches, scouting, the picklist,
         the solved numbers — and pushes it to a site your team hosts. Two things come of that:
@@ -209,7 +213,10 @@
           <input id="mirrorKey" placeholder="the key the mirror was started with" autocomplete="off">
           <div class="h">Whatever <code>MIRROR_PUSH_KEY</code> is set to on the mirror. This is
             the write key and it lives only here — it is <b>not</b> the passcode people type to
-            read the site, which is a different string on purpose.</div>
+            read the site, which is a different string on purpose. That one
+            (<code>MIRROR_VIEW_PASSCODE</code>) is set on the machine running the mirror and
+            cannot be changed from here: this hub only ever writes to the mirror, and a hub that
+            could hand out read access to a site it does not run would be the wrong shape.</div>
           <div class="say"></div></div>
         <div class="btns" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <button class="go" id="pushNow" style="background:var(--btn)">PUSH NOW</button>
@@ -630,7 +637,7 @@ $('#test').onclick = async () => {
                  warn: ['!', 'var(--amber)'], down: ['?', 'var(--t4)'],
                  unset: ['·', 'var(--t6)'] };
   const NAME = { tba: 'The Blue Alliance', nexus: 'Nexus', frcEvents: 'FRC Events',
-                 lovat: 'Lovat', ai: 'AI model' };
+                 lovat: 'Lovat', ai: 'AI model', mirror: 'Off-site mirror' };
   try {
     const res = await admin('/api/keytest', { method: 'POST', body: '{}' });
     const out = $('#testOut');

@@ -142,6 +142,41 @@ def test_push_auth(M, bundle):
     return ok
 
 
+def test_key_check(H, M):
+    """TEST KEYS on the Setup page, against a real mirror.
+
+    A push that is failing has no symptom at the venue - everything there keeps
+    working - so the only way anybody found out used to be to go looking. This
+    is the check that answers before an event rather than after one, and the
+    two failures it has to tell apart are a typo in the address and a wrong
+    push key, which are otherwise the same silence.
+    """
+    ok = True
+    code, body, _ = M.req("/api/ping", {}, headers={"X-Mirror-Key": PUSH_KEY})
+    ok &= check("the mirror answers a keyed ping", code == 200 and body.get("ok") is True,
+                f"({code} {body})")
+    code, _, _ = M.req("/api/ping", {})
+    ok &= check("and refuses an unkeyed one", code == 401, f"({code})")
+    code, _, _ = M.req("/api/ping", {}, headers={"X-Mirror-Key": PASSCODE})
+    ok &= check("the read passcode is not a push key here either", code == 401, f"({code})")
+
+    v = offsite.Mirror(M.url, PUSH_KEY).verify()
+    ok &= check("the hub reports a working mirror as working",
+                v["state"] == "ok", f"({v})")
+    v = offsite.Mirror(M.url, "not-the-push-key").verify()
+    ok &= check("a wrong push key is named as the push key",
+                v["state"] == "bad" and "push key" in v["detail"], f"({v})")
+    v = offsite.Mirror(M.url + "/nowhere", PUSH_KEY).verify()
+    ok &= check("a wrong address is named as the address",
+                v["state"] == "bad" and "address" in v["detail"], f"({v})")
+    v = offsite.Mirror(M.url, "").verify()
+    ok &= check("an address with no key saved is a warning, not a failure",
+                v["state"] == "warn", f"({v})")
+    v = offsite.Mirror("", "").verify()
+    ok &= check("and no mirror at all is not a failure either", v["state"] == "unset", f"({v})")
+    return ok
+
+
 def test_round_trip(H, M, tok):
     ok = True
     res = offsite.push_once(H.hub, force=True)
@@ -338,6 +373,7 @@ def main():
 
         print("\nthe push key")
         ok &= test_push_auth(M, bundle)
+        ok &= test_key_check(H, M)
 
         print("\nthe round trip")
         good, snap = test_round_trip(H, M, tok)

@@ -878,9 +878,9 @@ def test_key_hygiene(L):
 
     # With nothing configured this touches no network at all, which is the
     # state CI runs in.
-    for f in ("nexusKey", "lovatKey", "aiKey", "frcEventsUser", "frcEventsToken"):
+    for f in ("nexusKey", "lovatKey", "aiKey", "frcEventsUser", "frcEventsToken", "mirrorKey"):
         L.req("/api/config", {f: ""})
-    L.req("/api/config", {"aiModel": "none"})
+    L.req("/api/config", {"aiModel": "none", "mirrorUrl": ""})
     code, r = L.req("/api/keytest", {})
     ok &= check("testing the keys reports every unset one as unset, not as broken",
                 code == 200 and all(v["state"] == "unset" for v in r["checked"].values()),

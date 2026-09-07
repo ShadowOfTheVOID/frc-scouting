@@ -19,7 +19,7 @@ One Python process serves all of them. Nothing is installed on any phone.
 | `/scout` | six scouts, on phones | The match HUD. The only screen a scout ever needs. |
 | `/dashboard` | scout lead, strategy | Seven tabs of everything the hub knows. |
 | `/pit` | pit scouts, on phones | The pit map, and a form per robot. |
-| `/` | the hub laptop only | Event key, API keys, passcode. Refuses to open from a phone. |
+| `/` | the hub laptop only | **The admin panel.** Event key, API keys, passcodes, the off-site mirror. Opens read-only and refuses to open at all from a phone. |
 | `/join` | the hub laptop screen | A QR code per network address. Scouts point a camera at it. |
 | `/picklist/print` | the hub laptop | Paper fallback for alliance selection. |
 
@@ -671,7 +671,11 @@ Two more things on that page:
   competition a source that is down has to read as *we do not know* rather than as an error.
   The AI key is checked against the vendor's free model list, so it costs nothing. Lovat's 403
   is called what it is: your team is not verified on their side, and a second key will fail the
-  same way.
+  same way. The **off-site mirror** is on that list too, and it is the one that matters most to
+  test early: it is asked twice, once openly (*is there a mirror at this address*) and once with
+  the push key (*would a push be accepted*), because a wrong address and a wrong key are
+  otherwise the same silence — and a mirror that is not receiving has no symptom at the venue,
+  where everything keeps working.
 - **FORGET**, beside a box that has something in it, is how a key comes off a hub. A blank box
   means "leave that one alone" — it has to, or changing the event key would mean retyping every
   key on the page.

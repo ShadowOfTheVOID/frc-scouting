@@ -236,6 +236,12 @@ class Hub:
             "frcEvents": lambda: self.frc_events().verify(int(season) if season else 2026),
             "lovat": lambda: self.lovat().verify(ek),
             "ai": lambda: self.ai().verify(),
+            # The mirror is the only one of these that sends anything out
+            # rather than fetching, so "does the key work" is worth knowing
+            # before an event rather than after one - a push that is failing
+            # has no symptom at the venue at all, because everything at the
+            # venue keeps working.
+            "mirror": lambda: self.mirror().verify(),
         }
         out = {}
 

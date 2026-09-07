@@ -102,7 +102,10 @@ def banner(port):
     lines.append(f"  Scouts:    open  {us[0] if us else 'http://localhost:%d' % port}/scout")
     lines.append(f"  Dashboard: open  {us[0] if us else 'http://localhost:%d' % port}/dashboard")
     lines.append(f"  Join QR:   open  http://localhost:{port}/join   on this screen and let scouts scan it")
-    lines.append(f"  Settings:  open  http://localhost:{port}/       on this screen (API keys live here)")
+    # Named for what it is. "Settings" is where an event key and eight API keys
+    # are set from, and the first question anybody asked was where it was.
+    lines.append(f"  Admin:     open  http://localhost:{port}/       on this screen "
+                 f"(event, API keys, mirror - press UNLOCK)")
     lines.append("")
     lines.append("  Windows: if phones cannot connect, allow Python through")
     lines.append("  Windows Firewall on PRIVATE networks (it prompts on first run).")

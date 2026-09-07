@@ -373,6 +373,20 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True, "token": m.issue_token(),
                                "expiresIn": TOKEN_HOURS * 3600})
 
+        if p == "/api/ping":
+            # The hub's TEST KEYS button, and nothing else. A push proves the
+            # key works but costs a whole event over the venue uplink, so there
+            # has to be something that proves it and costs nothing - otherwise
+            # the only way to find out a push key is wrong is to watch a push
+            # fail, which is exactly the thing nobody is watching.
+            if not m.push_ok(self.headers.get("X-Mirror-Key")):
+                time.sleep(0.5)
+                return self._json({"error": "bad push key"}, 401)
+            return self._json({"ok": True, "protocol": PROTOCOL,
+                               "events": len(m.store.events()),
+                               "lastReceivedAt": m.store.last_received(),
+                               "locked": m.locked()})
+
         if p == "/api/push":
             if not m.push_ok(self.headers.get("X-Mirror-Key")):
                 time.sleep(0.5)

@@ -1269,7 +1269,8 @@ async function aiCall(path, body) {
 function aiBlock(res, idle) {
   if (!res) return `<div class="hint">${idle}</div>`;
   if (res.configured === false) {
-    return '<div class="hint">No AI model chosen — pick one in Setup on the hub machine.</div>';
+    return '<div class="hint">No AI model chosen — pick one in the admin panel, at / on the '
+         + 'hub machine.</div>';
   }
   if (res.text) {
     const when = res.at ? new Date(res.at * 1000).toLocaleTimeString() : '';
@@ -1614,7 +1615,12 @@ function renderServer() {
     || '<div class="empty">Nothing logged.</div>';
   $('#srvNet').innerHTML = DIAG.addresses.map((u) =>
     `<div class="kv"><span class="mono" style="font-size:11.5px">${esc(u)}</span><b>open</b></div>`).join('')
-    + `<div class="kv"><span>host</span><b class="mono" style="font-size:11.5px">${esc(DIAG.host)}</b></div>`;
+    + `<div class="kv"><span>host</span><b class="mono" style="font-size:11.5px">${esc(DIAG.host)}</b></div>`
+    // Where the event key, the API keys and the mirror are set. It opens on the
+    // hub laptop and nowhere else, and it says so politely from anywhere else -
+    // but nothing on any screen used to say where it was at all.
+    + `<div class="kv"><span>admin panel</span><b class="mono" style="font-size:11.5px">`
+    + `<a href="/">the hub laptop, at /</a></b></div>`;
   $('#srvData').innerHTML =
     `<div class="kv"><span>python</span><b>${esc(DIAG.python)}</b></div>
      <div class="kv"><span>stations claimed</span><b>${Object.keys(DIAG.seats || {}).length} / 6</b></div>

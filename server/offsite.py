@@ -27,6 +27,7 @@ import urllib.error
 import urllib.request
 
 import analytics
+import sources
 
 #: Bumped when the bundle's shape changes in a way a mirror has to know about.
 #: The mirror stores what it is sent either way - a bundle it cannot read is
@@ -186,6 +187,59 @@ class Mirror:
                 return json.loads(e.read().decode("utf-8")), e.code
             except Exception:
                 return None, e.code
+        except Exception:
+            return None, 0
+
+    def verify(self):
+        """Ask the mirror whether this address and this push key work.
+
+        Two questions, and they fail differently, so they are asked
+        separately: `/api/status` is open and answers "is there a mirror at
+        this address at all", `/api/ping` needs the key and answers "would a
+        push be accepted". Told apart, a typo in the address and a wrong push
+        key stop looking like the same silence.
+
+        Returns the same `{state, detail}` shape as every client in
+        sources.py - see `sources.verdict`.
+        """
+        if not self.url:
+            return sources.verdict("unset", "no mirror address")
+        status, code = self._get("/api/status")
+        if not isinstance(status, dict):
+            # A socket that never opened is not the same answer as a 404. One
+            # is "this laptop has no internet", which is half of every Saturday
+            # at a venue; the other is "there is no mirror at that address",
+            # which is a typo somebody has to go and fix.
+            return sources.verdict("down" if code == 0 else "bad", _explain(code, status))
+        if not self.key:
+            return sources.verdict("warn", "there is a mirror at that address, but no push "
+                                           "key is saved here, so nothing is being sent")
+        body, code = self._post("/api/ping", {})
+        if code == 404:
+            # A mirror deployed before /api/ping existed. The address is
+            # right, and the key is the one thing still unproven.
+            return sources.verdict("warn", "that mirror is older than this hub and cannot "
+                                           "answer a key check - press PUSH NOW to test the "
+                                           "push key for real")
+        if not isinstance(body, dict) or not body.get("ok"):
+            return sources.verdict("bad", _explain(code, body))
+        last = body.get("lastReceivedAt")
+        when = ("nothing pushed to it yet" if not last
+                else "last received %d minute(s) ago" % max(0, int((time.time() - last) / 60)))
+        return sources.verdict("ok", "address and push key both accepted; " + when
+                               + ("" if body.get("locked") else
+                                  " - WARNING: that mirror is serving with no view passcode"))
+
+    def _get(self, path):
+        req = urllib.request.Request(self.url + path,
+                                     headers={"User-Agent": USER_AGENT}, method="GET")
+        try:
+            with urllib.request.urlopen(req, timeout=TIMEOUT,
+                                        context=ssl.create_default_context()) as res:
+                raw = res.read()
+                return (json.loads(raw.decode("utf-8")) if raw else None), res.status
+        except urllib.error.HTTPError as e:
+            return None, e.code
         except Exception:
             return None, 0
 
