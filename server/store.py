@@ -228,8 +228,18 @@ class Store:
         return True
 
     def pit_entries(self, event_key):
+        """Every pit record for this event, in the shape upsert_pit reads back.
+
+        `eventKey` and `deviceId` are on the row because /api/export is these
+        rows verbatim and /api/import feeds them straight back to upsert_pit,
+        which needs the event key to find what it is merging. Without it every
+        pit record in an export was silently rejected on the way back in - the
+        JSON export restored the match scouting and quietly dropped the pit
+        scouting and its photos, which is the half nobody re-collects.
+        """
         rows = self.conn().execute("SELECT * FROM pit_entries WHERE event_key=?", (event_key,)).fetchall()
-        return [{"team": r["team"], "scoutId": r["scout_id"], "updatedAt": r["updated_at"],
+        return [{"eventKey": r["event_key"], "team": r["team"], "scoutId": r["scout_id"],
+                 "deviceId": r["device_id"], "updatedAt": r["updated_at"],
                  "payload": _payload(r["payload"])} for r in rows]
 
     # ------------------------------------------------------------- solved

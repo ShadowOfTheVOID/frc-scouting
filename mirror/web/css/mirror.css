@@ -1,0 +1,189 @@
+/* The mirror's own stylesheet.
+
+   Same palette and typography as the strategy dashboard (web/css/desk.css),
+   but not the same layout and deliberately not an import of it: that file
+   declares `min-width:1240px` on the body, because it is drawn for a laptop
+   on a table. This page is read one-handed on a phone in a stands, and on a
+   tablet, and on the same laptop - so every table here collapses to stacked
+   rows below 720px rather than scrolling sideways.
+
+   The fonts are the hub's files, served from /fonts, so it reads as the same
+   application rather than a lookalike. */
+
+@import url('/css/fonts.css');
+
+:root{
+  --page:#0b0b0d; --panel:#0a0a0c; --raised:#0f0f12;
+  --thead:#0d0d10; --line:#1e1e24; --row:#16161b; --btn:#2f2f38; --seg:#26262d;
+  --red:#e11d2b; --red-link:#ff3b45; --red-alert:#ff5c66; --red-label:#ff7a80;
+  --red-soft:#ff8a91; --red-ring:#4a181e;
+  --blue-label:#7fa8d8;
+  --green:#34a86a; --green-soft:#5fce93; --amber:#f5a524;
+  --t0:#f4f4f6; --t1:#a0a0ab; --t2:#9a9aa4; --t3:#8b8b95; --t4:#7d7d88;
+  --t5:#6b6b76; --t6:#5f5f6a;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+html,body{margin:0;background:var(--page);font-family:Barlow,system-ui,sans-serif}
+body{color:var(--t0);padding:0}
+a{color:var(--red-link);text-decoration:none}
+.tnum{font-variant-numeric:tabular-nums}
+.hide{display:none !important}
+/* Column headers do the sorting on a laptop and are hidden on a phone, so the
+   phone gets a control of its own rather than a table it cannot reorder. */
+.narrow-only{display:none}
+
+.shell{max-width:1180px;margin:0 auto;min-height:100vh;background:var(--panel);
+  border-left:1px solid var(--line);border-right:1px solid var(--line)}
+
+/* ------------------------------------------------------------------ head */
+.apphead{display:flex;align-items:stretch;border-bottom:1px solid var(--line);
+  background:var(--raised);position:sticky;top:0;z-index:5}
+.apphead .bar{width:7px;background:var(--red);flex:none}
+.apphead .in{flex:1;display:flex;align-items:center;gap:14px;padding:12px 16px;min-width:0}
+.apphead h1{font:700 16px/1.05 Barlow,sans-serif;margin:0;white-space:nowrap}
+.apphead .sub{font:600 10.5px Barlow,sans-serif;letter-spacing:.09em;color:var(--t4);
+  margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.apphead .sp{flex:1}
+.apphead .who{text-align:right;font:600 10.5px Barlow,sans-serif;letter-spacing:.08em;
+  color:var(--t5);white-space:nowrap}
+.apphead .who b{display:block;font:800 11px Barlow,sans-serif;color:var(--green-soft)}
+.apphead .who b.stale{color:var(--amber)}
+.apphead .who b.cold{color:var(--red-alert)}
+
+/* A copy is only trustworthy if it says out loud that it is a copy. */
+.banner{padding:9px 16px;background:#14100c;border-bottom:1px solid #3a2a15;
+  font:600 11px/1.5 Barlow,sans-serif;color:#e3b169}
+.banner b{color:#f5c780}
+.banner.cold{background:#160d0f;border-bottom-color:var(--red-ring);color:var(--red-soft)}
+
+/* ------------------------------------------------------------------ tabs */
+.tabs{display:flex;gap:2px;padding:8px 10px;background:var(--panel);
+  border-bottom:1px solid var(--line);overflow-x:auto;position:sticky;top:56px;z-index:4;
+  -webkit-overflow-scrolling:touch;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tabs button{flex:none;padding:8px 14px;border-radius:7px;border:1px solid transparent;
+  background:var(--row);font:800 11px Barlow,sans-serif;letter-spacing:.1em;
+  color:var(--t3);cursor:pointer}
+.tabs button.on{background:var(--red);color:#fff;border-color:var(--red)}
+
+.wrap{padding:16px}
+.eyebrow{font:800 10.5px Barlow,sans-serif;letter-spacing:.17em;color:var(--t4);margin-bottom:8px}
+.hint{font:500 11.5px/1.6 Barlow,sans-serif;color:var(--t6)}
+.hint b{color:var(--t3)}
+.stack{display:flex;flex-direction:column;gap:18px}
+
+/* ----------------------------------------------------------------- tiles */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:1px;background:var(--line);border:1px solid var(--line)}
+.tile{background:var(--raised);padding:11px 13px}
+.tile .k{font:800 9.5px Barlow,sans-serif;letter-spacing:.14em;color:var(--t4)}
+.tile .v{font:700 27px/1.15 'Barlow Condensed',sans-serif;margin-top:2px}
+.tile .v small{font-size:15px;color:var(--t6)}
+.tile .c{font:600 10.5px Barlow,sans-serif;color:var(--t6);margin-top:1px}
+.tile.alert{box-shadow:inset 0 0 0 1px var(--red-ring)}
+.tile.alert .v{color:var(--red-link)}
+
+/* ---------------------------------------------------------------- tables */
+.tbl{border:1px solid var(--line)}
+.tbl .cap{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+  padding:11px 14px;background:var(--raised);border-bottom:1px solid var(--line)}
+.tbl .cap .t{font:800 10.5px Barlow,sans-serif;letter-spacing:.15em}
+.tbl .cap .n{font:500 11px Barlow,sans-serif;color:var(--t4)}
+.tbl .hd,.tbl .r{display:grid;align-items:center;gap:8px}
+.tbl .hd{padding:8px 14px;background:var(--thead);border-bottom:1px solid var(--line);
+  font:800 9.5px Barlow,sans-serif;letter-spacing:.13em;color:var(--t4)}
+.tbl .hd span{cursor:pointer;user-select:none}
+.tbl .hd span.on{color:var(--red-soft)}
+.tbl .r{padding:10px 14px;border-bottom:1px solid var(--row);
+  font:500 12.5px Barlow,sans-serif;color:var(--t1)}
+.tbl .r:nth-child(even){background:var(--raised)}
+.tbl .r:last-child{border-bottom:none}
+.tbl .r.tap{cursor:pointer}
+.tbl .r.tap:hover{background:var(--row)}
+.tbl .r.ours{box-shadow:inset 3px 0 0 var(--red)}
+.tbl .num{text-align:right}
+.tbl .tno{font:700 17px 'Barlow Condensed',sans-serif;color:var(--t0)}
+.tbl .nm{color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tbl .empty{padding:22px 14px;text-align:center;color:var(--t6);
+  font:500 12px Barlow,sans-serif}
+.band{color:var(--t5);font-size:11px}
+
+.chip{display:inline-block;padding:2px 7px;border-radius:5px;background:var(--row);
+  border:1px solid var(--seg);font:700 9.5px Barlow,sans-serif;letter-spacing:.09em;
+  color:var(--t3)}
+.chip.good{color:var(--green-soft);border-color:#1f5138}
+.chip.warn{color:var(--amber);border-color:#4a3a15}
+.chip.bad{color:var(--red-alert);border-color:var(--red-ring)}
+
+/* --------------------------------------------------------------- matches */
+.mrow{border-left:3px solid var(--seg);padding:10px 0 10px 12px;margin-bottom:10px}
+.mrow.played{border-left-color:#2a3a2f}
+.mrow .top{display:flex;justify-content:space-between;gap:8px;
+  font:800 10px Barlow,sans-serif;letter-spacing:.13em;color:var(--t4)}
+.mrow .sides{display:grid;grid-template-columns:1fr auto;gap:6px;margin-top:7px;align-items:center}
+.mrow .teams{font:700 17px/1.3 'Barlow Condensed',sans-serif}
+.mrow .teams.red{color:var(--red-label)}
+.mrow .teams.blue{color:var(--blue-label)}
+.mrow .teams b{color:#fff}
+.mrow .sc{font:700 20px 'Barlow Condensed',sans-serif;color:var(--t2);text-align:right}
+.mrow .sc.win{color:var(--t0)}
+
+/* ---------------------------------------------------------------- detail */
+.sheet{position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:20;display:flex;
+  align-items:flex-end;justify-content:center}
+.sheet .card{background:var(--panel);border:1px solid var(--line);border-radius:14px 14px 0 0;
+  width:100%;max-width:820px;max-height:88vh;overflow:auto;padding:18px 16px 26px}
+.sheet .card h2{font:700 22px/1.1 'Barlow Condensed',sans-serif;margin:0}
+.sheet .card .who{font:600 11.5px Barlow,sans-serif;color:var(--t4);margin-top:3px}
+.sheet .x{position:sticky;top:0;float:right;background:var(--row);border:1px solid var(--btn);
+  border-radius:7px;color:var(--t1);font:800 11px Barlow,sans-serif;padding:7px 12px;cursor:pointer}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:1px;
+  background:var(--line);border:1px solid var(--line);margin-top:12px}
+.kv div{background:var(--raised);padding:9px 11px}
+.kv .k{font:800 9px Barlow,sans-serif;letter-spacing:.13em;color:var(--t5)}
+.kv .v{font:700 17px 'Barlow Condensed',sans-serif;color:var(--t0);margin-top:2px}
+.notes{margin-top:12px;display:flex;flex-direction:column;gap:7px}
+.note{background:var(--raised);border-left:2px solid var(--seg);padding:8px 11px;
+  font:500 12.5px/1.55 Barlow,sans-serif;color:var(--t1)}
+.note .m{font:800 9.5px Barlow,sans-serif;letter-spacing:.12em;color:var(--t5);margin-bottom:3px}
+.shots{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.shots img{width:132px;height:132px;object-fit:cover;border-radius:9px;border:1px solid var(--line)}
+
+/* --------------------------------------------------------------- buttons */
+.btn{display:inline-block;padding:10px 15px;border-radius:8px;background:var(--row);
+  border:1px solid var(--btn);color:var(--t1);font:800 11px Barlow,sans-serif;
+  letter-spacing:.1em;cursor:pointer;text-align:center}
+.btn.go{background:var(--red);border-color:var(--red);color:#fff}
+.btn:disabled{opacity:.45;cursor:default}
+.btns{display:flex;gap:8px;flex-wrap:wrap}
+
+input,select{width:100%;background:var(--raised);border:1px solid var(--btn);border-radius:8px;
+  padding:11px 12px;color:var(--t0);font:500 14px Barlow,sans-serif}
+label{display:block;font:800 9.5px Barlow,sans-serif;letter-spacing:.14em;color:var(--t4);
+  margin-bottom:5px}
+
+/* ------------------------------------------------------------------ lock */
+.lock{max-width:400px;margin:0 auto;padding:14vh 20px 20px;display:flex;
+  flex-direction:column;gap:14px;text-align:center}
+.lock h1{font:700 26px/1.1 'Barlow Condensed',sans-serif;margin:0;letter-spacing:.02em}
+.lock .why{font:500 12.5px/1.65 Barlow,sans-serif;color:var(--t5)}
+.lock .err{font:700 11.5px Barlow,sans-serif;color:var(--red-alert);min-height:16px}
+
+/* ------------------------------------------------------------------ narrow */
+@media (max-width:719px){
+  .narrow-only{display:block}
+  .apphead h1{font-size:14px}
+  .tabs{top:52px}
+  .wrap{padding:12px}
+  /* Stacked rather than side-scrolled: a table you have to drag sideways on a
+     phone is a table nobody reads during a match. */
+  .tbl.stack-narrow .hd{display:none}
+  .tbl.stack-narrow .r{grid-template-columns:1fr 1fr !important;
+    padding:11px 13px;row-gap:5px}
+  .tbl.stack-narrow .r>*{text-align:left}
+  .tbl.stack-narrow .r>*::before{content:attr(data-k);display:block;
+    font:800 8.5px Barlow,sans-serif;letter-spacing:.13em;color:var(--t5);margin-bottom:1px}
+  .tbl.stack-narrow .r>.lead::before{content:none}
+  .tbl.stack-narrow .r>.lead{grid-column:1 / -1}
+}

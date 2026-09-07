@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="robots" content="noindex,nofollow">
+<title>Scouting mirror · REBUILT</title>
+<link rel="stylesheet" href="/css/mirror.css">
+</head>
+<body>
+
+<!-- The passcode gate. Everything below it stays empty until /api/unlock
+     hands back a token, so an unlocked page never held any data to leak. -->
+<div id="lock" class="lock hide">
+  <h1>REBUILT SCOUTING</h1>
+  <div class="why" id="lockWhy">Off-site copy of the scouting hub. Enter the team passcode.</div>
+  <div><label for="pin">PASSCODE</label>
+    <input id="pin" type="password" inputmode="text" autocomplete="current-password"
+           autocapitalize="off" autocorrect="off" spellcheck="false"></div>
+  <button class="btn go" id="unlock">UNLOCK</button>
+  <div class="err" id="lockErr"></div>
+  <div class="why" id="lockStatus"></div>
+</div>
+
+<div id="app" class="shell hide">
+  <div class="apphead">
+    <div class="bar"></div>
+    <div class="in">
+      <div style="min-width:0">
+        <h1 id="evName">SCOUTING MIRROR</h1>
+        <div class="sub" id="evSub">loading…</div>
+      </div>
+      <span class="sp"></span>
+      <div class="who"><b id="freshness">—</b><span id="freshSub"></span></div>
+    </div>
+  </div>
+
+  <div class="banner" id="banner"></div>
+
+  <div class="tabs" id="tabs">
+    <button data-tab="teams" class="on">TEAMS</button>
+    <button data-tab="matches">MATCHES</button>
+    <button data-tab="picklist">PICKLIST</button>
+    <button data-tab="health">HEALTH</button>
+    <button data-tab="backup">BACKUP</button>
+  </div>
+
+  <div class="wrap"><div id="view" class="stack"></div></div>
+</div>
+
+<div id="sheet" class="sheet hide"><div class="card" id="sheetCard"></div></div>
+
+<script type="module" src="/js/mirror.js"></script>
+</body>
+</html>

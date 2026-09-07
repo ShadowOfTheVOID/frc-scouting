@@ -272,6 +272,48 @@ alone rather than corrupting it — see [how it works](docs/how-it-works.md#the-
 
 ---
 
+## Reading the data somewhere else — and keeping a copy off the laptop
+
+Optional, and it needs a website you already host. Set up once, it does two jobs at the same
+time:
+
+- **The event survives the laptop.** The hub is one machine that gets carried around a venue,
+  unplugged, closed and put in a bag between quals. `data/snapshots/` survives a corrupt
+  database; it does not survive the laptop being dropped, stolen or wiped. A mirror does.
+- **Anyone can read the numbers from anywhere.** A lead in the stands on cell data, a mentor at
+  home, a driver in the queue line — none of them have to be on venue wifi, and none of them can
+  change anything. It is read-only over there.
+
+The hub pushes; the mirror never asks. That is the only direction that works from behind a
+venue's network, and it means nothing on the internet can reach into the laptop.
+
+**On the website's host,** once:
+
+```
+MIRROR_PUSH_KEY=... MIRROR_VIEW_PASSCODE=... python3 mirror/server.py
+```
+
+**On the hub laptop,** at `http://localhost:6059/`, fill in **OFF-SITE MIRROR**: the address,
+and the same `MIRROR_PUSH_KEY`. Press **PUSH NOW** to check it works. After that it goes by
+itself, about once a minute, and only when something has actually changed.
+
+Two passwords, and they are not the same one on purpose: the **push key** is the write key and
+lives in one settings field on one laptop; the **view passcode** is what people type to read the
+site and gets shared around the team all weekend. If they were one string, anybody it reached
+could overwrite your event.
+
+**When the hub is gone**, open the mirror, go to the **BACKUP** tab and download the JSON. It
+imports straight back into a fresh install — and the mirror keeps the last sixty copies, not
+just the newest, so *"the database looks wrong"* is a download rather than a recovery procedure.
+
+Per-scout quality scores are the one thing never mirrored. They name people and grade them; the
+hub only shows them to the lead, and a copy on the open internet behind one shared code is not
+the place to relax that.
+
+Full setup, including TLS and a systemd unit: **[mirror/README.md](mirror/README.md)**.
+
+---
+
 ## For the scout lead
 
 Open the dashboard on your laptop — `http://<the address the server printed>:6059/dashboard` —
@@ -427,6 +469,8 @@ the fuel column.
 | Nothing at all loads | the black window got closed | Double-click the launcher again |
 | The database is damaged, or a whole day looks wrong | anything from a bad shutdown to a full disk | Stop the server. Copy the newest file out of `data/snapshots/` over `data/scouting.db`, delete `data/scouting.db-wal` and `-shm` if they are there, and start it again. The hub writes a snapshot every ten minutes and keeps the last twelve |
 | The QR code will not scan | screen too dim, or too far | Turn brightness up; hold the phone about a foot away |
+| SERVER tab says `off-site mirror RETRYING` | the mirror is unreachable, or the push key is wrong | http://localhost:6059/ says which, on the line under **PUSH NOW**. Nothing at the venue is affected either way |
+| The mirror's header has gone red | nothing has reached it for over an hour | The laptop is off, or off the internet. Every number on the mirror is that old — it says so |
 
 If a phone is truly stuck, the scout can keep scouting anyway — everything saves locally — and
 you can collect it later with **SAVE A BACKUP FILE** on their offline screen.
@@ -444,6 +488,10 @@ The **SERVER** tab on the dashboard has all of it:
   dashboard cannot disagree. The Lovat file is separate on purpose: it is other teams' scouting
   and mixing it into our columns is how it ends up quoted back as ours.
 - **Printable picklist** — see above.
+
+And off the laptop entirely: the **[off-site mirror](#reading-the-data-somewhere-else--and-keeping-a-copy-off-the-laptop)**
+holds the same JSON and CSVs on a website, updated about once a minute, for when the answer to
+"where is the data" cannot be "on that laptop over there".
 
 ---
 
@@ -497,6 +545,7 @@ Friday.
 start-server.bat / .command   double-click these
 server/                       the hub — Python, no dependencies to install
 web/                          what phones and laptops actually open
+mirror/                       the optional off-site copy — a separate website, run elsewhere
 design/                       the UI specification the screens were built to
 data/                         your event database — never share this, it holds your keys
 data/snapshots/               automatic backups, newest is the one to restore from
@@ -522,9 +571,10 @@ python3 server/tests_solver.py    # the accuracy claims above, on 20k simulated 
 python3 server/tests_api.py       # the server: syncing, the passcode, export and import
 python3 server/tests_lovat.py     # reading Lovat's export, which is somebody else's file format
 python3 server/tests_ai.py        # the model adapter, stubbed — no key and no network
+python3 mirror/tests_mirror.py    # a real hub pushing to a real mirror, and the restore back out
 ```
 
-All four are plain Python with nothing to install, and all four run on every push
+All five are plain Python with nothing to install, and all five run on every push
 (`.github/workflows/ci.yml`).
 
 ## License

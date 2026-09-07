@@ -35,6 +35,7 @@ import ai
 import analytics
 import discover
 import lovat as lovat_report
+import offsite
 import rules
 import solve
 import sources
@@ -59,6 +60,10 @@ FRC_EVENTS_POLL_SECONDS = 60
 # every five minutes pulls the whole tournament and leaves that limit alone
 # even when a config save fires _poll_all at the same moment.
 LOVAT_POLL_SECONDS = 300
+# Outbound, to a site the team hosts - see server/offsite.py. Nothing is sent
+# when the bundle has not changed, so this is a ceiling on how often the hub
+# *could* speak, not on how much it says.
+MIRROR_PUSH_SECONDS = offsite.PUSH_SECONDS
 # A ceiling on generated answers per event, so a stuck button cannot quietly
 # spend a team's API credit all afternoon. Raise it in Setup if you need to.
 AI_CALL_CEILING = 250
@@ -85,7 +90,8 @@ class Hub:
         self.stop_flag = threading.Event()
         self.port = PORT
         self.status = {"nexus": None, "tba": None, "statbotics": None,
-                       "frcEvents": None, "lovat": None, "lastUpdate": None}
+                       "frcEvents": None, "lovat": None, "mirror": None,
+                       "lastUpdate": None}
         self.last_snapshot = None
         self.started_at = time.time()
         self._recal_lock = threading.Lock()
@@ -130,6 +136,7 @@ class Hub:
 
         nx, tba, fe = self.nexus(), self.tba(), self.frc_events()
         lv, ai_c = self.lovat(), self.ai()
+        mrr, mst = self.mirror(), self.store.get("mirrorState") or {}
         age = lambda t: f"{int(now - t)}s ago" if t else "never"
         services = [
             svc("http + sse", True, f"{len(self.subs)} client(s) streaming"),
@@ -154,6 +161,16 @@ class Hub:
             svc("ai", ai_c.ok, f"{ai_c.provider} · {ai_c.model} · {self.ai_calls()}"
                 f"/{self.ai_ceiling()} answers this event" if ai_c.ok else "no provider set"),
             svc("solver", True, f"multipliers fitted from {self.store.get('multipliersFittedFrom') or 0} windows"),
+            # The one service that is not a source: this is the hub talking
+            # outwards. A mirror that is refusing pushes has to be visible
+            # here, because nothing else on the hub gets worse when it breaks.
+            svc("off-site mirror", mrr.ok,
+                (mst.get("error") or
+                 f"{age(mst.get('pushedAt'))}, rev {mst.get('revision')}"
+                 + (f", {mst['photosPending']} photo(s) queued"
+                    if mst.get("photosPending") else ""))
+                if mrr.ok else "not configured",
+                bool(mrr.ok) and bool(mst.get("error"))),
             svc("snapshots", True,
                 f"last {age(self.last_snapshot)}, keeping {SNAPSHOT_KEEP}"
                 if self.last_snapshot else f"every {SNAPSHOT_SECONDS // 60}m, none yet"),
@@ -194,6 +211,9 @@ class Hub:
     def ai(self):
         return ai.client(self.cfg)
 
+    def mirror(self):
+        return offsite.Mirror(self.cfg("mirrorUrl"), self.cfg("mirrorKey"))
+
     def ai_ceiling(self):
         try:
             return max(0, int(self.cfg("aiCallLimit") or AI_CALL_CEILING))
@@ -213,6 +233,34 @@ class Hub:
                 return None, False
             return n + 1, True
         return self.store.mutate("aiCalls", apply, 0)
+
+    def csv_text(self, ek, table):
+        """One of the dashboard's CSV exports, as text.
+
+        The mirror carries these verbatim rather than building its own, so a
+        column can never mean one thing on the hub and another off-site.
+        """
+        header, rows = _csv_table(self, ek, table)
+        buf = io.StringIO()
+        w = csv.writer(buf, lineterminator="\n")
+        w.writerow(header)
+        w.writerows(_csv_safe(r) for r in rows)
+        return buf.getvalue()
+
+    def poll_mirror(self):
+        """Push the event off-site. Never the reason anything else fails.
+
+        Sits in the poller with the five inbound sources, and is the only one
+        that goes the other way. push_once() swallows its own failures and
+        records them; this only has to keep the status line honest.
+        """
+        if not self.mirror().ok:
+            return
+        res = offsite.push_once(self)
+        if res.get("ok"):
+            self.status["mirror"] = time.time()
+        elif res.get("reason"):
+            self.note("warn", f"mirror push failed: {res['reason']}")
 
     # ------------------------------------------------------------- SSE
     def subscribe(self, who=None):
@@ -1072,7 +1120,8 @@ class Hub:
                  (self.poll_tba, TBA_POLL_SECONDS),
                  (self.poll_frc_events, FRC_EVENTS_POLL_SECONDS),
                  (self.poll_statbotics, STATBOTICS_POLL_SECONDS),
-                 (self.poll_lovat, LOVAT_POLL_SECONDS))
+                 (self.poll_lovat, LOVAT_POLL_SECONDS),
+                 (self.poll_mirror, MIRROR_PUSH_SECONDS))
         due = [0.0] * len(every)
         while not self.stop_flag.is_set():
             now = time.time()
@@ -1090,6 +1139,28 @@ class Hub:
                     sys.stderr.write(f"[poll] {name}: {e}\n")
             self.status["lastUpdate"] = time.time()
             self.stop_flag.wait(2.0)
+
+
+def _mirror_url(raw):
+    """What somebody typed into the mirror box, as an address that works.
+
+    "systemoverload.org", with a trailing slash, or with the /api/push path
+    already on the end are all the same intention, and all three used to be
+    saved verbatim and then fail with a 404 that pointed at nothing. https is
+    assumed rather than http: this crosses the open internet carrying a whole
+    event and a push key.
+    """
+    url = (raw or "").strip()
+    if not url:
+        return ""
+    if "://" not in url:
+        url = "https://" + url
+    url = url.rstrip("/")
+    for tail in ("/api/push", "/api/photos", "/api"):
+        if url.endswith(tail):
+            url = url[: -len(tail)]
+            break
+    return url.rstrip("/")
 
 
 def _finite(v):
@@ -1762,7 +1833,12 @@ class Handler(BaseHTTPRequestHandler):
                 "eventLevel": (h.store.event(h.event_key()) or {}).get("level", "regional") if h.event_key() else "regional",
                 "keys": {"tba": bool(h.cfg("tbaKey")), "nexus": bool(h.cfg("nexusKey")),
                          "frcEvents": h.frc_events().ok, "lovat": bool(h.cfg("lovatKey")),
-                         "ai": h.ai().ok},
+                         "ai": h.ai().ok, "mirror": h.mirror().ok},
+                # The address is a setting and the setup page has to show what
+                # is saved; the push key is a secret and never comes back out.
+                "mirror": {"url": h.cfg("mirrorUrl") or None, "ok": h.mirror().ok,
+                           **{k: v for k, v in (h.store.get("mirrorState") or {}).items()
+                              if k != "digest"}},
                 # The provider and model are settings, not secrets - the panel
                 # that shows generated text has to be able to name what wrote it.
                 # The effective model, not the stored one: a hub that has
@@ -1894,9 +1970,15 @@ class Handler(BaseHTTPRequestHandler):
                 }, 403)
             for k in ("eventKey", "tbaKey", "nexusKey", "nexusToken", "eventLevel", "ourTeam",
                       "frcEventsUser", "frcEventsToken", "lovatKey",
-                      "aiProvider", "aiKey", "aiCallLimit"):
+                      "aiProvider", "aiKey", "aiCallLimit", "mirrorKey"):
                 if k in body:
                     h.store.set(k, body[k])
+            # A trailing slash, a bare hostname or a copied "/api/push" are all
+            # what somebody means by "the mirror address", and none of them
+            # work as typed. Normalising here means the setup page can be a
+            # plain text box.
+            if "mirrorUrl" in body:
+                h.store.set("mirrorUrl", _mirror_url(body["mirrorUrl"]))
             # The Setup page sends one value for both, as "provider:model", so
             # the two can never be saved disagreeing with each other. A bare id
             # typed by hand still resolves.
@@ -2072,6 +2154,19 @@ class Handler(BaseHTTPRequestHandler):
             if applied:
                 h.broadcast("scout", {"applied": applied, "matches": sorted(touched)})
             return self._json({"ok": True, "applied": applied, "rejected": rejected})
+
+        if p == "/api/mirror/push":
+            # Same boundary as the settings that configure it: the hub machine,
+            # or the strategy passcode. Pushing is not destructive, but it does
+            # send the whole event somewhere, and that is not a button for
+            # anyone who found the wifi.
+            if not (self._is_local() or self._unlocked_strict()):
+                return self._json({"error": "hub machine or strategy passcode only"}, 403)
+            # 200 either way, with the reason in the body. A failed push is
+            # not a fault in this hub - the mirror is down, or the key is
+            # wrong - and an HTTP error code here only got the setup page a
+            # thrown exception where it wanted something to put on screen.
+            return self._json(offsite.push_once(h, force=True))
 
         if p == "/api/refresh":
             _poll_all(h)

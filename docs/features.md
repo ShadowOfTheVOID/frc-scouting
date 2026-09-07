@@ -23,6 +23,10 @@ One Python process serves all of them. Nothing is installed on any phone.
 | `/join` | the hub laptop screen | A QR code per network address. Scouts point a camera at it. |
 | `/picklist/print` | the hub laptop | Paper fallback for alliance selection. |
 
+And one that is not this process at all: the **off-site mirror**, a separate website on a host
+you already own, which the hub pushes a copy of the event to about once a minute. It runs
+somewhere else, holds nothing but what it is sent, and is read-only. See below.
+
 ---
 
 ## The scout phone
@@ -327,6 +331,11 @@ Diagnostics — uptime, memory, writes per minute, connected devices, per-servic
 every data source, the event log, every network address the hub is reachable on — and all the
 export links.
 
+The service list carries one line that is not a data source: `off-site mirror` is the hub
+talking *outwards*. `IDLE` means no mirror is configured, `RUNNING` names the last copy it
+pushed, and `RETRYING` means it has stopped working — with the reason on the setup page.
+Nothing at the venue degrades when it is red.
+
 ### MATCH
 
 Both alliances side by side: projected fuel and points, win probability with the margin it came
@@ -529,6 +538,18 @@ And the public accuracy number, SCOUTS vs TBA, is about the data.
 Nothing about a scout's identity leaves the hub. `/api/config` returns booleans for which keys
 are set, never a key value, and the passcode is stored only as a salted hash.
 
+### And on the mirror
+
+The off-site copy has its own two levels, and they are separate strings on purpose. The **push
+key** is the write key: the hub proves it is the hub, and it lives in one settings field on one
+laptop. The **view passcode** is what a person types to read the site, and it gets shared around
+a team over a weekend. If one string did both jobs, anyone it reached could overwrite the event.
+
+The mirror is read-only in the strong sense: there is no route on it that changes anything on
+the hub, and no API key of any kind is ever sent to it. Per-scout quality scores are not
+mirrored at all — the hub's rule above is not relaxed for a public host behind one shared
+code.
+
 ---
 
 ## When the network goes away
@@ -576,6 +597,8 @@ it nothing arms the match screen and every scout opens each match by hand. The r
 | **Lovat API key** | Other teams' scouting for this event. Your scouting lead makes one in the Lovat Dashboard under Settings → API keys; it starts `lvt-`, and your team has to be verified on Lovat first. Polled once every five minutes — Lovat allows one request every three seconds per key, so the hub stays well inside it. The export is scoped to what your Lovat account is allowed to see, so a short list is a setting on their side, not a failure on ours. |
 | **AI model** | One list, grouped Claude / Gemini / OpenAI, each option priced per million tokens. Picking a model picks the company that makes it, so there is no provider field to get wrong. Starts on **Claude Opus 5**, so pasting a key is enough — you never have to touch the list. *none* turns the three panels below off entirely, and stays off even with a key in the box. **other** takes a typed model id for anything released after this list was written; the name decides where it is sent. |
 | **AI key** | The key for whoever makes the model you picked. |
+| **Mirror address** | Optional. The root of an off-site mirror, e.g. `https://systemoverload.org`. A trailing slash or a pasted `/api/push` is trimmed, and a bare hostname gets `https://`. Blank sends nothing anywhere. |
+| **Mirror push key** | Whatever `MIRROR_PUSH_KEY` is on that host. The write key, and not the passcode people type to read the site. |
 | Statbotics | EPA. No key needed. |
 
 ### Command line
@@ -604,6 +627,71 @@ python3 server/seed_demo.py [--db data/demo.db] [--event 2026demo] [--teams 31] 
 TBA-shaped rows directly. That is what a real event does, and it is the path that a bug once
 hid in, so it is worth exercising.
 
+```
+MIRROR_PUSH_KEY=... MIRROR_VIEW_PASSCODE=... python3 mirror/server.py
+                      [--port 8060] [--bind 127.0.0.1] [--db mirror/data/mirror.db]
+                      [--behind-proxy] [--open]
+```
+
+The mirror, on the other host. It refuses to start without a push key, and refuses to start
+without a read passcode unless you say `--open`. `--bind` defaults to loopback because it is
+meant to sit behind something that already has a TLS certificate; `--behind-proxy` is what makes
+it believe `X-Forwarded-For`, without which every request looks like it came from `127.0.0.1`
+and one wrong passcode would throttle everybody. Full setup in
+[mirror/README.md](../mirror/README.md).
+
+---
+
+## The off-site mirror
+
+A second website, on a host the team already has, holding a copy of the event.
+
+The hub is one laptop on venue wifi, behind whatever network the venue runs — nothing on the
+internet can reach in and ask it for anything, so the hub pushes and the mirror never asks. Two
+things come of that: the event survives the laptop, and anybody with the view passcode can read
+the numbers from a phone on cell data, off venue wifi entirely.
+
+**What it carries.** Once a minute: the event, teams, matches, flags, rankings, EPA, Nexus's
+alliance and pit-map data, the picklist, the whole analytics payload the dashboard draws from,
+every scout and pit record, and the team-summary and Lovat CSVs — the last carried verbatim
+rather than rebuilt, so a column cannot mean one thing on the hub and another off-site.
+
+**What it does not.** Nothing is sent when nothing changed: the bundle is hashed without its
+timestamp and an unchanged event is skipped, because a venue uplink is shared with a few
+thousand people and their phones. A photo crosses once — the mirror answers each push with the
+ids it is missing and the hub sends a few per push. Per-scout quality scores are never sent at
+all. No API key ever leaves the hub; the mirror has no use for one, since it never calls TBA,
+Nexus, Statbotics, Lovat or any model.
+
+**What it shows.** Five tabs, laid out for a phone: TEAMS (the same table as the dashboard, tap
+for the detail sheet with pit scouting, photos and scout notes), MATCHES, PICKLIST, HEALTH and
+BACKUP. A banner at the top says how old the copy is and turns amber after five minutes and red
+after an hour, because a mirror that quietly shows yesterday's numbers as if they were live is
+worse than no mirror. Ages are measured against the mirror's clock, not the phone's.
+
+**Getting the event back.** BACKUP → DOWNLOAD JSON is the same file `/api/export` produces, so
+it imports straight into a fresh hub under the same last-write-wins rule — re-importing is a
+no-op, so it is always safe to try twice. The mirror keeps the last sixty distinct copies and
+every one is a download link on that tab, because *"the database looks wrong"* is one of the
+failures this exists for.
+
+### Its own HTTP surface
+
+| Route | Method | Notes |
+|---|---|---|
+| `/api/status` | GET | Open. Whether it is locked, and how long ago it last heard from a hub. Names no event. |
+| `/api/unlock` | POST | Passcode for a token, 16 hours. Eight wrong tries from one address locks it out for ten minutes. |
+| `/api/events` | GET | What events are mirrored, and when each last arrived. |
+| `/api/snapshot?event=&rev=` | GET | The whole bundle, newest by default. |
+| `/api/history?event=` | GET | Every copy held, with the counts that make one choosable. |
+| `/api/export?event=&rev=` | GET | A hub import file. |
+| `/api/export.csv?event=&table=` | GET | `teams` or `lovat`, as pushed. |
+| `/api/photo/<id>` | GET | A mirrored pit photo, served as the type its bytes actually are. |
+| `/api/push`, `/api/photos` | POST | The hub only. `X-Mirror-Key`. |
+
+Reads take the token as `X-Mirror-Token`, or as `?t=` for the URLs a browser fetches by itself —
+an `<img>` tag and a download link cannot send a header. Request logging is off for that reason.
+
 ---
 
 ## HTTP API
@@ -627,6 +715,7 @@ Everything is JSON over plain HTTP. Useful if you want to drive another display 
 | `/api/seat`, `/api/unseat`, `/api/matchstart` | POST | Station claims and the shared clock. |
 | `/api/photo/<id>`, `/api/photos` | GET | Pit photos. |
 | `/api/refresh`, `/api/resolve` | POST | Force a poll, or re-solve one match. |
+| `/api/mirror/push` | POST | Push to the off-site mirror now. Hub machine or the strategy passcode. Answers 200 either way, with the reason in the body. |
 | `/api/ai/notes/<team>` | POST | Note digest. `{"peek":true}` reads the cache without generating; `{"force":true}` regenerates. |
 | `/api/ai/match/<matchKey>` | POST | Strategy read of one match. Same `peek` / `force`. |
 | `/api/ai/picklist` | POST | Rationale for an order you send as `{"order":[team,…]}`. Same `peek` / `force`. |

@@ -33,6 +33,13 @@ jobs:
       - name: Lovat import
         run: python3 server/tests_lovat.py
 
+      # Both halves of the off-site mirror on real sockets: a seeded hub
+      # pushes to a real mirror, and the file the mirror hands back is
+      # imported into an empty database. That last step is the claim the
+      # mirror exists to make - if the laptop is gone, this file is the event.
+      - name: Off-site mirror, hub to mirror and back
+        run: python3 mirror/tests_mirror.py
+
       # Every model on the picker reasons before it answers, out of the same
       # token budget, and each vendor turns that down with a parameter the
       # other two reject. Stubbed HTTP - no network, no key.

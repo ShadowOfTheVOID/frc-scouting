@@ -1,0 +1,46 @@
+# systemd unit for the mirror.
+#
+#   sudo cp mirror/deploy/frc-mirror.service /etc/systemd/system/
+#   sudo systemctl edit frc-mirror        # put the two secrets in the override
+#   sudo systemctl enable --now frc-mirror
+#
+# The secrets go in the override (or an EnvironmentFile), never in this file
+# and never on the command line: an argument is visible in `ps` to every user
+# on the host, and this file is in a public git repository.
+
+[Unit]
+Description=REBUILT scouting off-site mirror
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=frcmirror
+Group=frcmirror
+WorkingDirectory=/opt/frc-scouting
+ExecStart=/usr/bin/python3 /opt/frc-scouting/mirror/server.py --bind 127.0.0.1 --port 8060 --behind-proxy
+
+# systemctl edit frc-mirror, then:
+#   [Service]
+#   Environment=MIRROR_PUSH_KEY=...
+#   Environment=MIRROR_VIEW_PASSCODE=...
+Environment=MIRROR_DB=/var/lib/frc-mirror/mirror.db
+
+Restart=always
+RestartSec=5
+
+# It reads one directory of code and writes one database. Nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+StateDirectory=frc-mirror
+ReadWritePaths=/var/lib/frc-mirror
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target
