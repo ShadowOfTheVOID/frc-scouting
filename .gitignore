@@ -2,6 +2,10 @@
 # strategy passcode hash, unlock tokens, and any API keys the hub was given.
 data/
 
+# The mirror's own database, on whatever host it runs on. Same reasoning: it
+# holds a whole event's scouting and the tokens people unlocked it with.
+mirror/data/
+
 # Python
 __pycache__/
 *.py[cod]

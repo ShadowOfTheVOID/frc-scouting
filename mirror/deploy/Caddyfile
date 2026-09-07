@@ -1,0 +1,30 @@
+# TLS for the mirror, on systemoverload.org.
+#
+# Caddy gets and renews the certificate on its own; there is nothing to do
+# after this beyond pointing the domain's A record at the host. The mirror
+# itself listens on 127.0.0.1 only and speaks plain HTTP, so this file is the
+# only thing on the public interface.
+#
+#   sudo cp mirror/deploy/Caddyfile /etc/caddy/Caddyfile
+#   sudo systemctl reload caddy
+
+scouting.systemoverload.org {
+	encode gzip
+
+	# The mirror sets its own Content-Security-Policy, X-Content-Type-Options
+	# and Referrer-Policy per response; the one thing it cannot know is
+	# whether it is behind TLS, so HSTS is set here.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+
+	# The bundle from a full event is a few hundred KB gzipped, and a batch of
+	# pit photos is larger. The default 10MB limit rejects those with a 413
+	# the hub can do nothing about.
+	request_body {
+		max_size 64MB
+	}
+
+	reverse_proxy 127.0.0.1:8060
+}

@@ -104,6 +104,35 @@
       </div>
     </div>
   </div>
+
+  <div class="cols" style="grid-template-columns:1fr">
+    <div class="pane mid">
+      <div class="eyebrow">OFF-SITE MIRROR</div>
+      <div class="hint">Optional, and the only thing here that sends your event anywhere.
+        Every minute this hub packs the whole event — teams, matches, scouting, the picklist,
+        the solved numbers — and pushes it to a site your team hosts. Two things come of that:
+        the data survives this laptop, and anyone with the mirror passcode can read the numbers
+        from a phone on cell data, off the venue wifi entirely. It is read-only over there;
+        nothing on the mirror can change anything here. Nothing is sent while the event has
+        not changed.</div>
+      <div class="form">
+        <div class="f"><label>MIRROR ADDRESS</label>
+          <input id="mirrorUrl" placeholder="https://systemoverload.org" autocomplete="off"
+            autocapitalize="off" autocorrect="off" spellcheck="false">
+          <div class="h">The site root. A trailing slash or a pasted /api/push is fine — it
+            gets trimmed. Leave blank to send nothing anywhere.</div></div>
+        <div class="f"><label>MIRROR PUSH KEY</label>
+          <input id="mirrorKey" placeholder="the key the mirror was started with" autocomplete="off">
+          <div class="h">Whatever <code>MIRROR_PUSH_KEY</code> is set to on the mirror. This is
+            the write key and it lives only here — it is <b>not</b> the passcode people type to
+            read the site, which is a different string on purpose.</div></div>
+        <div class="btns" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button class="go" id="pushNow" style="background:var(--btn)">PUSH NOW</button>
+          <span class="hint" id="mirrorStatus"></span>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script type="module">
@@ -122,7 +151,40 @@ try {
   bits.push(c.multipliersFittedFrom ? `CALIBRATED · ${c.multipliersFittedFrom} WINDOWS` : 'PRIORS ONLY');
   bits.push(c.picklistLocked ? 'PICKLIST LOCKED' : 'PICKLIST OPEN');
   $('#sub').textContent = bits.join(' · ');
+  showMirror(c);
 } catch { $('#sub').textContent = 'HUB NOT REACHABLE'; }
+
+/**
+ * What the hub last managed to do with the mirror, in one line.
+ *
+ * A push that is failing has no other symptom on this laptop - everything at
+ * the venue keeps working - so if it is not said here it is not said anywhere
+ * until somebody opens the dashboard's SERVER tab.
+ */
+function showMirror(c) {
+  const m = c.mirror || {};
+  $('#mirrorUrl').value = m.url || '';
+  const el = $('#mirrorStatus');
+  if (!m.url) { el.textContent = 'Not configured — nothing leaves this laptop.'; return; }
+  if (!m.ok) { el.textContent = 'Address saved, but no push key yet.'; return; }
+  if (m.error) { el.innerHTML = `<b style="color:var(--red-alert)">Last push failed:</b> ${m.error}`; return; }
+  if (!m.pushedAt) { el.textContent = 'Configured. Nothing pushed yet.'; return; }
+  const mins = Math.round((Date.now() / 1000 - m.pushedAt) / 60);
+  el.textContent = `Last pushed ${mins < 1 ? 'just now' : mins + 'm ago'}`
+    + (m.revision ? `, copy #${m.revision}` : '')
+    + (m.bytes ? `, ${Math.round(m.bytes / 1024)} KB` : '')
+    + (m.photosPending ? `, ${m.photosPending} photo(s) still queued` : '') + '.';
+}
+
+$('#pushNow').onclick = async () => {
+  $('#mirrorStatus').textContent = 'pushing…';
+  try {
+    const r = await net.api('/api/mirror/push', { method: 'POST', body: '{}' });
+    showMirror(await net.api('/api/config'));
+    if (!r.ok) $('#mirrorStatus').innerHTML =
+      `<b style="color:var(--red-alert)">Failed:</b> ${r.reason || 'unknown'}`;
+  } catch (e) { $('#mirrorStatus').innerHTML = `<b style="color:var(--red-alert)">Failed:</b> ${e.message}`; }
+};
 
 /**
  * One list instead of a provider and a model that can disagree.
@@ -168,9 +230,13 @@ function buildModelPicker(ai) {
 $('#save').onclick = async () => {
   const body = { eventKey: $('#eventKey').value.trim(), eventLevel: $('#eventLevel').value,
                  ourTeam: $('#ourTeam').value.trim() };
-  for (const k of ['tbaKey','nexusKey','nexusToken','frcEventsUser','frcEventsToken','lovatKey','aiKey']) {
+  for (const k of ['tbaKey','nexusKey','nexusToken','frcEventsUser','frcEventsToken','lovatKey','aiKey','mirrorKey']) {
     const v = $('#'+k).value.trim(); if (v) body[k] = v;
   }
+  // The address is a setting, not a secret, so a blank box means "stop
+  // mirroring" rather than "leave it alone" - which is the only way to turn it
+  // off from this page.
+  body.mirrorUrl = $('#mirrorUrl').value.trim();
   const picked = $('#aiModel').value;
   body.aiModel = picked === 'other' ? $('#aiOther').value.trim() : picked;
   const pin = $('#strategyPin').value;
@@ -180,8 +246,9 @@ $('#save').onclick = async () => {
     await net.api('/api/config', { method:'POST', body: JSON.stringify(body) });
     $('#status').textContent = 'Saved. Fetching event data…';
     for (const k of ['tbaKey','nexusKey','nexusToken','frcEventsUser','frcEventsToken',
-                     'lovatKey','aiKey','strategyPin'])
+                     'lovatKey','aiKey','strategyPin','mirrorKey'])
       $('#'+k).value = '';
+    try { showMirror(await net.api('/api/config')); } catch { /* offline */ }
     // The model is a setting, not a secret: it stays on screen, re-read from
     // the hub so the page shows what was actually saved.
     try { buildModelPicker((await net.api('/api/config')).ai || {}); } catch { /* offline */ }

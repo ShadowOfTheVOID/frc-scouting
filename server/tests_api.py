@@ -301,6 +301,25 @@ def test_export_import_idempotent(L):
     dump["scout"][0]["payload"]["note"] = "from the backup file"
     code, r = L.req("/api/import", dump)
     ok &= check("a newer row in an import is applied", r["applied"] == 1, f"({r})")
+
+    # The export used to carry pit rows with no eventKey on them, and
+    # upsert_pit needs one to know what it is merging - so every pit record in
+    # a backup file was silently rejected on the way back in. Nothing said so:
+    # `applied` counted the match scouting and the pit scouting just was not
+    # there. It is the half nobody can re-collect, because the robots have gone
+    # home.
+    L.req("/api/sync", {"pit": [{
+        "eventKey": EK, "team": 9982, "scoutId": "PT", "deviceId": "test",
+        "updatedAt": time.time(),
+        "payload": {"drivetrain": "swerve", "shooter": "drum", "notes": "tall intake"}}]})
+    code, dump = L.req("/api/export")
+    ok &= check("the export carries the pit record", len(dump.get("pit") or []) == 1,
+                f"({len(dump.get('pit') or [])})")
+
+    fresh = Store(os.path.join(L.dir, "restored.db"))
+    landed = sum(1 for rec in dump.get("pit") or [] if fresh.upsert_pit(rec))
+    ok &= check("and it restores into an empty database", landed == 1
+                and len(fresh.pit_entries(EK)) == 1, f"({landed} applied)")
     return ok
 
 
@@ -700,7 +719,7 @@ def test_config_scope(L):
     code, c = L.req("/api/config")
     ok &= check("config reports which keys are set",
                 code == 200 and c["keys"] == {"tba": False, "nexus": False, "frcEvents": False,
-                                              "lovat": False, "ai": False},
+                                              "lovat": False, "ai": False, "mirror": False},
                 f"({c['keys']})")
     L.req("/api/config", {"frcEventsUser": "someone", "frcEventsToken": "secret"})
     code, c = L.req("/api/config")
