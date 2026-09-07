@@ -23,6 +23,7 @@ sys.path.insert(0, _HERE)
 import analytics  # noqa: E402
 import envfile  # noqa: E402
 import hub  # noqa: E402
+import offsite  # noqa: E402
 from store import Store  # noqa: E402
 
 EK = "2026test"
@@ -74,6 +75,21 @@ class Live:
                 return e.code, json.loads(payload or b"null")
             except ValueError:
                 return e.code, payload.decode("utf-8", "replace")
+
+    def cond(self, path, etag=None):
+        """A conditional GET. Returns (status, etag, body-bytes).
+
+        Separate from req() because the whole point here is the headers and the
+        empty body, and req() throws both away.
+        """
+        r = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}")
+        if etag:
+            r.add_header("If-None-Match", etag)
+        try:
+            with urllib.request.urlopen(r, timeout=10) as res:
+                return res.status, res.headers.get("ETag"), res.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.headers.get("ETag"), e.read()
 
 
 def entry(match, team, scout, updated_at, note="", intervals=None):
@@ -1352,6 +1368,299 @@ def test_legacy_keys_migrate(L):
     return ok
 
 
+def test_collection_path_is_intact(L):
+    """What a scout logs must arrive unchanged, and be readable everywhere.
+
+    The battery work touched the paths around this - when a save is flushed,
+    how often the phone polls, when the hub bothers to rebuild - so this pins
+    the thing none of that may alter: the observation itself. Every field a
+    scout can produce goes in, and has to come back identical through the store,
+    the raw endpoint, the export, and the analytics the picklist reads.
+    """
+    ok = True
+    now = time.time()
+    mk = f"{EK}_qm1"
+    # Deliberately awkward: sub-second interval edges, a hold that crosses a
+    # window boundary, a zero preload (which is not the same as unanswered),
+    # and every yes/no.
+    payload = {
+        "intervals": [{"start": 12.34, "end": 19.87, "phase": "auto", "intensity": "dumping"},
+                      {"start": 41.02, "end": 58.44, "phase": "shift1", "intensity": "trickle"}],
+        "feedIntervals": [{"start": 61.5, "end": 66.25}],
+        "defenseIntervals": [{"start": 70.0, "end": 88.75}],
+        "preload": 0, "autoTower": "Level1", "endgameTower": "Level3",
+        "driverRating": 5, "defenseRating": 3,
+        "died": False, "tipped": True, "noShow": False, "fouls": True,
+        "note": "crossed a window edge mid-hold",
+        "startPosition": "left", "autoFailed": False, "defenseTarget": 201,
+        "clockShared": True, "clockBy": "AK",
+    }
+    rec = {"eventKey": EK, "matchKey": mk, "team": 101, "scoutId": "PATH",
+           "deviceId": "path-test", "alliance": "red", "station": 1,
+           "updatedAt": now, "payload": payload}
+    code, r = L.req("/api/sync", {"scout": [rec]})
+    ok &= check("a record posts", code == 200 and r.get("applied"))
+
+    stored = [e for e in L.store.scout_entries(EK, mk) if e["scoutId"] == "PATH"]
+    ok &= check("it is stored exactly once", len(stored) == 1)
+    if stored:
+        got = stored[0]["payload"]
+        for k, v in payload.items():
+            ok &= check(f"payload.{k} survives the round trip", got.get(k) == v,
+                        "" if got.get(k) == v else f"sent {v!r}, got {got.get(k)!r}")
+        ok &= check("the scout's own updatedAt is kept, not the server's",
+                    abs(stored[0]["updatedAt"] - now) < 1e-6)
+
+    # The same row through the endpoint the dashboard and the export read.
+    _, raw = L.req(f"/api/scout?event={EK}&match={mk}")
+    mine = [e for e in raw if e["scoutId"] == "PATH"]
+    ok &= check("/api/scout returns it with its intervals intact",
+                len(mine) == 1 and mine[0]["payload"]["intervals"] == payload["intervals"])
+    _, dump = L.req(f"/api/export?event={EK}")
+    ok &= check("the export carries it too",
+                any(e.get("scoutId") == "PATH" for e in (dump.get("scout") or [])))
+
+    # And a newer edit still wins, which is the rule the whole queue rests on.
+    L.req("/api/sync", {"scout": [{**rec, "updatedAt": now + 5,
+                                   "payload": {**payload, "note": "edited"}}]})
+    after = [e for e in L.store.scout_entries(EK, mk) if e["scoutId"] == "PATH"]
+    ok &= check("a later edit replaces it rather than duplicating",
+                len(after) == 1 and after[0]["payload"]["note"] == "edited")
+    L.req("/api/sync", {"scout": [{**rec, "updatedAt": now - 5,
+                                   "payload": {**payload, "note": "stale"}}]})
+    after = [e for e in L.store.scout_entries(EK, mk) if e["scoutId"] == "PATH"]
+    ok &= check("and an older one is refused", after[0]["payload"]["note"] == "edited")
+
+    # The memoized analytics must see it - this is the path the ETag work
+    # rewrote, so it is the one worth proving reaches the picklist.
+    summary = analytics.event_summary(L.store, EK)
+    ok &= check("the memoized analytics include the new observation",
+                (summary["teams"].get(101) or {}).get("matchesScouted", 0) > 0)
+    return ok
+
+
+def test_scope_lists_are_complete(L):
+    """Every kv row a handler reads must be named in its scope list.
+
+    This is a check and not a comment because the failure is silent: a scope
+    left out means the endpoint answers 304 over data that really did change,
+    and the strategy team reads a stale number with nothing on screen to say so.
+    Anyone adding a `store.get` to one of these handlers should see this fail.
+    """
+    ok = True
+    reads = []
+    real_get, real_mutate = Store.get, Store.mutate
+
+    def spy_get(self, key, default=None):
+        reads.append(Store.kv_scope(key)); return real_get(self, key, default)
+
+    def spy_mutate(self, key, fn, default=None):
+        reads.append(Store.kv_scope(key)); return real_mutate(self, key, fn, default)
+
+    h, st = L.hub, L.store
+    cases = [
+        ("STATE_SCOPES", hub.STATE_SCOPES,
+         {"events", "teams", "matches", "flags", "pit_entries"}, lambda: (
+             st.event(EK), st.teams(EK), st.matches(EK), st.get("nexusLive"),
+             h.nexus_data("pits", EK, {}), h.nexus_data("pitMap", EK),
+             h.nexus_data("inspection", EK, {}), h.nexus_data("alliances", EK, []),
+             st.flags(EK), h.seats(), st.get("matchClocks"), st.get("clockFixes"),
+             st.pit_entries(EK), h.event_data("rankings", EK, {}),
+             h.event_data("epa", EK, {}), h.event_data("earlyScores", EK, {}))),
+        ("ANALYTICS_SCOPES", hub.ANALYTICS_SCOPES,
+         {"matches", "teams", "scout_entries", "solved"},
+         lambda: analytics._event_summary(st, EK, include_scouts=True)),
+        ("CREW_SCOPES", hub.CREW_SCOPES, {"scout_entries"}, lambda: h.crew()),
+        ("SEATLOG_SCOPES", hub.SEATLOG_SCOPES, set(), lambda: h.seat_history()),
+        ("BUNDLE_SCOPES", offsite.BUNDLE_SCOPES,
+         {"events", "teams", "matches", "flags", "scout_entries", "pit_entries",
+          "photos", "solved"}, lambda: offsite.build_bundle(h, EK)),
+    ]
+    try:
+        Store.get, Store.mutate = spy_get, spy_mutate
+        for name, declared, tables, fn in cases:
+            reads.clear()
+            fn()
+            missing = ({r for r in reads if r.startswith("kv:")} | tables) - set(declared)
+            ok &= check(f"{name} names everything its handler reads",
+                        not missing, "" if not missing else f"missing {sorted(missing)}")
+    finally:
+        Store.get, Store.mutate = real_get, real_mutate
+    return ok
+
+
+def test_cheap_polling(L):
+    """An unchanged poll must cost a bare 304, and a changed one must not.
+
+    Six phones, two dashboards and a pit tablet poll this hub all day. Before
+    this, every one of those requests rebuilt the whole event and re-sent it -
+    ~165KB of identical JSON per dashboard per cycle, and the analytics were
+    recomputed from every scouting row at the event to produce it. The risk in
+    fixing that is the opposite failure: a 304 that hides a real change, which
+    would show the strategy team stale numbers with no way to tell. So the
+    invalidation is what is actually tested here.
+    """
+    ok = True
+
+    # Plant a chair nobody has reported from since this morning. seats() used to
+    # expire that by writing the filtered map back - during the payload build,
+    # after the tag had already been taken - so the tag handed to the client was
+    # stale the instant it was issued and the next poll got a 200 it did not
+    # need. Nothing served was ever wrong, but an unreliable 304 is no 304 at
+    # all. CI caught this only because an earlier test happened to leave such a
+    # chair behind; planted here, it is caught every run.
+    L.store.set("seats", {**(L.store.get("seats") or {}),
+                          "red3": {"scoutId": "GN", "deviceId": "gone",
+                                   "at": time.time() - hub.Hub.SEAT_TTL - 60}})
+    # Nothing may call hub.seats() between planting it and the request below -
+    # a single read used to be enough to sweep it, which is what made this
+    # intermittent rather than reliable in the first place.
+    seats_v = L.store.version_for("kv:seats")
+    _, state_tag, _ = L.cond("/api/state")
+    ok &= check("serving /api/state does not write to seats",
+                L.store.version_for("kv:seats") == seats_v)
+    ok &= check("and the expired chair is filtered out of what it served",
+                "red3" not in (L.req("/api/seats")[1] or {}))
+
+    for path in ("/api/state", "/api/analytics", "/api/crew", "/api/seatlog"):
+        code, etag, body = L.cond(path)
+        ok &= check(f"{path} answers with an ETag", code == 200 and bool(etag))
+        # Serving an endpoint must not move its own tag. This is the check that
+        # would have failed before the fix above.
+        _, again, _ = L.cond(path)
+        ok &= check(f"{path} does not invalidate its own tag by being served",
+                    again == etag)
+        code, _, body = L.cond(path, etag)
+        ok &= check(f"{path} repeated is a bare 304", code == 304 and body == b"",
+                    f"({len(body)} bytes)")
+
+    # A write has to move the tags of the endpoints that read it, and only those.
+    _, state_before, _ = L.cond("/api/state")
+    _, an_before, _ = L.cond("/api/analytics")
+    L.req("/api/sync", {"scout": [entry(f"{EK}_qm1", 103, "ET", time.time(), "etag")]})
+    ok &= check("a scout sync moves the analytics tag",
+                L.cond("/api/analytics")[1] != an_before)
+    ok &= check("and /api/state re-serves after it",
+                L.cond("/api/state", state_before)[0] in (200, 304))
+    ok &= check("a stale analytics tag gets the new data, not a 304",
+                L.cond("/api/analytics", an_before)[0] == 200)
+
+    # /api/crew reads the live SSE subscriber set, which no store write touches.
+    _, crew_before, _ = L.cond("/api/crew")
+    q = L.hub.subscribe({"deviceId": "etag-probe", "scoutId": "ZZ", "seat": "red1"})
+    ok &= check("a phone connecting moves the crew tag",
+                L.cond("/api/crew")[1] != crew_before)
+    L.hub.unsubscribe(q)
+
+    # A seat claim is a kv write and shows on both.
+    _, state_before, _ = L.cond("/api/state")
+    _, crew_before, _ = L.cond("/api/crew")
+    L.req("/api/seat", {"alliance": "blue", "station": 3, "scoutId": "QQ", "deviceId": "etag-dev"})
+    ok &= check("a seat claim moves the state tag", L.cond("/api/state")[1] != state_before)
+    ok &= check("a seat claim moves the crew tag", L.cond("/api/crew")[1] != crew_before)
+
+    # The one endpoint that must never be cached: net.js corrects every phone's
+    # clock skew against this, and the shared clock is what the solver rests on.
+    code, etag, _ = L.cond("/api/config")
+    ok &= check("/api/config carries no ETag", code == 200 and not etag)
+    t1 = L.req("/api/config")[1]["serverTime"]
+    time.sleep(0.05)
+    t2 = L.req("/api/config")[1]["serverTime"]
+    ok &= check("/api/config serverTime still advances", t2 > t1)
+
+    # The crew board works out ages itself now, so two polls a second apart are
+    # the same bytes. If the hub went back to sending ages, nothing above would
+    # fail - the tag would still match - but the board would freeze.
+    rows = L.req("/api/crew")[1]
+    ok &= check("crew rows carry instants, not server-computed ages",
+                all("lastSeenSec" not in r and "lastMatchAgoSec" not in r for r in rows)
+                and any("lastSeenAt" in r for r in rows))
+    return ok
+
+
+def test_write_counters(L):
+    """The counters the ETags and the analytics cache are built on."""
+    ok = True
+    v = lambda *s: L.store.version_for(*s)
+
+    before = v("matches")
+    L.store.put_match(EK, f"{EK}_qm1", label="Qualification 1", comp_level="qm",
+                      match_number=1, red=[101, 102, 103], blue=[201, 202, 203])
+    ok &= check("re-putting an identical match writes nothing", v("matches") == before)
+    L.store.put_match(EK, f"{EK}_qm1", status="On field")
+    ok &= check("a real change does move it", v("matches") != before)
+
+    before = v("teams")
+    L.store.put_teams(EK, [{"team": t, "name": f"Team {t}"} for t in (101, 102, 103)])
+    ok &= check("re-putting identical teams writes nothing", v("teams") == before)
+
+    before = v("kv:seats")
+    L.store.mutate("seats", lambda cur: (None, cur), {})
+    ok &= check("a mutate that declines to write does not count", v("kv:seats") == before)
+
+    # Scoped, not global: hub.touch() writes `devices` once a minute per phone,
+    # and with one counter six phones would leave no 304s to give.
+    before = v("matches", "teams", "scout_entries", "solved")
+    L.store.set("devices", {"d": {"at": time.time()}})
+    ok &= check("a device heartbeat does not disturb the analytics scopes",
+                v("matches", "teams", "scout_entries", "solved") == before)
+
+    before = L.store.version_for("photos")
+    L.store.snapshot(keep=2)
+    ok &= check("a snapshot changes no data and no counter",
+                L.store.version_for("photos") == before)
+
+    # The memoized summary must be the same object until something it reads moves.
+    a = analytics.event_summary(L.store, EK)
+    b = analytics.event_summary(L.store, EK)
+    ok &= check("event_summary is memoized between writes", a is b)
+    L.req("/api/sync", {"scout": [entry(f"{EK}_qm1", 102, "MM", time.time(), "cache bust")]})
+    c = analytics.event_summary(L.store, EK)
+    ok &= check("and recomputed after one", c is not a)
+    return ok
+
+
+def test_static_revalidates(L):
+    """Code and markup are no-cache, which is only cheap if there is an ETag."""
+    ok = True
+    code, etag, body = L.cond("/js/net.js")
+    ok &= check("a script is served with an ETag", code == 200 and bool(etag) and len(body) > 0)
+    code, _, body = L.cond("/js/net.js", etag)
+    ok &= check("and revalidates to a bare 304", code == 304 and body == b"")
+    return ok
+
+
+def test_nexus_broadcasts_only_on_change(L):
+    """The broadcast that used to wake every device in the building every 20s.
+
+    `dataAsOfTime` is Nexus's own clock and advances on every poll, so it orders
+    updates but says nothing about whether they carry news. Each broadcast costs
+    a full refresh on every dashboard, a whole /api/state and a ~60KB IndexedDB
+    rewrite on every phone, and a complete SVG rebuild on the pit tablet.
+    """
+    ok = True
+    sent = []
+    real = L.hub.broadcast
+    L.hub.broadcast = lambda kind, payload: sent.append(kind)
+    try:
+        payload = {"eventKey": EK, "dataAsOfTime": time.time() * 1000,
+                   "nowQueuing": "Qualification 5", "matches": [], "announcements": []}
+        L.hub.apply_nexus_event(dict(payload))
+        first = sent.count("nexus")
+        # Same news, later timestamp - which is exactly what a quiet poll looks like.
+        payload["dataAsOfTime"] += 20000
+        L.hub.apply_nexus_event(dict(payload))
+        ok &= check("an unchanged Nexus poll broadcasts nothing",
+                    sent.count("nexus") == first, f"({sent.count('nexus')} sent)")
+        payload["dataAsOfTime"] += 20000
+        payload["nowQueuing"] = "Qualification 6"
+        L.hub.apply_nexus_event(dict(payload))
+        ok &= check("a real change still broadcasts", sent.count("nexus") == first + 1)
+    finally:
+        L.hub.broadcast = real
+    return ok
+
+
 def main():
     L = Live()
     try:
@@ -1369,7 +1678,10 @@ def main():
                    test_ai_is_gated_and_grounded,
                    test_nexus_tba_one_row, test_legacy_keys_migrate,
                    test_concurrent_writes, test_score_report,
-                   test_scout_data_is_lead_only):
+                   test_scout_data_is_lead_only,
+                   test_cheap_polling, test_write_counters, test_static_revalidates,
+                   test_nexus_broadcasts_only_on_change, test_scope_lists_are_complete,
+                   test_collection_path_is_intact):
             print(f"\n{fn.__name__.replace('test_', '').replace('_', ' ')}")
             passed &= fn(L)
         print()

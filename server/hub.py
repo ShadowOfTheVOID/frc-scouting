@@ -26,6 +26,7 @@ import socket
 import sys
 import threading
 import time
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -51,7 +52,20 @@ WEB_ROOT = os.path.abspath(WEB_ROOT)
 # taken already. --port still overrides it, and web/js/net.js has to agree.
 PORT = 6059
 
+# One nonce per run of the process, mixed into every ETag. The store's write
+# counters live in memory and start again from zero, so without this a phone
+# that slept through a hub restart would hold a tag that happens to match a
+# quite different state and never ask for the real one again.
+BOOT = uuid.uuid4().hex[:8]
+
 NEXUS_POLL_SECONDS = 20
+# The pit map, the pit list and inspection status change a handful of times a
+# day between them - a pit map is fixed once the venue is set up - so they do
+# not need the fast tick. The live status does, because `On field` is what arms
+# the phones. So does the alliance table: during selection the picklist crosses
+# teams off by itself as they are picked, and a board two minutes behind the
+# room is worse than no board at all.
+NEXUS_SLOW_POLL_SECONDS = 120
 TBA_POLL_SECONDS = 45
 # EPA is a season-long fit; it barely moves inside one event, so polling it
 # hard buys nothing and Statbotics is the one source we expect to be down.
@@ -75,6 +89,34 @@ AI_CALL_CEILING = 250
 # politely; it returns nothing at all.
 AI_PANEL_TOKENS = 4000
 AI_ASK_TOKENS = 3000
+# What each polled endpoint reads, for its ETag. These have to be kept honest
+# against the handlers below: naming a scope too many only costs a needless
+# rebuild, naming one too few serves a client stale data behind a 304.
+#
+# Note what is deliberately absent from STATE_SCOPES and ANALYTICS_SCOPES:
+# `kv:devices`, which hub.touch() writes once a minute per phone. Six phones
+# would move a single global counter every ten seconds and there would be no
+# 304s left to give.
+STATE_SCOPES = ("events", "teams", "matches", "flags", "pit_entries",
+                "kv:nexusLive", "kv:pits", "kv:pitMap", "kv:inspection",
+                "kv:alliances", "kv:seats", "kv:matchClocks", "kv:clockFixes",
+                "kv:rankings", "kv:epa", "kv:earlyScores")
+ANALYTICS_SCOPES = ("matches", "teams", "scout_entries", "solved",
+                    "kv:rankings", "kv:epa", "kv:lovat", "kv:multipliers")
+SEATLOG_SCOPES = ("kv:seatLog",)
+# `connected` on a crew row is read from the live SSE subscriber set, which no
+# store write touches - hence the subscriber generation mixed in at the call.
+# `kv:eventKey` because crew() reads it to find the entries to scan. Every tag
+# already carries the event key on its own, so this is belt and braces - but a
+# scope list that is complete on its own reading is worth more than one scope.
+CREW_SCOPES = ("kv:seats", "kv:devices", "kv:eventKey", "scout_entries")
+
+# How often an idle stream writes its comment frame. Every one of these wakes
+# six phones' radios for a byte, all day. There is no proxy between a phone and
+# a hub on the same LAN - the frame is only there so a stream that has gone
+# quiet is noticed - so this is comfortably inside anything that would drop it.
+SSE_KEEPALIVE_SECONDS = 45
+
 # The whole event lives on one laptop that gets carried around a venue all day.
 SNAPSHOT_SECONDS = 600
 SNAPSHOT_KEEP = 12
@@ -87,8 +129,14 @@ class Hub:
         self.store = store
         self.subs = []
         self.subs_lock = threading.Lock()
+        # Bumped whenever a stream opens or closes. /api/crew's `connected`
+        # column is read from the live subscriber set, which no store write
+        # touches, so this is the only thing that can invalidate its tag when a
+        # phone drops off the wifi.
+        self.subs_gen = 0
         self.statbotics = sources.Statbotics()
         self.last_nexus_at = 0.0
+        self.last_nexus_live = None
         self.stop_flag = threading.Event()
         self.port = PORT
         self.status = {"nexus": None, "tba": None, "statbotics": None,
@@ -186,7 +234,11 @@ class Hub:
             "writesPerMin": round(len(self.writes) / 5.0, 1),
             "sseClients": len(self.subs),
             "services": services,
-            "addresses": discover.urls(self.port),
+            # A short age rather than the default: this is the panel a lead
+            # opens precisely when the laptop has moved to another network, so
+            # it must not be showing them where it used to be. Still enough to
+            # collapse a tab left open and polling.
+            "addresses": discover.urls(self.port, max_age=30.0),
             "seats": self.seats(),
             "log": list(reversed(self.log[-40:])),
         }
@@ -325,6 +377,7 @@ class Hub:
         q.since = time.time()
         with self.subs_lock:
             self.subs.append(q)
+            self.subs_gen += 1
         if who and who.get("scoutId"):
             self.touch(who, "connected")
         return q
@@ -333,6 +386,7 @@ class Hub:
         with self.subs_lock:
             if q in self.subs:
                 self.subs.remove(q)
+                self.subs_gen += 1
 
     def touch(self, who, what):
         """Record that a device is alive. This is what tells the lead who to
@@ -355,8 +409,13 @@ class Hub:
         self.keep_seat_warm(who["deviceId"])
 
     def crew(self):
-        """One row per station: who is on it, are they live, are they behind."""
-        now = time.time()
+        """One row per station: who is on it, are they live, are they behind.
+
+        Instants, not ages. The dashboard subtracts them itself, so the board
+        keeps counting up with no network at all and two identical polls a
+        second apart really are identical - which is what lets this endpoint
+        answer 304 instead of re-scanning every scouting row at the event.
+        """
         devs = self.store.get("devices") or {}
         seats = self.seats()
         with self.subs_lock:
@@ -382,9 +441,9 @@ class Hub:
                 "scoutId": sid,
                 "deviceId": claim.get("deviceId"),
                 "connected": bool(claim.get("deviceId")) and claim["deviceId"] in live,
-                "lastSeenSec": int(now - dev["at"]) if dev.get("at") else None,
+                "lastSeenAt": dev.get("at"),
                 "lastMatch": last[1] if last else None,
-                "lastMatchAgoSec": int(now - last[0]) if last else None,
+                "lastMatchAt": last[0] if last else None,
             })
         return rows
 
@@ -443,31 +502,70 @@ class Hub:
             "dataAsOfTime": as_of,
         })
         self.status["nexus"] = time.time()
-        self.broadcast("nexus", {
+        # Only when something actually moved. `dataAsOfTime` above is Nexus's
+        # own clock and advances on every poll, so it orders updates but says
+        # nothing about whether they carry news - and this broadcast used to
+        # fire every twenty seconds regardless. Each one costs six fetches and a
+        # full DOM rebuild on every dashboard, a whole /api/state plus a ~60KB
+        # IndexedDB rewrite on every phone, and a complete SVG rebuild on the
+        # pit tablet. The four sibling payloads in poll_nexus_slow below have
+        # always been guarded this way; this one was the omission.
+        live = {
             "nowQueuing": payload.get("nowQueuing"),
             "matches": payload.get("matches") or [],
             "announcements": payload.get("announcements") or [],
             "partsRequests": payload.get("partsRequests") or [],
-        })
+        }
+        if live == self.last_nexus_live:
+            return True
+        self.last_nexus_live = live
+        self.broadcast("nexus", live)
         return True
 
     def poll_nexus(self):
+        """Live event status and the alliance table - the two that must be fast.
+
+        `On field` is what opens the match screen on six phones, so a slower
+        tick here is directly a later arm. Alliances are here for the other
+        end of the event: during selection the picklist crosses teams off as
+        they are picked, and that is a twenty-minute window where being two
+        minutes stale is being wrong. The three in poll_nexus_slow below are
+        genuinely not like that.
+        """
         ek = self.event_key()
         nx = self.nexus()
         if not (ek and nx.ok):
             return
         self.apply_nexus_event(nx.event(ek))
+        self._nexus_side("alliances", nx.alliances, ek)
+
+    def poll_nexus_slow(self):
+        """Pit map, pit list, inspection status.
+
+        A pit map is fixed once the venue is set up and the pit list barely
+        moves after Thursday. Asking for these alongside the status call every
+        twenty seconds was three wasted round trips in five, on a laptop running
+        off its battery next to the field.
+        """
+        ek = self.event_key()
+        nx = self.nexus()
+        if not (ek and nx.ok):
+            return
         for name, fn in (("pits", nx.pits), ("pitMap", nx.pit_map),
-                         ("inspection", nx.inspection), ("alliances", nx.alliances)):
-            data = fn(ek)
-            if data is None:
-                # 404 (no pit map at this event) or a transient failure: keep what
-                # we have for THIS event rather than blanking the screen.
-                continue
-            key = f"{name}:{ek}"
-            if self.store.get(key) != data:
-                self.store.set(key, data)
-                self.broadcast(name, data)
+                         ("inspection", nx.inspection)):
+            self._nexus_side(name, fn, ek)
+
+    def _nexus_side(self, name, fn, ek):
+        """One of Nexus's per-event side payloads, stored and pushed on change."""
+        data = fn(ek)
+        if data is None:
+            # 404 (no pit map at this event) or a transient failure: keep what
+            # we have for THIS event rather than blanking the screen.
+            return
+        key = f"{name}:{ek}"
+        if self.store.get(key) != data:
+            self.store.set(key, data)
+            self.broadcast(name, data)
 
     def event_data(self, name, ek, default=None):
         """Per-event cached payload. Never falls back to another event's data."""
@@ -830,6 +928,13 @@ class Hub:
     # ------------------------------------------------------------- seats
     STATIONS = ("red1", "red2", "red3", "blue1", "blue2", "blue3")
     SEAT_TTL = 3 * 3600            # seconds a chair survives with nobody reporting
+    # How stale a claim has to look before a phone reporting in rewrites its
+    # timestamp. It used to be 60s, which against a three-hour TTL is about a
+    # hundred and eighty times more often than the job needs - and every one of
+    # those writes moved the `seats` counter, which is what /api/state hangs its
+    # ETag on, so six phones alone kept a dashboard rebuilding the whole event
+    # six times a minute. Ten minutes still leaves a wide margin.
+    SEAT_WARM_SECONDS = 600
 
     @staticmethod
     def normalize_seat(seat):
@@ -950,6 +1055,10 @@ class Hub:
         of the claim. A scout who sat down at nine and never opened the seat
         screen again dropped off the crew board three hours later, and the lead
         was told six robots were unwatched while six people watched them.
+
+        Note this is the chair's clock, not the phone's. How recently the phone
+        itself was heard from is `devices`, which touch() writes, and that is
+        what the crew board's LAST HEARD column reads.
         """
         now = time.time()
 
@@ -957,17 +1066,36 @@ class Hub:
             seats = self._live_seats(seats)
             touched = False
             for k, v in list(seats.items()):
-                if v.get("deviceId") == device_id and now - v.get("at", 0) > 60:
+                if (v.get("deviceId") == device_id
+                        and now - v.get("at", 0) > self.SEAT_WARM_SECONDS):
                     seats[k] = {**v, "at": now}
                     touched = True
             return (seats if touched else None), None
         self.store.mutate("seats", apply, {})
 
     def seats(self):
-        def apply(seats):
-            live = self._live_seats(seats)
-            return (live if live != (seats or {}) else None), live
-        return self.store.mutate("seats", apply, {})
+        """The chairs that are still held.  A read, and only a read.
+
+        Two reasons it must not write. store.mutate takes the SQLite write lock
+        before it can read (BEGIN IMMEDIATE, and it must - see the note there),
+        and this is on the read path of /api/seats, /api/state and /api/diag, so
+        a dashboard refresh was taking the write lock three times a cycle and
+        queueing behind six phones flushing at the buzzer.
+
+        The second reason is subtler and was a real bug: /api/state takes its
+        ETag before building the payload, precisely so an unchanged poll can
+        skip the work. Expiring a chair here wrote to `seats` *during* that
+        build - moving the counter the tag had just been derived from - so the
+        tag handed to the client was stale the instant it was issued and the
+        next conditional request got a 200 it did not need. Nothing served was
+        ever wrong, but the 304 was unreliable, which is the whole feature.
+
+        Dropping the write costs nothing: an expired chair is filtered out of
+        every read, and the filtered map is persisted by the next thing that
+        genuinely writes - claim_seat, free_seat and keep_seat_warm all run
+        _live_seats inside their own mutate.
+        """
+        return self._live_seats(self.store.get("seats") or {})
 
     # ---------------------------------------------------------- solving
     # Beyond this it is not a late tap. It used to be a flat 180s, which is
@@ -1262,6 +1390,7 @@ class Hub:
         Nothing said so; the poll simply stopped being a poll.
         """
         every = ((self.poll_nexus, NEXUS_POLL_SECONDS),
+                 (self.poll_nexus_slow, NEXUS_SLOW_POLL_SECONDS),
                  (self.poll_tba, TBA_POLL_SECONDS),
                  (self.poll_frc_events, FRC_EVENTS_POLL_SECONDS),
                  (self.poll_statbotics, STATBOTICS_POLL_SECONDS),
@@ -1725,8 +1854,8 @@ def _ai_notes_payload(rec):
 
 def _poll_all(h):
     """Kick every source off the request thread. A poll must never block a save."""
-    for fn in (h.poll_nexus, h.poll_tba, h.poll_frc_events, h.poll_statbotics,
-               h.poll_lovat):
+    for fn in (h.poll_nexus, h.poll_nexus_slow, h.poll_tba, h.poll_frc_events,
+               h.poll_statbotics, h.poll_lovat):
         threading.Thread(target=fn, daemon=True).start()
 
 
@@ -1842,7 +1971,37 @@ class Handler(BaseHTTPRequestHandler):
             sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
 
     # ---------------------------------------------------------- helpers
-    def _json(self, obj, code=200):
+    def _etag(self, *scopes, **kw):
+        """The ETag for an endpoint that reads `scopes`.
+
+        BOOT is in the tag because the counters live in memory and restart at
+        zero: without it a phone that slept through a hub restart holds a tag
+        that matches a completely different state. The event key is in it
+        because these endpoints all take ?event=, and switching events must not
+        read as "unchanged".
+        """
+        ek = (parse_qs(urlparse(self.path).query).get("event")
+              or [Handler.hub.event_key()])[0] or "-"
+        extra = kw.get("extra")
+        return 'W/"%s-%s-%s%s"' % (BOOT, Handler.hub.store.version_for(*scopes), ek,
+                                   "" if extra is None else "-" + str(extra))
+
+    def _not_modified(self, etag):
+        """True (and the 304 is already sent) when the client's copy is current.
+
+        Called before the payload is built, not after - the point is to skip the
+        work, not just the bytes.
+        """
+        if not etag or self.headers.get("If-None-Match") != etag:
+            return False
+        self.send_response(304)
+        self.send_header("ETag", etag)
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+        return True
+
+    def _json(self, obj, code=200, etag=None):
         # allow_nan=False so this can never emit bare NaN or Infinity. Python
         # writes those happily and reads them back; the browser's JSON.parse
         # rejects them outright, so one non-finite number anywhere in a response
@@ -1863,7 +2022,14 @@ class Handler(BaseHTTPRequestHandler):
         if enc:
             self.send_header("Content-Encoding", enc)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        if etag:
+            # no-cache, not no-store: revalidate every time, but let the
+            # revalidation come back empty. no-store would forbid holding the
+            # copy at all, which is the whole saving.
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "no-cache")
+        else:
+            self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
 
@@ -2015,6 +2181,31 @@ class Handler(BaseHTTPRequestHandler):
             ctype = "text/javascript; charset=utf-8"
         elif path.endswith(".webmanifest"):
             ctype = "application/manifest+json"
+
+        # Fonts and icons are content-stable and were being revalidated on every
+        # load; markup and code stay no-cache so a fix reaches phones instantly.
+        immutable = "/fonts/" in path.replace(os.sep, "/") or "/icons/" in path.replace(os.sep, "/")
+
+        # no-cache means "ask me every time", not "never store it" - so give the
+        # browser something to ask WITH. Without an ETag every reload pulled all
+        # ~66KB of code and markup down again, and a scout who reloads is a
+        # scout whose phone just lost the page. Cheap and exact: size and mtime
+        # off the directory entry, no read and no hash. There is no service
+        # worker here (plain HTTP is not a secure context - see docs), so this
+        # revalidation is the whole of the phone's caching story.
+        try:
+            st = os.stat(path)
+            etag = 'W/"%x-%x"' % (int(st.st_mtime), st.st_size)
+        except OSError:
+            etag = None
+        if etag and not immutable and self.headers.get("If-None-Match") == etag:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+
         with open(path, "rb") as fh:
             data = fh.read()
 
@@ -2023,14 +2214,13 @@ class Handler(BaseHTTPRequestHandler):
         if compressible and len(data) > 1024 and "gzip" in (self.headers.get("Accept-Encoding") or ""):
             data, enc = _gz(data), "gzip"
 
-        # Fonts and icons are content-stable and were being revalidated on every
-        # load; markup and code stay no-cache so a fix reaches phones instantly.
-        immutable = "/fonts/" in path.replace(os.sep, "/") or "/icons/" in path.replace(os.sep, "/")
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         if enc:
             self.send_header("Content-Encoding", enc)
         self.send_header("Content-Length", str(len(data)))
+        if etag and not immutable:
+            self.send_header("ETag", etag)
         self.send_header("Cache-Control",
                          "public, max-age=31536000, immutable" if immutable else "no-cache")
         self.end_headers()
@@ -2058,12 +2248,20 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/stream":
             return self._stream()
         if p == "/api/config":
+            # Built once each. h.ai() constructs a fresh client every call and
+            # this response asked for five of them, plus two mirrors and an
+            # frc_events - eight objects per request, on an endpoint every page
+            # in the building fetches. No ETag on this one: `serverTime` below
+            # is what net.js corrects the phones' clock skew against, and the
+            # shared match clock is the last thing to serve from a cache.
+            ek = h.event_key()
+            aic, mir, frc = h.ai(), h.mirror(), h.frc_events()
             return self._json({
-                "eventKey": h.event_key(),
-                "eventLevel": (h.store.event(h.event_key()) or {}).get("level", "regional") if h.event_key() else "regional",
+                "eventKey": ek,
+                "eventLevel": (h.store.event(ek) or {}).get("level", "regional") if ek else "regional",
                 "keys": {"tba": bool(h.cfg("tbaKey")), "nexus": bool(h.cfg("nexusKey")),
-                         "frcEvents": h.frc_events().ok, "lovat": bool(h.cfg("lovatKey")),
-                         "ai": h.ai().ok, "mirror": h.mirror().ok},
+                         "frcEvents": frc.ok, "lovat": bool(h.cfg("lovatKey")),
+                         "ai": aic.ok, "mirror": mir.ok},
                 # Which boxes have something in them, box by box, so the Setup
                 # page can say SAVED beside each one and offer to forget it.
                 # Whether, never what: no key value leaves the hub, and this
@@ -2071,7 +2269,7 @@ class Handler(BaseHTTPRequestHandler):
                 "saved": {k: bool(h.cfg(k)) for k in keyhygiene.FIELDS},
                 # The address is a setting and the setup page has to show what
                 # is saved; the push key is a secret and never comes back out.
-                "mirror": {"url": h.cfg("mirrorUrl") or None, "ok": h.mirror().ok,
+                "mirror": {"url": h.cfg("mirrorUrl") or None, "ok": mir.ok,
                            **{k: v for k, v in (h.store.get("mirrorState") or {}).items()
                               if k != "digest"}},
                 # The provider and model are settings, not secrets - the panel
@@ -2079,8 +2277,8 @@ class Handler(BaseHTTPRequestHandler):
                 # The effective model, not the stored one: a hub that has
                 # never picked gets the default, and the page has to show what
                 # would actually be used.
-                "ai": {"provider": h.ai().provider, "model": h.ai().model or None,
-                       "label": h.ai().label,
+                "ai": {"provider": aic.provider, "model": aic.model or None,
+                       "label": aic.label,
                        "calls": h.ai_calls(), "limit": h.ai_ceiling(),
                        "providers": dict(ai.PROVIDERS), "models": ai.catalogue(),
                        "default": ai.DEFAULT_MODEL},
@@ -2105,6 +2303,9 @@ class Handler(BaseHTTPRequestHandler):
             ek = (q.get("event") or [h.event_key()])[0]
             if not ek:
                 return self._json({"error": "no event selected"}, 400)
+            etag = self._etag(*STATE_SCOPES)
+            if self._not_modified(etag):
+                return None
             return self._json({
                 "eventKey": ek,
                 "event": h.store.event(ek),
@@ -2123,7 +2324,7 @@ class Handler(BaseHTTPRequestHandler):
                 "rankings": h.event_data("rankings", ek, {}),
                 "epa": h.event_data("epa", ek, {}),
                 "earlyScores": h.event_data("earlyScores", ek, {}),
-            })
+            }, etag=etag)
         if p == "/api/scout":
             ek = (q.get("event") or [h.event_key()])[0]
             return self._json(h.store.scout_entries(ek, (q.get("match") or [None])[0]))
@@ -2140,8 +2341,15 @@ class Handler(BaseHTTPRequestHandler):
             # nothing, because nothing downweights a low score anyway. The lead
             # gets it (strategy passcode, or sitting at the hub); the room does
             # not.
-            return self._json(analytics.event_summary(
-                h.store, ek, include_scouts=self._is_local() or self._unlocked_strict()))
+            scouts = self._is_local() or self._unlocked_strict()
+            # `scouts` is in the tag: the same event served with and without the
+            # per-scout block is two different bodies, and a lead who locks the
+            # board must not keep being told their copy is current.
+            etag = self._etag(*ANALYTICS_SCOPES, extra=int(scouts))
+            if self._not_modified(etag):
+                return None
+            return self._json(analytics.event_summary(h.store, ek, include_scouts=scouts),
+                              etag=etag)
         if p.startswith("/api/photo/"):
             pid = p.rsplit("/", 1)[-1]
             mime, data = h.store.photo(pid)
@@ -2165,14 +2373,20 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/seats":
             return self._json(h.seats())
         if p == "/api/crew":
-            return self._json(h.crew())
+            etag = self._etag(*CREW_SCOPES, extra=h.subs_gen)
+            if self._not_modified(etag):
+                return None
+            return self._json(h.crew(), etag=etag)
         if p == "/api/picklist":
             # anyone may read the board - scouts want to know who we are picking.
             # Only changing it needs the passcode (see the POST handler).
             return self._json({**h.picklist(), "canEdit": self._unlocked(),
                                "locked": h.pin_set()})
         if p == "/api/seatlog":
-            return self._json(h.seat_history())
+            etag = self._etag(*SEATLOG_SCOPES)
+            if self._not_modified(etag):
+                return None
+            return self._json(h.seat_history(), etag=etag)
         if p == "/api/diag":
             return self._json(h.diag())
         if p == "/api/export":
@@ -2648,7 +2862,7 @@ class Handler(BaseHTTPRequestHandler):
             last_touch = time.time()
             while True:
                 try:
-                    msg = q.get(timeout=15)
+                    msg = q.get(timeout=SSE_KEEPALIVE_SECONDS)
                     self.wfile.write(f"data: {msg}\n\n".encode("utf-8"))
                 except queue.Empty:
                     self.wfile.write(b": keepalive\n\n")  # keeps proxies and phones from dropping it

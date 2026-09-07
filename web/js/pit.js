@@ -3,6 +3,7 @@
 
 import * as db from './db.js';
 import * as net from './net.js';
+import { every, coalesce } from './timers.js';
 import * as fs from './fullscreen.js';
 
 const $ = (s) => document.querySelector(s);
@@ -229,13 +230,25 @@ $('#pSave').onclick = async () => {
 $('#pClose').onclick = () => { $('#sheet').classList.remove('open'); sel = null; renderMap(); };
 
 // --------------------------------------------------------------- refresh
+let lastLocalCount = -1;
 async function refresh() {
-  try { STATE = await net.api('/api/state'); db.cacheSet('state', STATE); }
-  catch { STATE = await db.cacheGet('state'); }
+  // Conditional: on an unchanged answer the hub sends a bare 304 and there is
+  // nothing to parse, nothing to write back to IndexedDB, and - the expensive
+  // part on a tablet - no reason to rebuild the pit map, which renderMap()
+  // regenerates as a whole SVG document, every area, wall, arrow and pit.
+  let changed = true;
+  try {
+    const r = await net.apiCached('/api/state');
+    changed = r.changed;
+    if (changed) { STATE = r.value; db.cacheSet('state', STATE); }
+  } catch { STATE = await db.cacheGet('state'); }
+  const local = await db.all('pit');
+  if (!changed && local.length === lastLocalCount) return;
+  lastLocalCount = local.length;
   entries = {};
   for (const e of (STATE && STATE.pitEntries) || []) entries[e.team] = e;
   // anything saved locally but not yet accepted still counts as scouted
-  for (const r of await db.all('pit')) if (!entries[r.team]) entries[r.team] = r;
+  for (const r of local) if (!entries[r.team]) entries[r.team] = r;
 
   $('#phdr').textContent = STATE
     ? `${(STATE.eventKey || '').toUpperCase()}${STATE.pitMap ? '' : ' · NO MAP'}`
@@ -266,7 +279,10 @@ async function main() {
   // broadcast name. These used to listen for 'pits', 'pitMap' and 'inspection',
   // which the hub has never sent, so the map only ever caught up on the 30s
   // poll below.
-  net.on('nexus', refresh); net.on('scout', refresh);
-  setInterval(refresh, 30000);
+  const nudge = coalesce(refresh, 750);
+  net.on('nexus', nudge); net.on('scout', nudge);
+  // Stops while the tablet is asleep or on another tab, and catches up once on
+  // the way back.
+  every(30000, refresh, { leading: false });
 }
 main().catch((e) => { console.error(e); $('#phdr').textContent = 'FAILED: ' + e.message; });

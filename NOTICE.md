@@ -4,7 +4,6 @@
 
 | What | Where | License |
 |---|---|---|
-| [jsQR](https://github.com/cozmo/jsQR) 1.4.0 | `web/js/vendor/jsQR.js` | MIT |
 | [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator) 1.4.4 | `web/js/vendor/qrcode.js` | MIT |
 | [Barlow](https://fonts.google.com/specimen/Barlow), [Barlow Condensed](https://fonts.google.com/specimen/Barlow+Condensed), [JetBrains Mono](https://www.jetbrains.com/lp/mono/) | `web/fonts/` | SIL Open Font License 1.1 |
 

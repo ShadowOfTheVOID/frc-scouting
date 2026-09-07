@@ -6,6 +6,7 @@
 // queue below is the only path the data takes.
 
 import * as db from './db.js';
+import { every } from './timers.js';
 
 const LS_BASE = 'serverBase';
 // Our team number, so the hub is not sitting on a port some other tool on
@@ -160,13 +161,65 @@ export async function api(path, opts = {}) {
   return res.json();
 }
 
+/**
+ * A GET that asks the hub whether anything changed, and usually hears "no".
+ *
+ * Returns `{ changed, value }`. On an unchanged answer the hub sends a bare 304
+ * with no body and `value` is the copy we already had - so this saves the
+ * transfer, the JSON parse, and (because the caller can see `changed`) the
+ * whole re-render and cache write behind it. `/api/state` is ~40KB and
+ * `/api/analytics` ~125KB on a real event, fetched every few seconds by every
+ * dashboard, phone and pit tablet in the building.
+ *
+ * We send `If-None-Match` ourselves and keep `cache: 'no-store'` rather than
+ * letting the browser revalidate: the browser would hand back its cached body
+ * and hide the 304, and knowing nothing changed is the more valuable half.
+ */
+const etags = new Map();
+
+export async function apiCached(path, opts = {}) {
+  const prev = etags.get(path);
+  const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  const tok = localStorage.getItem('strategyToken');
+  if (tok) headers['X-Strategy-Token'] = tok;
+  if (prev) headers['If-None-Match'] = prev.etag;
+
+  if (!state.base) {
+    const ok = await discover();
+    if (!ok) throw new Error('offline');
+  }
+  const res = await fetch(state.base + path, { cache: 'no-store', ...opts, headers });
+  if (res.status === 304 && prev) return { changed: false, value: prev.value };
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    const e = new Error((body && body.error) || (res.status === 403 ? 'locked' : `HTTP ${res.status}`));
+    e.status = res.status;
+    e.body = body;
+    if (res.status === 403) e.locked = true;
+    throw e;
+  }
+  const value = await res.json();
+  const tag = res.headers.get('ETag');
+  // Only remember a tag we were actually given. An endpoint that cannot answer
+  // 304 - /api/config carries serverTime, which the match clock is corrected
+  // against - simply never takes this path.
+  if (tag) etags.set(path, { etag: tag, value });
+  else etags.delete(path);
+  return { changed: true, value };
+}
+
 // ------------------------------------------------------------------ queue
 let flushing = false;
 
 export async function flush() {
-  state.queued = await db.queueCount();
-  emit();
-  if (flushing || !state.queued) return;
+  if (flushing) return;
+  // The count first, and only then the work. This used to read IndexedDB and
+  // fan out to every listener before the early return below, so a phone with
+  // nothing to send still opened a transaction and repainted the chip every
+  // eight seconds, all day, for an answer that was always zero.
+  const queued = await db.queueCount();
+  if (queued !== state.queued) { state.queued = queued; emit(); }
+  if (!queued) return;
   flushing = true;
   try {
     const items = db.collapse(await db.queued());
@@ -250,6 +303,20 @@ export function connectStream() {
   }
 }
 
+// How long to wait after a failed tick. A phone out of range is the normal
+// case at a venue, not an error, and it used to retry on a flat eight seconds
+// forever - with a 254-host subnet sweep on every one of those ticks once it
+// had been away for half a minute. An hour out of range cost roughly 450
+// discovery rounds and a quarter of a million probe requests; it now costs
+// about sixty rounds and one sweep.
+const BACKOFF_MS = [8000, 15000, 30000, 60000];
+// The subnet sweep is expensive - up to 508 probes - but it is also the only
+// thing that finds a hub which has moved to another address. Rate-limited, NOT
+// once-per-episode: a sweep that happens to run while the laptop is still
+// booting finds nothing, and a phone that then never sweeps again is a phone
+// that never comes back on its own.
+const SWEEP_EVERY_MS = 3 * 60 * 1000;
+
 /** Start discovery, streaming, and a periodic flush. Safe to call once per page. */
 export async function start({ flushMs = 8000, rediscoverMs = 20000 } = {}) {
   const cfg = await discover();
@@ -257,25 +324,61 @@ export async function start({ flushMs = 8000, rediscoverMs = 20000 } = {}) {
   await flush();
 
   let misses = 0;
-  setInterval(async () => {
+  let lastSweep = 0;
+  let waitUntil = 0;
+  let timer = null;
+
+  const tick = async () => {
+    if (Date.now() < waitUntil) return;
     if (!state.online || !state.base) {
       misses += 1;
-      // three quiet ticks in a row means the address we know is dead, not busy
-      const cfg = await discover({ sweep: misses >= 3 });
-      if (cfg) misses = 0;
-    } else misses = 0;
+      // Three quiet ticks in a row means the address we know is dead rather
+      // than busy - that is when a sweep is worth its cost. It used to run on
+      // every tick from then on; now it runs at most once every few minutes,
+      // but it does keep running for as long as the hub is missing.
+      const due = Date.now() - lastSweep > SWEEP_EVERY_MS;
+      const sweep = misses >= 3 && due;
+      if (sweep) lastSweep = Date.now();
+      const found = await discover({ sweep });
+      if (found) { misses = 0; lastSweep = 0; waitUntil = 0; }
+      else waitUntil = Date.now() + BACKOFF_MS[Math.min(misses - 1, BACKOFF_MS.length - 1)];
+    } else {
+      misses = 0; lastSweep = 0; waitUntil = 0;
+    }
     connectStream();   // self-guards; re-points itself if the hub has moved
     await flush();
-  }, flushMs);
+  };
+
+  // A phone holding unsent matches has to keep trying even in the background -
+  // that queue is the only copy of a scout's morning. One with nothing to send
+  // has no reason to touch the radio at all while it is not on screen.
+  // leading:false matters here. arm() is reached from onChange, which is
+  // reached from flush(), which is reached from tick() - so a leading run would
+  // start a second tick from inside the first one.
+  const arm = () => {
+    if (timer) timer();
+    timer = every(flushMs, tick, { whenHidden: state.queued > 0, leading: false });
+  };
+  arm();
+  let wasQueued = state.queued > 0;
+  onChange(() => {
+    const nowQueued = state.queued > 0;
+    if (nowQueued !== wasQueued) { wasQueued = nowQueued; arm(); }
+  });
 
   // If we've heard nothing at all for a while, the server may have moved.
-  setInterval(() => {
-    if (state.lastEvent && Date.now() - state.lastEvent > rediscoverMs * 3) discover();
-  }, rediscoverMs);
+  every(rediscoverMs, () => {
+    if (state.lastEvent && Date.now() - state.lastEvent > rediscoverMs * 3) return discover();
+  });
 
-  window.addEventListener('online', () => { discover({ sweep: true }).then(flush); });
+  window.addEventListener('online', () => {
+    // The radio came back, so the hub is worth looking for properly right now
+    // whatever the rate limit says.
+    misses = 0; lastSweep = Date.now(); waitUntil = 0;
+    discover({ sweep: true }).then(flush);
+  });
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) { discover().then(flush); }
+    if (!document.hidden) { waitUntil = 0; discover().then(flush); }
   });
   return cfg;
 }

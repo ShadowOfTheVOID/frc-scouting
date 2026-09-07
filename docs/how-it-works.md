@@ -140,13 +140,21 @@ Measured against the seeded demo event (31 teams, 40 matches, 156 scout entries)
 | one scout's match record | 1.1 KB median, 1.4 KB p90 |
 | one match, all six phones | ~7 KB |
 | **a 12-match qual day, whole crew** | **~80 KB** |
-| connected phone, idle | ~1 byte/sec (a `: keepalive` every 15s) |
-| dashboard refresh | ~19 KB gzipped per 30s |
+| connected phone, idle | a `: keepalive` every 45s, and nothing else |
+| dashboard refresh | four conditional GETs per 10s; ~0 bytes unless something changed |
 | first page load, per phone | ~256 KB (66 KB gzipped code + 186 KB fonts) |
+| every load after the first | ~0, if nothing was edited — code and markup revalidate |
 
 Responses over 1 KB are gzipped, and phones only POST when the queue is non-empty. The whole
 crew's steady-state demand is under 50 kbps. Even badly congested venue wifi has orders of
 magnitude more than this.
+
+The polled endpoints answer `304 Not Modified` when nothing has moved, which is most of the
+time: the hub keeps a write counter per table and per kv key, and an endpoint's ETag is the
+counters for exactly the things it reads. A dashboard sitting on a quiet event costs four
+empty responses every ten seconds instead of ~165 KB of identical JSON, and — because the tag
+is checked before the payload is built — the hub does not assemble the event to answer. See
+[Battery](#battery), below.
 
 So when a phone cannot reach the hub it is **never** because the network is slow. It is client
 isolation, a captive portal, or a firewall — three things that are all binary, and all
@@ -165,3 +173,68 @@ certificate and a scary warning to click through on six phones on a Friday morni
 certificate for a hostname that resolves to a DHCP address that moves. So: the *data* lives in
 IndexedDB and is safe across anything, the *page* does not survive a reload out of range, and
 both the README and the phone's own offline screen say so in as many words.
+
+---
+
+## Battery
+
+A phone runs this for a ten-hour competition day on one charge, and the hub laptop runs the
+whole event off its own battery next to the field. Nothing about that is free, and the app
+used to spend heavily on things nobody had asked it to do.
+
+### The screen is the battery
+
+Everything else on a phone put together is a rounding error next to the panel being lit. So
+the screen is the one thing deliberately **not** given back: the standby screen holds the phone
+awake all day, because a scout has to see the HUD open by itself when the match takes the
+field, and a sleeping phone cannot show that. Once the screen sleeps the browser suspends the
+page — it cannot even buzz.
+
+What it does instead is stop being *bright*. After a minute with nobody touching it, the
+standby screen goes flat black: the two full-viewport red gradients, the scanline overlay, the
+panel glow and every soft-shadow halo come off, leaving the countdown, the robot and the seat
+legible in grey. On the OLED panels these phones have, a black pixel is close to an off pixel.
+Any touch brings it back, so does the match arming, and so does the countdown coming inside a
+minute — so the screen is already bright before the robot is on the field.
+
+This is worth much less on an LCD phone, where the backlight costs the same whatever it is
+showing. It is not worth nothing there — the work below is saved either way.
+
+### Work nobody asked for
+
+The rest was straightforward waste, and it is worth naming because the shapes recur:
+
+- **A render loop instead of rendering on change.** The phone repainted five times a second
+  whatever screen it was on. On standby — where it sits for the whole day between matches —
+  that meant tearing down and rebuilding a dozen DOM nodes and their click handlers, five times
+  a second, for hours. Measured on the seeded demo event: **2472 DOM mutations in twenty
+  seconds, now 20.** The live screen kept its 200ms tick; it is the match clock, it runs two
+  and a half minutes at a time, and precision there is worth more than the saving.
+- **A broadcast that fired whether or not there was news.** The hub told every device in the
+  building that Nexus had spoken every twenty seconds, because it keyed on Nexus's own
+  timestamp, which advances on every poll. Each one cost six fetches and a full DOM rebuild on
+  every dashboard, a whole `/api/state` and a ~60 KB IndexedDB rewrite on every phone, and a
+  complete SVG rebuild on the pit tablet. It is now guarded on the payload actually differing,
+  the way its four sibling payloads always were.
+- **Polling with nothing to poll for.** No endpoint could say "nothing has changed", so every
+  poll re-sent — and re-*built* — the whole event. See the ETags above.
+- **Recomputing the same answer.** `analytics.event_summary` walks every scouting row and every
+  match × alliance × robot. It ran per request, per export, per mirror push, and once per
+  keystroke in the picklist search box, which reaches it through the AI panel. It is memoized
+  on the write counters now, so it runs once per change instead of once per reader.
+- **Timers that ran when nobody was looking.** There was not one `clearInterval` in the client
+  and a single `document.hidden` check in the whole codebase. A backgrounded dashboard polled
+  and rebuilt ten panes it was not showing. `web/js/timers.js` is the shared answer: intervals
+  that stop while the page is hidden and catch up once, jittered, on the way back.
+- **Drawing panes nobody could see.** Tabs are switched with a class, so all ten were being
+  rebuilt on every refresh — scatter plots, team tables, the log listing — while nine were
+  `display:none`. Only the visible tab is drawn; the others are marked dirty and drawn on the
+  way in, from data already in hand.
+- **A retry that never backed off.** A phone out of range retried on a flat eight seconds
+  forever, and once it had been away thirty seconds it swept 254 hosts × two subnets on *every*
+  one of those ticks. An hour out of range cost roughly a quarter of a million probe requests.
+  It now backs off 8 → 15 → 30 → 60 seconds and sweeps once per offline episode.
+
+One thing deliberately left alone: the phone buzzes twice per shooting run, on the hold and on
+the release. The second one is what tells a scout the run was actually recorded — the interval
+is discarded below 0.15s — and a day of them adds up to about nine seconds of motor time.

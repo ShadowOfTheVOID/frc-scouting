@@ -391,3 +391,31 @@ body{
   .a2hscard{grid-template-columns:1fr;gap:12px;padding:16px}
   .a2hscard h2{font-size:20px}
 }
+
+/* ------------------------------------------------------------ idle standby
+   The screen is deliberately held awake between matches: a scout has to see the
+   HUD open by itself when the match takes the field, and once a phone sleeps the
+   browser suspends the page and it can neither show that nor buzz about it.
+
+   None of that requires the screen to be BRIGHT through a six-minute gap. After
+   a minute with nobody touching it, hud.js sets .idle and everything that lights
+   pixels comes off: the two full-viewport red radial gradients, the scanline
+   overlay, the panel glow and every soft-shadow halo. On the OLED panels these
+   phones have, black pixels are close to off, and that is most of the draw for
+   most of the day.
+
+   The countdown and the robot stay legible - dim, not hidden - so the phone can
+   still be read at a glance. Any touch, the match arming, or the countdown
+   coming inside a minute takes the class straight back off. */
+#s-standby.idle{background:#000}
+#s-standby.idle::before,
+#s-standby.idle::after{display:none}
+#s-standby.idle .bigpanel{background:none;border-color:rgba(255,255,255,.06)}
+#s-standby.idle .bigpanel .glow{display:none}
+#s-standby.idle .pick,
+#s-standby.idle .pill{box-shadow:none;background:rgba(255,255,255,.03)}
+#s-standby.idle .pick.on{box-shadow:none;background:rgba(225,29,43,.14)}
+/* One transition, on opacity only, so coming back does not read as a glitch.
+   It runs for 200ms on a tap and never again - nothing here animates on its own. */
+#s-standby{transition:opacity .2s ease-out}
+#s-standby.idle{opacity:.62}

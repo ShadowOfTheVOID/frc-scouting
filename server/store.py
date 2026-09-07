@@ -62,6 +62,24 @@ class Store:
         self.path = os.path.abspath(path)
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         self._local = threading.local()
+        # Write counters, per scope. This is what lets the hub answer a poll
+        # with a bare 304 without rebuilding the whole event first: if none of
+        # the counters an endpoint reads has moved, nothing it would have built
+        # can have changed.
+        #
+        # Per scope rather than one global number, because the global one is
+        # useless in practice: hub.touch() writes `devices` once a minute per
+        # phone, so with six phones a single counter is stale again within ten
+        # seconds and every poll rebuilds the event anyway. Scopes are table
+        # names, and for kv rows the part of the key before the colon - so
+        # `rankings:2026demo` lands in `kv:rankings` and cannot be disturbed by
+        # a heartbeat writing `devices`.
+        #
+        # In memory only, so it resets on restart; hub.py mixes in a per-process
+        # BOOT nonce to stop a client holding a pre-restart tag getting a false
+        # 304.
+        self._versions = {}
+        self._version_lock = threading.Lock()
         with self.conn() as c:
             c.executescript(SCHEMA)
 
@@ -76,6 +94,26 @@ class Store:
             self._local.c = c
         return c
 
+    def bump(self, scope):
+        """Record that `scope` changed.  Called by every mutating method."""
+        with self._version_lock:
+            self._versions[scope] = self._versions.get(scope, 0) + 1
+
+    def version_for(self, *scopes):
+        """A token for the listed scopes.  Changes iff one of them was written.
+
+        Callers name every scope they read. Naming one too many only costs a
+        needless rebuild; naming one too few serves stale data, so the lists at
+        the call sites are worth reading against the handler beside them.
+        """
+        with self._version_lock:
+            return ".".join(str(self._versions.get(s, 0)) for s in scopes)
+
+    @staticmethod
+    def kv_scope(key):
+        """`rankings:2026demo` -> `kv:rankings`.  Unqualified keys map to themselves."""
+        return "kv:" + str(key).split(":", 1)[0]
+
     # ------------------------------------------------------------ settings
     def get(self, key, default=None):
         r = self.conn().execute("SELECT value FROM kv WHERE key=?", (key,)).fetchone()
@@ -86,6 +124,7 @@ class Store:
             "INSERT INTO kv(key,value,updated_at) VALUES(?,?,?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
             (key, json.dumps(value), time.time()))
+        self.bump(self.kv_scope(key))
 
     def mutate(self, key, fn, default=None):
         """Read-modify-write one kv row atomically. Returns what `fn` returned.
@@ -114,6 +153,8 @@ class Store:
                     "DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
                     (key, json.dumps(new), time.time()))
             c.execute("COMMIT")
+            if new is not None:
+                self.bump(self.kv_scope(key))
             return result
         except Exception:
             c.execute("ROLLBACK")
@@ -121,13 +162,18 @@ class Store:
 
     # -------------------------------------------------------------- event
     def put_event(self, key, name=None, level=None, data=None):
+        blob = json.dumps(data) if data is not None else None
+        prev = self.conn().execute("SELECT * FROM events WHERE event_key=?", (key,)).fetchone()
+        if prev is not None and _unchanged(prev, name=name, level=level, data=blob):
+            return
         self.conn().execute(
             "INSERT INTO events(event_key,name,level,data,updated_at) VALUES(?,?,?,?,?) "
             "ON CONFLICT(event_key) DO UPDATE SET "
             "  name=COALESCE(excluded.name,events.name),"
             "  level=COALESCE(excluded.level,events.level),"
             "  data=COALESCE(excluded.data,events.data), updated_at=excluded.updated_at",
-            (key, name, level, json.dumps(data) if data is not None else None, time.time()))
+            (key, name, level, blob, time.time()))
+        self.bump("events")
 
     def event(self, key):
         r = self.conn().execute("SELECT * FROM events WHERE event_key=?", (key,)).fetchone()
@@ -135,11 +181,25 @@ class Store:
 
     def put_teams(self, event_key, teams):
         now = time.time()
+        # Only the rows that actually differ. The team list is re-put on every
+        # poll of every source and is almost always identical; writing it back
+        # unchanged churns updated_at and, worse, moves the `teams` counter that
+        # /api/state and /api/analytics hang their ETags on, so every dashboard
+        # rebuilt the whole event every twenty seconds for nothing.
+        have = {r["team"]: (r["name"], r["data"]) for r in self.conn().execute(
+            "SELECT team,name,data FROM teams WHERE event_key=?", (event_key,)).fetchall()}
+        rows = []
+        for t in teams:
+            tid, name, blob = int(t["team"]), t.get("name"), json.dumps(t)
+            if have.get(tid) != (name, blob):
+                rows.append((event_key, tid, name, blob, now))
+        if not rows:
+            return
         self.conn().executemany(
             "INSERT INTO teams(event_key,team,name,data,updated_at) VALUES(?,?,?,?,?) "
             "ON CONFLICT(event_key,team) DO UPDATE SET name=excluded.name,"
-            "  data=excluded.data, updated_at=excluded.updated_at",
-            [(event_key, int(t["team"]), t.get("name"), json.dumps(t), now) for t in teams])
+            "  data=excluded.data, updated_at=excluded.updated_at", rows)
+        self.bump("teams")
 
     def teams(self, event_key):
         rows = self.conn().execute(
@@ -154,11 +214,11 @@ class Store:
         # actual/scheduled/predicted (seconds) for the SAME row, and each poller
         # would otherwise erase the other's keys every few seconds - taking
         # TBA's actual_time, which is what re-anchors the scouts' clock, with it.
+        prev = self.conn().execute(
+            "SELECT * FROM matches WHERE event_key=? AND match_key=?",
+            (event_key, match_key)).fetchone()
         times = f.get("times")
         if times is not None:
-            prev = self.conn().execute(
-                "SELECT times FROM matches WHERE event_key=? AND match_key=?",
-                (event_key, match_key)).fetchone()
             old_times = json.loads(prev["times"] or "null") if prev else None
             if isinstance(old_times, dict) and isinstance(times, dict):
                 merged = dict(old_times)
@@ -169,11 +229,18 @@ class Store:
                     red=_j(f.get("red")), blue=_j(f.get("blue")), status=f.get("status"),
                     times=_j(times), breakdown=_j(f.get("breakdown")))
         sets = ",".join(f"{k}=COALESCE(excluded.{k},matches.{k})" for k in cols)
+        # Nexus re-sends the whole schedule every twenty seconds and almost none
+        # of it ever moves. Applying the same COALESCE merge here and comparing
+        # first turns that into no write at all - which is what keeps the
+        # `matches` counter still, and with it every dashboard and phone quiet.
+        if prev is not None and _unchanged(prev, **cols):
+            return
         self.conn().execute(
             f"INSERT INTO matches(event_key,match_key,{','.join(cols)},updated_at) "
             f"VALUES(?,?,{','.join('?' for _ in cols)},?) "
             f"ON CONFLICT(event_key,match_key) DO UPDATE SET {sets}, updated_at=excluded.updated_at",
             (event_key, match_key, *cols.values(), now))
+        self.bump("matches")
 
     def matches(self, event_key):
         rows = self.conn().execute(
@@ -202,6 +269,7 @@ class Store:
             "  station=excluded.station, payload=excluded.payload, updated_at=excluded.updated_at",
             (rec["eventKey"], rec["matchKey"], int(rec["team"]), rec["scoutId"], rec.get("deviceId"),
              rec.get("alliance"), rec.get("station"), json.dumps(_payload(rec.get("payload"))), now))
+        self.bump("scout_entries")
         return True
 
     def scout_entries(self, event_key, match_key=None, team=None):
@@ -225,6 +293,7 @@ class Store:
             "  device_id=excluded.device_id, payload=excluded.payload, updated_at=excluded.updated_at",
             (rec["eventKey"], int(rec["team"]), rec.get("scoutId"), rec.get("deviceId"),
              json.dumps(_payload(rec.get("payload"))), now))
+        self.bump("pit_entries")
         return True
 
     def pit_entries(self, event_key):
@@ -252,6 +321,7 @@ class Store:
             "  provisional=excluded.provisional, updated_at=excluded.updated_at",
             [(event_key, match_key, int(r["team"]), r["fuel"], r["band"],
               json.dumps(r.get("byPhase") or {}), 1 if r.get("provisional") else 0, now) for r in rows])
+        self.bump("solved")
 
     def drop_solved(self, event_key, match_key):
         """Throw away the solved rows for one match.
@@ -264,6 +334,7 @@ class Store:
         """
         self.conn().execute("DELETE FROM solved WHERE event_key=? AND match_key=?",
                             (event_key, match_key))
+        self.bump("solved")
 
     def solved(self, event_key, team=None):
         q = "SELECT * FROM solved WHERE event_key=?"
@@ -280,6 +351,7 @@ class Store:
             " ON CONFLICT(photo_id) DO UPDATE SET data=excluded.data, mime=excluded.mime,"
             "  updated_at=excluded.updated_at",
             (photo_id, event_key, int(team), mime, sqlite3.Binary(data), time.time()))
+        self.bump("photos")
 
     def photo(self, photo_id):
         r = self.conn().execute("SELECT mime,data FROM photos WHERE photo_id=?", (photo_id,)).fetchone()
@@ -352,6 +424,8 @@ class Store:
             # flags are advisory. Both are safe to overwrite.
             c.execute("UPDATE OR REPLACE solved SET match_key=? WHERE match_key=?",
                       (new_key, old_key))
+            for _scope in ("matches", "scout_entries", "solved", "flags"):
+                self.bump(_scope)
             c.execute("UPDATE OR REPLACE flags SET match_key=? WHERE match_key=?",
                       (new_key, old_key))
             if not outer:
@@ -392,14 +466,28 @@ class Store:
         return dest
 
     def flag(self, event_key, match_key, kind, detail=""):
+        prev = self.conn().execute(
+            "SELECT detail FROM flags WHERE match_key=? AND kind=?", (match_key, kind)).fetchone()
+        if prev is not None and prev["detail"] == detail:
+            return
         self.conn().execute(
             "INSERT INTO flags(event_key,match_key,kind,detail,created_at) VALUES(?,?,?,?,?)"
             " ON CONFLICT(match_key,kind) DO UPDATE SET detail=excluded.detail",
             (event_key, match_key, kind, detail, time.time()))
+        self.bump("flags")
 
     def flags(self, event_key):
         return [dict(r) for r in self.conn().execute(
             "SELECT * FROM flags WHERE event_key=? ORDER BY created_at DESC", (event_key,)).fetchall()]
+
+
+def _unchanged(row, **cols):
+    """True when a COALESCE upsert of `cols` onto `row` would change nothing.
+
+    A None column is COALESCE'd away and keeps whatever is already stored, so it
+    can never be a change; anything else has to match what is there.
+    """
+    return all(v is None or row[k] == v for k, v in cols.items())
 
 
 def _j(v):
