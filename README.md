@@ -14,6 +14,10 @@ line, you are done. Everything below assumes you have never done that before.
 
 You do this **once**, at home, before your first competition. Give yourself 20 minutes.
 
+> In a hurry, or setting up a second time? [setup.md](setup.md) is the same steps as a bare
+> checklist — the ZIP, every API key and where it comes from, and the off-site mirror — with
+> none of the explanation.
+
 ### 1. Install Python
 
 Python is the only thing this needs. It is free.
