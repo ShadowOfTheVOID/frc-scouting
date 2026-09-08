@@ -106,29 +106,55 @@ before.
 
 **Lovat — what other teams' scouts wrote about the same robots.** Free, and the only key on this
 page with no page to get it from: Lovat's key endpoints exist on their server, but nothing in
-their dashboard or website calls them. It is a `curl`. Do it at home, on a laptop. FRC 8033 run
+their dashboard or website calls them. So it is a terminal command. Do it at home. FRC 8033 run
 it.
 
-1. Sign in at [dashboard.lovat.app](https://dashboard.lovat.app), on your team.
-2. **Settings → Team email → Change**, then click the link in the mail. **It expires in twenty
-   minutes** — a stale link is the usual reason this silently never completes, and without it
-   every step below returns 403.
-3. In a desktop browser: **developer tools → Network**, reload, click any request to
-   `api.lovat.app`, and copy its **Authorization** header — everything after `Bearer `.
-4. Ask for the key, with that token in place of `TOKEN`:
+**First, the team email.** Sign in at [dashboard.lovat.app](https://dashboard.lovat.app), then
+**Settings → Team email → Change**, and click the link in the mail. **It expires in twenty
+minutes** — a stale link is why this silently never completes, and without it every step below
+returns 403.
+
+**Then check you have curl.**
+
+- **Windows** — `curl --version` in **Command Prompt**. Windows 10 and 11 ship it. If it is
+  missing: `winget install cURL.cURL`, or install
+  [Git for Windows](https://git-scm.com/download/win), which includes it.
+- **Mac** — `curl --version` in Terminal. Part of macOS, nothing to install.
+
+> **Windows: not PowerShell.** There, `curl` is an alias for `Invoke-WebRequest` and does not
+> understand `-X` or `-H`. Use Command Prompt, or write `curl.exe`.
+
+**Then mint the key.** Chrome or Edge — Safari's inspector cannot *Copy as cURL*.
+
+1. Signed in to the dashboard, **F12** → **Network**, tick **Preserve log**, filter
+   `api.lovat.app`.
+2. Reload and **wait for the app to finish drawing** — it is Flutter, so the API calls come
+   seconds after the page, not with it.
+3. Click the **`profile`** row whose Type is **fetch**, not the `preflight` one under it.
+   Right-click → **Copy** → **Copy as cURL**. Paste in your terminal, do not run it.
+4. Change two things: path `profile` → `apikey?name=6059%20scouting%20hub`, and add `-X POST`.
+   Keep the token as copied; delete every header except `authorization`.
 
    ```bash
-   curl -X POST "https://api.lovat.app/v1/manager/apikey?name=6059%20scouting%20hub" \
-     -H "Authorization: Bearer TOKEN"
+   curl -X POST --url "https://api.lovat.app/v1/manager/apikey?name=6059%20scouting%20hub" \
+     -H "authorization: Bearer eyJhbGciOi…"
    ```
 
-5. **Copy the `lvt-…` straight away** — only its hash is kept, so nothing can show it again.
+   On Windows Command Prompt use one line, or `^` to continue instead of `\`.
+5. **Copy the `lvt-…` straight away.** Only its hash is kept, so that response is the only place
+   it ever exists — listing your keys later shows a name and a date, never the key.
 6. Paste into **LOVAT API KEY**.
 
-> `403 Your team has not been verified yet` is step 2. `401` is an expired token — read a fresh
-> one. `403 Cannot create API key using an API key` means an `lvt-` key went where the token
-> goes. (The other Lovat approval, the one where a person checks your team, gates the team join
-> code rather than API keys, so it does not block this.)
+> That browser token is a full account password lasting **72 hours**, and nothing invalidates it
+> early. Never paste it into a chat, an issue or a screenshot.
+>
+> `403 Your team has not been verified yet` is the email step — and `/profile` succeeding does
+> not rule it out, since only `/apikey` checks the team. A `401` after it just worked is usually
+> the whole header line copied instead of the value after `Bearer `. Changing the path but not
+> the method (or the reverse) gives you your profile back or a 404 — the usual reason for "there
+> is no API key in the response". `403 Cannot create API key using an API key` means an `lvt-`
+> key went where the browser token goes. (The other Lovat approval, where a person checks your
+> team, gates the team join code rather than API keys, so it does not block this.)
 
 Everything Lovat sends stays in its own column and its own colour. It never changes your own
 numbers — the solver and the picklist do not read it.
