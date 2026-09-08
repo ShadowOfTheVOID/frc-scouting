@@ -157,29 +157,107 @@ that a lot of teams upload to. A key gets you what *their* scouts wrote about th
 event: fuel per match, defence, feeding, driver ratings, notes, and the one thing our own
 scouting cannot produce — the second on the clock each robot left to go and climb.
 
-It is free, and it takes about ten minutes the first time. Do it at home, not at the venue.
+It is free. It is also, as of this writing, **the only key here with no page to get it from**:
+Lovat's API-key endpoints exist on their server, but nothing in their dashboard, their website
+or their collection app ever calls them. So this one is a command in a terminal, not a button.
+Allow half an hour the first time, at home, on the hub laptop.
 
-1. **Make an account** at [lovat.app](https://lovat.app) and **verify the email** they send.
-2. **Join or create your team** on Lovat, and get *the team* **verified**. This is a second,
-   separate verification — a person at Lovat checking that you are who you say you are. It is
-   not instant, so do not leave it until the Thursday before a competition.
-3. Open the **Lovat Dashboard** → **Settings** → **API keys** → **Add key**. Name it something
-   you will recognise later, like `6059 scouting hub`.
-4. **Copy the key immediately.** It starts with `lvt-` and Lovat will not show it to you again.
-5. Paste it into the **Lovat** box at http://localhost:6059/ on the hub laptop, set the event
-   key beside it, and click **SAVE & REFRESH**. Then **TEST KEYS** — if your team is still
-   waiting on Lovat's verification, that is what it will say, and no new key will fix it.
-6. Check it worked on the dashboard's **SERVER** tab: the `lovat` service goes green, and the
-   **GRAPHS** tab starts counting teams under `teams lovat has`.
+##### Step 1 — verify the team email
 
-> **Cannot find the API keys section at all?** That is step 2, not you. Lovat's key endpoints
-> sit behind a verified-*team* check, so until your team is registered and verified there is
-> nothing for that page to show. Their server answers `No team` if your account has not joined
-> a team yet and `Your team has not been verified yet` if it has but the team is still pending —
-> two different problems with the same symptom. Verifying only your own email is not enough, and
-> a key cannot be created from another key, so it has to be done signed in to the site.
-> (Checked against their server, which is open source:
-> [HighlanderRobotics/lovat-server](https://github.com/HighlanderRobotics/lovat-server).)
+The key endpoint sits behind a verified-*team* check, so without this every attempt below
+returns 403 and no amount of retrying changes it.
+
+1. Sign in at [dashboard.lovat.app](https://dashboard.lovat.app) and check you are on your team.
+2. **Settings → Team email → Change**, enter the address, and click the link in the mail.
+3. **That link expires in twenty minutes.** It going quietly stale is the usual reason this step
+   never completes and nobody can say why.
+
+##### Step 2 — check you have curl
+
+- **Windows** — open **Command Prompt** (not PowerShell, see the warning below) and type
+  `curl --version`. Windows 10 and 11 ship it, so a version number means you are done. If it is
+  missing: `winget install cURL.cURL`, or install
+  [Git for Windows](https://git-scm.com/download/win), which bundles it, or take the binary from
+  [curl.se/windows](https://curl.se/windows/) and unzip it somewhere on your PATH.
+- **Mac** — `curl --version` in Terminal. It is part of macOS; there is nothing to install.
+
+> **Windows: do not use PowerShell for this.** In Windows PowerShell, `curl` is an *alias* for
+> `Invoke-WebRequest`, which does not understand `-X` or `-H` and fails with a parameter error
+> that looks like a problem with the command. Use **Command Prompt**, or in PowerShell spell it
+> `curl.exe` so you get the real thing.
+
+##### Step 3 — read your sign-in token out of the browser
+
+The key is minted with your own signed-in credential, and the only place to get one is a request
+the dashboard has already made. Use Chrome or Edge; Safari's inspector has no *Copy as cURL*.
+
+4. Signed in to the dashboard, press **F12** (Mac: **⌥⌘I**) and open the **Network** tab.
+5. Tick **Preserve log**, click **Fetch/XHR**, and type `api.lovat.app` in the filter box.
+6. Reload, then **wait for the dashboard to finish drawing**. It is a Flutter app: the first
+   half-second is only `flutter.js` and `canvaskit.wasm`, and the API calls come seconds later.
+   Stop watching too early and you will conclude, wrongly, that it never calls its own API.
+7. Click the row named **`profile`** whose Type is **fetch** — *not* the one below it whose Type
+   is `preflight`, which carries no credential. A `304` is fine; you want the request, not the
+   response.
+8. Right-click it → **Copy** → **Copy as cURL**, and paste that into your terminal. Do not run
+   it yet.
+
+> **What you have just copied is a password.** It is a full Auth0 credential for your Lovat
+> account, it lasts **72 hours**, and nothing — not logging out, not changing your password —
+> invalidates it before then, because the server only checks its signature. Do not paste it into
+> a chat, an issue, a commit or a screenshot. If it does escape, the only remedy is to wait out
+> the 72 hours.
+
+##### Step 4 — mint the key
+
+The command you pasted is a `GET` of `/v1/manager/profile`, which returns your team name and
+number. Change **two** things and nothing else — keep your token exactly as it was copied:
+
+- the path `profile` becomes `apikey?name=6059%20scouting%20hub`
+- add `-X POST`
+
+```bash
+curl -X POST --url "https://api.lovat.app/v1/manager/apikey?name=6059%20scouting%20hub" \
+  -H "authorization: Bearer eyJhbGciOi…"
+```
+
+On **Windows Command Prompt**, put it on one line, or end continued lines with `^` rather
+than `\`. Every other header from the copied command can be deleted; only `authorization`
+matters.
+
+Change only one of the two and you get either your profile again or a `404` — which is what
+"there is no API key in the response" nearly always turns out to be.
+
+9. It answers `{"apiKey":"lvt-…"}`. **Copy that immediately.** Only a SHA-256 hash of it is
+   stored, so this response is the one and only place the key will ever exist. Listing your keys
+   afterwards shows a name and a date and **not the key** — by design, not as a fault.
+10. Paste it into the **Lovat** box at http://localhost:6059/ on the hub laptop, set the event
+    key beside it, and click **SAVE & REFRESH**. Then **TEST KEYS**.
+11. Check it worked on the dashboard's **SERVER** tab: the `lovat` service goes green, and the
+    **GRAPHS** tab starts counting teams under `teams lovat has`.
+
+The `lvt-` key does not expire, so this is a once-a-season job — and once it is in the hub, the
+72-hour browser token stops mattering. To see what you already have, or to revoke one, the same
+address answers `GET` and `DELETE`:
+
+```bash
+curl "https://api.lovat.app/v1/manager/apikey" -H "authorization: Bearer lvt-…"
+curl -X DELETE "https://api.lovat.app/v1/manager/apikey?uuid=…" -H "authorization: Bearer eyJhbGciOi…"
+```
+
+> **What the failures mean.** A `401` on a token that worked a moment ago is a stale copy — the
+> likeliest cause is copying the whole header *line* (`authorization: Bearer eyJ…`) instead of
+> just the value after `Bearer `. `401 No team` is an account that has not joined a team.
+> `403 Your team has not been verified yet` is step 1, not you — and a successful `/profile`
+> call does not rule it out, because `/profile` checks only that you are signed in while
+> `/apikey` also checks the team. `403 Cannot create API key using an API key` means an `lvt-`
+> key went where the browser token goes; a key cannot mint another key, which is the whole
+> reason this needs a browser.
+>
+> There is a *second*, separate Lovat approval — a person there checking your team is real. It
+> gates the team **join code**, not API keys, so waiting on it does not block any of the above.
+> (All of this checked against their source, which is open:
+> [HighlanderRobotics/lovat](https://github.com/HighlanderRobotics/lovat).)
 
 **Some things worth knowing before you rely on it.**
 
@@ -535,7 +613,7 @@ the fuel column.
 | Phones cannot connect at all | Windows Firewall blocked it | Restart the server, click **Allow access** on **Private networks** |
 | A phone says it cannot reach the hub | out of range, or the laptop moved networks | Walk back toward the laptop. Data is safe; it sends itself |
 | An AI panel says "the model could not be reached" | no internet, or the key is wrong | it is safe to ignore — nothing else depends on it. Re-check the key at http://localhost:6059/ |
-| The LOVAT column is empty | no Lovat key, or nobody uploaded that robot | not a fault: blank means nobody scouted it there, which is not a zero |
+| The LOVAT column is empty | no Lovat key, or nobody uploaded that robot | not a fault: blank means nobody scouted it there, which is not a zero. If you never got a key, Lovat has no page for it — see *Getting a Lovat key* above |
 | Scouts see an old event's teams | event key not changed | http://localhost:6059/ on the laptop, set the new event key |
 | Fuel numbers look wrong for one team | a scout was on their own clock, or missed matches | Check the **HEALTH** tab — flagged matches are listed with the reason |
 | Every team's fuel looks too high, or too low | scouts are calling shooting harder or softer than it scores | **HEALTH** tab, ACCURACY panel — it says `running N% hot` or `cold`. Worth a word about the rate ladder; the solver corrects for it either way |
