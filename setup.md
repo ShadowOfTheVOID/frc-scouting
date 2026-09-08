@@ -62,7 +62,7 @@ Blue Alliance), **EVENT LEVEL**, and **OUR TEAM** (`6059`).
 | NEXUS WEBHOOK TOKEN | only with a webhook | free | same place, only if you register one |
 | THE BLUE ALLIANCE | optional | free | [thebluealliance.com/account](https://www.thebluealliance.com/account) |
 | FRC EVENTS USERNAME + TOKEN | optional | free | [frc-events.firstinspires.org](https://frc-events.firstinspires.org/services/API) |
-| LOVAT API KEY | optional | free | [lovat.app](https://lovat.app) — start a week early |
+| LOVAT API KEY | optional | free | no page for it — a `curl`, see below |
 | AI MODEL + AI KEY | optional | cents per answer | Anthropic, Google, OpenAI or OpenRouter |
 | Statbotics | — | free | nothing to do, no key exists |
 
@@ -104,20 +104,31 @@ boxes, because FIRST authenticates with a username *and* a token.
 Skip this one and you still get every result — just when TBA posts it rather than a few minutes
 before.
 
-**Lovat — what other teams' scouts wrote about the same robots.** Free, about ten minutes, and
-the one that has a waiting step in the middle. FRC 8033 run it.
+**Lovat — what other teams' scouts wrote about the same robots.** Free, and the only key on this
+page with no page to get it from: Lovat's key endpoints exist on their server, but nothing in
+their dashboard or website calls them. It is a `curl`. Do it at home, on a laptop. FRC 8033 run
+it.
 
-1. Make an account at [lovat.app](https://lovat.app) and **verify the email**.
-2. Join or create your team on Lovat, and get **the team verified** — a second, separate
-   check by a person at Lovat. It is not instant. Do not leave it until the Thursday.
-3. **Lovat Dashboard → Settings → API keys → Add key.** Name it `6059 scouting hub`.
-4. **Copy the key straight away** — it starts `lvt-` and is shown once.
-5. Paste into **LOVAT API KEY**.
+1. Sign in at [dashboard.lovat.app](https://dashboard.lovat.app), on your team.
+2. **Settings → Team email → Change**, then click the link in the mail. **It expires in twenty
+   minutes** — a stale link is the usual reason this silently never completes, and without it
+   every step below returns 403.
+3. In a desktop browser: **developer tools → Network**, reload, click any request to
+   `api.lovat.app`, and copy its **Authorization** header — everything after `Bearer `.
+4. Ask for the key, with that token in place of `TOKEN`:
 
-> No **API keys** section on the page at all? That is step 2, not you. Their key endpoints sit
-> behind a verified-*team* check: `No team` means your account has not joined one,
-> `Your team has not been verified yet` means it has and the team is still pending. Verifying
-> only your own email is not enough.
+   ```bash
+   curl -X POST "https://api.lovat.app/v1/manager/apikey?name=6059%20scouting%20hub" \
+     -H "Authorization: Bearer TOKEN"
+   ```
+
+5. **Copy the `lvt-…` straight away** — only its hash is kept, so nothing can show it again.
+6. Paste into **LOVAT API KEY**.
+
+> `403 Your team has not been verified yet` is step 2. `401` is an expired token — read a fresh
+> one. `403 Cannot create API key using an API key` means an `lvt-` key went where the token
+> goes. (The other Lovat approval, the one where a person checks your team, gates the team join
+> code rather than API keys, so it does not block this.)
 
 Everything Lovat sends stays in its own column and its own colour. It never changes your own
 numbers — the solver and the picklist do not read it.

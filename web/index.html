@@ -144,9 +144,11 @@
           <div class="say"></div></div>
         <div class="f" data-key="lovatKey"><label>LOVAT API KEY<span class="tag"></span></label>
           <input id="lovatKey" placeholder="lvt-…" autocomplete="off">
-          <div class="h">Other teams' scouting for this event. Your scouting lead makes a key
-            in the Lovat Dashboard (Settings → API keys); your team must be verified there
-            first. It is shown next to our own numbers, never mixed into them. lovat.app</div>
+          <div class="h">Other teams' scouting for this event. Lovat has no page that makes
+            one: it is a POST to api.lovat.app/v1/manager/apikey with the Authorization header
+            off a signed-in dashboard request, and your team email must be verified first. See
+            the Lovat section of setup.md. It is shown next to our own numbers, never mixed
+            into them. lovat.app</div>
           <div class="say"></div></div>
         <div class="f"><label>AI MODEL</label>
           <select id="aiModel"></select>

@@ -157,29 +157,57 @@ that a lot of teams upload to. A key gets you what *their* scouts wrote about th
 event: fuel per match, defence, feeding, driver ratings, notes, and the one thing our own
 scouting cannot produce — the second on the clock each robot left to go and climb.
 
-It is free, and it takes about ten minutes the first time. Do it at home, not at the venue.
+It is free. It is also, as of this writing, **the only key here with no page to get it from**:
+Lovat's API-key endpoints exist on their server, but nothing in their dashboard, their website
+or their collection app ever calls them. So this one is a `curl`, not a button, and it is worth
+doing at home with a laptop rather than at the venue with a phone.
 
-1. **Make an account** at [lovat.app](https://lovat.app) and **verify the email** they send.
-2. **Join or create your team** on Lovat, and get *the team* **verified**. This is a second,
-   separate verification — a person at Lovat checking that you are who you say you are. It is
-   not instant, so do not leave it until the Thursday before a competition.
-3. Open the **Lovat Dashboard** → **Settings** → **API keys** → **Add key**. Name it something
-   you will recognise later, like `6059 scouting hub`.
-4. **Copy the key immediately.** It starts with `lvt-` and Lovat will not show it to you again.
-5. Paste it into the **Lovat** box at http://localhost:6059/ on the hub laptop, set the event
-   key beside it, and click **SAVE & REFRESH**. Then **TEST KEYS** — if your team is still
-   waiting on Lovat's verification, that is what it will say, and no new key will fix it.
-6. Check it worked on the dashboard's **SERVER** tab: the `lovat` service goes green, and the
+**First, verify your team email.** The key endpoint sits behind a verified-*team* check, so
+without this every attempt below returns 403 and no amount of retrying changes it.
+
+1. Sign in at [dashboard.lovat.app](https://dashboard.lovat.app) and check you are on your team.
+2. **Settings → Team email → Change**, enter the address, and click the link in the mail.
+3. **That link expires in twenty minutes.** It being quietly stale is the usual reason this
+   step never completes and nobody can say why.
+
+**Then mint the key.** Do this in a desktop browser — you need developer tools.
+
+4. Still signed in to the dashboard, open **developer tools → Network**, reload, and click
+   anything that loads data.
+5. Click any request to **`api.lovat.app`** and read its **Authorization** request header. It
+   is `Bearer eyJ…`. Copy everything after `Bearer ` — that is your Auth0 token, and every
+   dashboard request carries one.
+6. Ask their server for a key, pasting that token in place of `TOKEN`:
+
+   ```bash
+   curl -X POST "https://api.lovat.app/v1/manager/apikey?name=6059%20scouting%20hub" \
+     -H "Authorization: Bearer TOKEN"
+   ```
+
+   It answers `{"apiKey":"lvt-…"}`. **Copy that immediately** — only its hash is stored, so
+   there is no screen anywhere that can ever show it to you again.
+7. Paste it into the **Lovat** box at http://localhost:6059/ on the hub laptop, set the event
+   key beside it, and click **SAVE & REFRESH**. Then **TEST KEYS**.
+8. Check it worked on the dashboard's **SERVER** tab: the `lovat` service goes green, and the
    **GRAPHS** tab starts counting teams under `teams lovat has`.
 
-> **Cannot find the API keys section at all?** That is step 2, not you. Lovat's key endpoints
-> sit behind a verified-*team* check, so until your team is registered and verified there is
-> nothing for that page to show. Their server answers `No team` if your account has not joined
-> a team yet and `Your team has not been verified yet` if it has but the team is still pending —
-> two different problems with the same symptom. Verifying only your own email is not enough, and
-> a key cannot be created from another key, so it has to be done signed in to the site.
-> (Checked against their server, which is open source:
-> [HighlanderRobotics/lovat-server](https://github.com/HighlanderRobotics/lovat-server).)
+To see the keys you already have, the same address answers `GET` — name, when it was made, when
+it was last used, and how many requests it has served:
+
+```bash
+curl "https://api.lovat.app/v1/manager/apikey" -H "Authorization: Bearer TOKEN"
+```
+
+> **What the failures mean.** `401` with no team named is a token that has expired — they are
+> short-lived, so go back to step 5 and read a fresh one. `401 No team` is an account that has
+> not joined a team. `403 Your team has not been verified yet` is step 2, not you. And
+> `403 Cannot create API key using an API key` means you pasted an `lvt-` key where the Auth0
+> token goes — a key cannot mint another key, which is why this needs a signed-in browser.
+>
+> There is a *second*, separate Lovat approval — a person there checking your team is real. It
+> gates the team **join code**, not API keys, so waiting on it does not block any of the above.
+> (All of this checked against their source, which is open:
+> [HighlanderRobotics/lovat](https://github.com/HighlanderRobotics/lovat).)
 
 **Some things worth knowing before you rely on it.**
 
