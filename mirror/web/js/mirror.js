@@ -471,7 +471,8 @@ function openTeam(team) {
       ${cell('DEFENCE FACED', ob.defenseFacedSecs == null ? '—' : `${num(ob.defenseFacedSecs, 0)}<small>s</small>`)}
       ${cell('DIED', `${num(ob.diedRate, 0)}<small>%</small>`)}
       ${cell('NO SHOW', `${num(ob.noShowRate, 0)}<small>%</small>`)}
-      ${cell('START ZONE', esc(ob.startZone || '—'))}
+      ${cell('START ZONE', esc(ob.startZone ? ob.startZone + (ob.startLane ? ` · ${ob.startLane}` : '') : '—'))}
+      ${cell('CLIMB LEAVES AT', ob.climbStartSecs == null ? '—' : `${num(ob.climbStartSecs, 0)}<small>s</small>`)}
       ${cell('LOVAT FUEL', t.lovat?.matches ? num(t.lovat.avgFuel, 0) : '—')}
     </div>
     ${pit ? pitBlock(pit) : ''}

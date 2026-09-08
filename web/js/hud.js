@@ -26,6 +26,11 @@ const WRONGS = [
   // Distinct from STOPPED MOVING (the whole match) and NO-SHOW (never turned
   // up): the robot was there and auto did nothing.
   { k: 'autoFailed', a: 'AUTO',   b: 'DID NOTHING' },
+  // A climb that was tried and lost is not the same robot as one that never
+  // left the floor, and the climb button can only say which level it reached.
+  // Hidden the moment a level IS set: a robot cannot both climb and fall.
+  { k: 'climbFailed',     a: 'CLIMB',      b: 'FELL OFF' },
+  { k: 'autoClimbFailed', a: 'AUTO CLIMB', b: 'FELL OFF' },
 ];
 const CLIMBS = ['None', 'Level1', 'Level2', 'Level3'];
 const START_ZONES = [
@@ -33,6 +38,45 @@ const START_ZONES = [
   { id: 'centre', label: 'CENTRE' },
   { id: 'right', label: 'RIGHT' },
 ];
+// Which lane they lined up in, asked after the buzzer rather than before it:
+// the side is visible from the stands as they roll out, the lane often is not
+// until they move. Trench and bump are the field's own names - the same two
+// Lovat's export uses (server/lovat.py reads them off other teams' scouting),
+// so a side and a lane together say exactly what their start position says.
+// Kept as a second, optional field rather than five zones in place of three,
+// so every entry ever logged still reads as the side it named.
+const START_LANES = [
+  { id: 'trench', label: 'TRENCH' },
+  { id: 'bump', label: 'BUMP' },
+];
+// The second page of the after screen. All optional, all one tap, none of them
+// asked during the match: unanswered stays unknown rather than becoming a no.
+const TRAVERSAL = [
+  { id: 'trench', label: 'TRENCH' },
+  { id: 'bump', label: 'BUMP' },
+  { id: 'both', label: 'BOTH' },
+  { id: 'none', label: 'STAYED', sub: 'their side' },
+];
+const BEACHED = [
+  { id: 'fuel', label: 'ON THE', sub: 'fuel' },
+  { id: 'bump', label: 'ON THE', sub: 'bump' },
+  { id: 'both', label: 'BOTH' },
+  { id: 'neither', label: 'NO' },
+];
+// Which part of the tower they used. Two robots that both want the middle of
+// the same face cannot climb together, and that is an alliance-selection fact
+// nothing else we record can answer.
+const CLIMB_SPOTS = [
+  { id: 'frontSide', label: 'FRONT', sub: 'side' },
+  { id: 'frontMiddle', label: 'FRONT', sub: 'middle' },
+  { id: 'backSide', label: 'BACK', sub: 'side' },
+  { id: 'backMiddle', label: 'BACK', sub: 'middle' },
+];
+const AFTER_FLAGS = [
+  { k: 'scoresWhileMoving', label: 'SHOOTS', sub: 'on the move' },
+  { k: 'disrupts', label: 'KNOCKS', sub: 'shots down' },
+];
+const ACCURACY = ['sprayed it', 'half in', 'mostly in', 'nearly all', 'never missed'];
 
 const seat = {
   scout: localStorage.getItem('scoutName') || '',
@@ -47,6 +91,9 @@ let autoWinner = null;
 let entry = null;
 let rate = 'steady';
 let eventKey = localStorage.getItem('eventKey') || '';
+// Which page of the after screen is up. Always 1 when a match ends: the extra
+// questions are worth asking, but never at the cost of the next match.
+let afterPage = 1;
 let wakeLock = null;
 let history = [];
 
@@ -199,6 +246,18 @@ function newEntry(match, team) {
       // intervals but never against whom, so "they shut our shooter down" could
       // not be looked up. Asked once, after the buzzer, only if defence happened.
       defenseTarget: null,
+      // The second page of the after screen. Every one of these is something
+      // other teams' scouts answer every match and ours never could, so a robot
+      // read "no data" where Lovat had an answer. null is "nobody said" - only
+      // the two chips default to false, the same way the WRONGS chips do.
+      startLane: null, traversal: null, beached: null, climbSpot: null, accuracyRating: 0,
+      scoresWhileMoving: false, disrupts: false,
+      climbFailed: false, autoClimbFailed: false,
+      // The second the scout said a climb began. Ours is a tap, not a
+      // stopwatch, so it is the moment they noticed - but it answers the
+      // question every alliance captain asks about a robot that says it
+      // climbs: how long before the buzzer does it have to leave?
+      climbStartSecs: null, autoClimbStartSecs: null,
       // whose timeline these intervals are on. The server may only re-anchor
       // to TBA's actual_time when the phone was on the shared clock.
       clockShared: false, clockBy: null,
@@ -566,22 +625,50 @@ function renderAfter() {
   const nx = nextMatch();
   $('#afNext').textContent = nx ? `NEXT: ${nx.label.toUpperCase()}` : 'NEXT: —';
   $('#afBalls').textContent = ballsSoFar();
-  $('#afClimb').textContent = entry.payload.endgameTower === 'None' ? 'none' : entry.payload.endgameTower.replace('Level', 'L');
-  $('#afAuto').textContent = entry.payload.autoTower === 'None' ? 'no' : 'yes · L1';
+  // The second they left to climb rides on the same line as the level, so the
+  // scout can see the number they just produced without another row of chrome.
+  const climbSecs = entry.payload.climbStartSecs;
+  $('#afClimb').textContent = entry.payload.endgameTower === 'None'
+    ? (entry.payload.climbFailed ? 'fell off' : 'none')
+    : entry.payload.endgameTower.replace('Level', 'L')
+      + (climbSecs == null ? '' : ` · ${Math.round(climbSecs)}s`);
+  $('#afAuto').textContent = entry.payload.autoTower === 'None'
+    ? (entry.payload.autoClimbFailed ? 'fell off' : 'no') : 'yes · L1';
   $('#afRuns').textContent = entry.payload.intervals.length;
   $('#sendSub').textContent = net.state.online ? 'both thumbs free' : 'saves now, sends later';
 
   buildSteps('#driveSteps', DRIVE, 'driverRating');
   buildSteps('#defSteps', DEFENSE, 'defenseRating');
 
+  // ---- page two: optional, and only ever one tap each
+  const p = entry.payload;
+  buildPicks('#afStart', START_ZONES, 'startPosition', { onSet: renderAfter });
+  buildPicks('#afLane', START_LANES, 'startLane', { onSet: renderAfter });
+  buildPicks('#afTraversal', TRAVERSAL, 'traversal', { onSet: renderAfter });
+  buildPicks('#afBeached', BEACHED, 'beached', { onSet: renderAfter });
+  buildFlags('#afFlags', AFTER_FLAGS);
+  buildSteps('#afAccuracy', ACCURACY, 'accuracyRating');
+
   // Only ask who they were blocking if they actually blocked someone.
-  const defended = (entry.payload.defenseIntervals || []).length > 0;
+  const defended = (p.defenseIntervals || []).length > 0;
   $('#afDefWrap').classList.toggle('hide', !defended);
   if (defended) {
     buildPicks('#afDefTarget', opponentLineup().map((t) => ({ id: t, label: String(t) })),
                'defenseTarget', { onSet: renderAfter });
   }
-  buildPicks('#afStart', START_ZONES, 'startPosition', { onSet: renderAfter });
+  // And only ask where on the tower if they got onto one.
+  const climbed = p.endgameTower !== 'None';
+  $('#afClimbWrap').classList.toggle('hide', !climbed);
+  if (climbed) buildPicks('#afClimbSpot', CLIMB_SPOTS, 'climbSpot', { onSet: renderAfter });
+
+  $('#afPage1a').classList.toggle('hide', afterPage !== 1);
+  $('#afPage1b').classList.toggle('hide', afterPage !== 1);
+  $('#afPage2a').classList.toggle('hide', afterPage !== 2);
+  $('#afPage2b').classList.toggle('hide', afterPage !== 2);
+  const answered = answeredExtras();
+  $('#btnAfMore').querySelector('.a').textContent = afterPage === 1 ? 'A FEW MORE THINGS' : 'BACK';
+  $('#afMoreSub').textContent = afterPage === 2 ? 'to driving and faults'
+    : answered ? `${answered} answered` : 'optional';
 
   const w = $('#wrongs');
   if (!w.children.length) {
@@ -593,7 +680,52 @@ function renderAfter() {
       w.appendChild(d);
     }
   }
-  for (const d of w.children) d.classList.toggle('on', !!entry.payload[d.dataset.k]);
+  for (const d of w.children) {
+    d.classList.toggle('on', !!p[d.dataset.k]);
+    // A recorded climb answers the "fell off" chip beside it, so the chip goes
+    // away rather than sitting there inviting a contradiction.
+    if (d.dataset.k === 'climbFailed') d.classList.toggle('hide', climbed);
+    if (d.dataset.k === 'autoClimbFailed') d.classList.toggle('hide', p.autoTower !== 'None');
+  }
+}
+
+/** How many of page two's questions this entry has an answer for.
+ *
+ * Counted rather than scored out of a total: which questions are even asked
+ * depends on the match (there is no tower question for a robot that did not
+ * climb), and "3 of 6" that can never reach 6 is a nag, not a progress bar.
+ */
+function answeredExtras() {
+  const p = entry.payload;
+  return [p.startPosition, p.startLane, p.traversal, p.beached, p.climbSpot,
+          p.accuracyRating || null,
+          (p.scoresWhileMoving || p.disrupts) || null].filter((v) => v != null).length;
+}
+
+/**
+ * A row of independent yes/no chips, each bound to its own payload flag.
+ *
+ * `buildPicks` is one answer to one question; this is several questions whose
+ * answer is a tick. Not ticked reads as no, the same as the WRONGS chips
+ * beside them - these two are things a scout notices happening, not things
+ * they have to rule out.
+ */
+function buildFlags(sel, items) {
+  const el = $(sel);
+  if (!el.children.length) {
+    for (const it of items) {
+      const d = document.createElement('div');
+      d.className = 'pick'; d.dataset.k = it.k;
+      d.innerHTML = it.sub ? `${it.label}<span class="sub">${it.sub}</span>` : it.label;
+      d.onclick = () => {
+        if (!entry) return;
+        entry.payload[it.k] = !entry.payload[it.k];
+        buzz(); renderAfter(); autosave();
+      };
+      el.appendChild(d);
+    }
+  }
+  for (const d of el.children) d.classList.toggle('on', !!entry.payload[d.dataset.k]);
 }
 
 /**
@@ -652,6 +784,7 @@ function buildSteps(sel, labels, key) {
 }
 
 $('#afNote').oninput = () => { entry.payload.note = $('#afNote').value; autosave(1200); };
+$('#btnAfMore').onclick = () => { afterPage = afterPage === 1 ? 2 : 1; buzz(); renderAfter(); };
 $('#btnSend').onclick = async () => {
   if (!entry || !entry.team) return;
   entry.payload.note = $('#afNote').value;
@@ -854,7 +987,7 @@ $('#btnHandover').onclick = async () => {
   goStandbyOrLive();
 };
 
-$('#btnFixPast').onclick = () => { if (history[0]) { entry = history[0]; currentMatch = matches.find((m) => m.matchKey === entry.matchKey) || currentMatch; $('#afNote').value = entry.payload.note || ''; show('after'); renderAfter(); } };
+$('#btnFixPast').onclick = () => { if (history[0]) { entry = history[0]; currentMatch = matches.find((m) => m.matchKey === entry.matchKey) || currentMatch; $('#afNote').value = entry.payload.note || ''; afterPage = 1; show('after'); renderAfter(); } };
 
 // ══════════════════════════════════════════════════════════════ matches
 function teamForSeat(m) {
@@ -982,13 +1115,25 @@ async function main() {
     buzz(20); renderLive(); autosave();
   };
   $('#btnClimb').onclick = () => {
-    const ph = phaseAt(clock.elapsed());
+    const t = clock.elapsed();
+    const ph = phaseAt(t);
+    // The second of the tap, and only while a match is actually running: a
+    // climb "logged" at 0:00 or after the buzzer is the scout catching up, and
+    // a made-up number here is worse than no number. Unknown, not zero.
+    const now = (clock.running && t > 0 && t <= matchSeconds()) ? Math.round(t * 10) / 10 : null;
     if (ph && ph.id === 'auto') {
       // Auto tower is Level 1 only and worth 15, so it is a toggle, not a cycle.
-      entry.payload.autoTower = entry.payload.autoTower === 'Level1' ? 'None' : 'Level1';
+      const on = entry.payload.autoTower !== 'Level1';
+      entry.payload.autoTower = on ? 'Level1' : 'None';
+      entry.payload.autoClimbStartSecs = on ? now : null;
     } else {
       const i = CLIMBS.indexOf(entry.payload.endgameTower);
-      entry.payload.endgameTower = CLIMBS[(i + 1) % CLIMBS.length];
+      const next = CLIMBS[(i + 1) % CLIMBS.length];
+      entry.payload.endgameTower = next;
+      // Keep the FIRST tap: cycling L1 to L2 to L3 is the scout settling on a
+      // level, not the robot starting again. Back round to None clears it.
+      if (next === 'None') entry.payload.climbStartSecs = null;
+      else if (entry.payload.climbStartSecs == null) entry.payload.climbStartSecs = now;
     }
     buzz(); renderLive(); autosave();
   };
@@ -1110,6 +1255,7 @@ async function main() {
     if (clock.running && clock.elapsed() >= matchSeconds()) {
       clock.pause(); buzz(40); releaseWake();
       $('#afNote').value = entry.payload.note || '';
+      afterPage = 1;
       show('after'); renderAfter();
     }
   });

@@ -250,29 +250,50 @@
     <span class="sp"></span>
     <span class="m" id="afNext">NEXT: —</span>
   </div>
-  <div class="body split-300">
-    <div class="col" style="gap:10px">
+  <div class="body after">
+    <div class="col" id="afPage1a" style="gap:10px">
       <div class="caption plain">HOW WAS THEIR DRIVING</div>
       <div class="steps" id="driveSteps"></div>
       <div class="caption plain" style="margin-top:2px">DID THEY GET IN THE WAY</div>
       <div class="steps" id="defSteps"></div>
+      <div class="caption plain" style="margin-top:2px">HOW MUCH OF IT WENT IN</div>
+      <div class="steps" id="afAccuracy"></div>
     </div>
 
-    <div class="col" style="gap:10px">
+    <div class="col" id="afPage1b" style="gap:10px">
       <div class="caption plain">ANYTHING GO WRONG</div>
       <div class="wrongs" id="wrongs"></div>
-      <div id="afDefWrap" class="hide">
-        <div class="caption plain" style="margin-top:8px">WHO WERE THEY BLOCKING</div>
-        <div class="picks" id="afDefTarget"></div>
-      </div>
-      <div id="afStartWrap">
-        <div class="caption plain" style="margin-top:8px">WHERE DID THEY START</div>
-        <div class="picks" id="afStart"></div>
-      </div>
       <div class="notebox">
         <span class="lb">note</span>
         <textarea id="afNote" rows="2" placeholder="dead 20s in shift 2, came back fine"></textarea>
       </div>
+    </div>
+
+    <!-- Page two. Everything here is optional and nothing here is asked twice:
+         a scout who sends without opening it leaves these unknown, which is not
+         the same as a no. -->
+    <div class="col hide" id="afPage2a" style="gap:10px">
+      <div class="caption plain">WHERE DID THEY START</div>
+      <div class="picks" id="afStart"></div>
+      <div class="caption plain" style="margin-top:2px">WHICH LANE</div>
+      <div class="picks" id="afLane"></div>
+      <div id="afDefWrap" class="hide">
+        <div class="caption plain" style="margin-top:8px">WHO WERE THEY BLOCKING</div>
+        <div class="picks" id="afDefTarget"></div>
+      </div>
+      <div id="afClimbWrap" class="hide">
+        <div class="caption plain" style="margin-top:8px">WHERE ON THE TOWER</div>
+        <div class="picks" id="afClimbSpot"></div>
+      </div>
+    </div>
+
+    <div class="col hide" id="afPage2b" style="gap:10px">
+      <div class="caption plain">HOW DID THEY GET ACROSS</div>
+      <div class="picks" id="afTraversal"></div>
+      <div class="caption plain" style="margin-top:2px">DID THEY GET STUCK</div>
+      <div class="picks" id="afBeached"></div>
+      <div class="caption plain" style="margin-top:2px">ANYTHING ELSE</div>
+      <div class="picks" id="afFlags"></div>
     </div>
 
     <div class="col" style="gap:8px">
@@ -283,6 +304,7 @@
         <div class="srow"><span>auto climb</span><span class="w" id="afAuto">no</span></div>
         <div class="srow"><span>runs logged</span><span class="w" id="afRuns">0</span></div>
       </div>
+      <div class="cta flat" id="btnAfMore"><span class="a">A FEW MORE THINGS</span><span class="b" id="afMoreSub">optional</span></div>
       <div class="cta" id="btnSend"><span class="a">SEND IT IN</span><span class="b" id="sendSub">both thumbs free</span></div>
     </div>
   </div>

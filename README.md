@@ -357,9 +357,17 @@ Scouts do not have to do anything except watch their robot:
   race the buzzer — the hub corrects the timing afterwards from official results.
 - **Before the buzzer**, while the robot is lining up, the waiting screen asks two things in one
   tap each: where it starts, and how much fuel it is carrying. Both can be left blank.
-- After the buzzer: a few taps for driving, defence, anything that went wrong, then **SEND IT IN**.
-  If they logged any defence, one extra tap asks which robot they were blocking — scouts who
-  logged none never see the question.
+- **CLIMB** is one button that cycles the level, and it now also records *when* it was tapped —
+  the second of the match this robot left to go and climb, which is the first thing an alliance
+  captain asks about a robot that says it climbs. Nothing extra for the scout to do.
+- After the buzzer: a few taps for driving, how much of it went in, defence, anything that went
+  wrong, then **SEND IT IN**.
+- **A FEW MORE THINGS** on that screen opens a second page of optional one-tap questions: which
+  lane it started in, how it crosses the field, whether it got stuck and on what, whether it
+  shoots on the move or knocks shots down, and where on the tower it climbed. Skipping them
+  costs nothing — an unanswered question reads as *not asked* everywhere, never as a no. Two of
+  them only appear when they are relevant at all: who they were blocking (if they logged
+  defence) and where on the tower (if they climbed).
 
 ### If the wifi drops
 
@@ -638,8 +646,9 @@ The **SERVER** tab on the dashboard has all of it:
 - **CSV** — team summary, every scout entry, pit scouting, or everything Lovat has. For a
   spreadsheet, or for handing numbers to an alliance partner. The team summary carries the same
   scout-vs-official check the HEALTH tab shows, plus defence in both directions — seconds
-  played and seconds taken — and each robot's usual start zone, so the spreadsheet and the
-  dashboard cannot disagree. The Lovat file is separate on purpose: it is other teams' scouting
+  played and seconds taken — each robot's usual start zone and lane, and everything off the
+  after screen's second page (accuracy, crossing, getting stuck, climb timing and where on the
+  tower), so the spreadsheet and the dashboard cannot disagree. The Lovat file is separate on purpose: it is other teams' scouting
   and mixing it into our columns is how it ends up quoted back as ours.
 - **Printable picklist** — see above.
 
