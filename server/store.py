@@ -1,10 +1,21 @@
-"""SQLite store.  WAL mode so ten scouts POSTing at the buzzer don't lock each other out."""
+"""SQLite store.  WAL mode so ten scouts POSTing at the buzzer don't lock each other out.
+
+The `kv` table holds this hub's settings, and seven of those rows are
+credentials somebody's team pays for.  Those seven are sealed on the way in and
+opened on the way out - see `vault.py` for what that protects against (a
+database that travels: snapshots, an emailed copy, an accidental commit) and,
+just as importantly, what it does not.  Everything above this line is unchanged
+by it: `set` still takes the key a lead typed and `get` still hands it back, so
+no caller has to know which rows are secret.
+"""
 import json
 import math
 import os
 import sqlite3
 import threading
 import time
+
+import vault
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DB = os.path.join(_HERE, "..", "data", "scouting.db")
@@ -80,6 +91,11 @@ class Store:
         # 304.
         self._versions = {}
         self._version_lock = threading.Lock()
+        #: Sealed credentials this hub could not open, by settings row, with
+        #: the reason. Filled in by `get`; read by the admin panel so a box
+        #: that went blank after a `.env` was replaced says why rather than
+        #: looking like a key nobody ever entered.
+        self.secret_problems = {}
         with self.conn() as c:
             c.executescript(SCHEMA)
 
@@ -117,14 +133,91 @@ class Store:
     # ------------------------------------------------------------ settings
     def get(self, key, default=None):
         r = self.conn().execute("SELECT value FROM kv WHERE key=?", (key,)).fetchone()
-        return json.loads(r["value"]) if r else default
+        if r is None:
+            return default
+        value = json.loads(r["value"])
+        if key in vault.SECRETS:
+            if not vault.is_sealed(value):
+                # A row written before vault.py, or an empty one left by
+                # FORGET. Both are readable as they are, and neither is a
+                # problem any more if this row was one a moment ago.
+                self.secret_problems.pop(key, None)
+                return value
+            try:
+                opened = vault.unseal(key, value)
+            except vault.Unreadable as e:
+                # A key that cannot be opened is a key this hub does not have.
+                # Reading it as `default` is what makes that true everywhere at
+                # once - the source client is built without it, /api/config
+                # reports the box as empty, and the Setup page asks for it
+                # again. The reason is kept so the panel can say why the box
+                # went blank, which is the one thing an empty box cannot.
+                self.secret_problems[key] = str(e)
+                return default
+            self.secret_problems.pop(key, None)
+            return opened
+        return value
 
     def set(self, key, value):
+        # Sealed on the way in, by the name of the row it is going into - so a
+        # value lifted out of one settings row does not open in another. An
+        # empty string is a lead pressing FORGET and is stored as it is: there
+        # is nothing to hide about the absence of a key, and sealing it would
+        # only make `bool(cfg("tbaKey"))` need the sealing key to answer.
+        if key in vault.SECRETS:
+            if isinstance(value, str) and value:
+                value = vault.seal(key, value)
+            # Whatever was wrong with the row that was here is not wrong with
+            # this one - including FORGET, which leaves an empty box that must
+            # not keep the red line the unopenable key put under it.
+            self.secret_problems.pop(key, None)
         self.conn().execute(
             "INSERT INTO kv(key,value,updated_at) VALUES(?,?,?) "
             "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
             (key, json.dumps(value), time.time()))
         self.bump(self.kv_scope(key))
+
+    def seal_secrets(self):
+        """Seal any credential still sitting in this database in the clear.
+
+        Every hub that existed before `vault.py` has seven rows of plain text in
+        it, and the copies of that database are already made - so leaving them
+        for the next time somebody happens to re-save a key is not good enough.
+        Run once at startup, writing only the rows that need it, and a no-op on
+        every start after the first.
+
+        Returns the rows it sealed, for the log line: a lead who has just
+        upgraded is entitled to be told that their keys were rewritten, and to
+        be told once rather than every morning.
+        """
+        done = []
+        for name in sorted(vault.SECRETS):
+            r = self.conn().execute("SELECT value FROM kv WHERE key=?", (name,)).fetchone()
+            if r is None:
+                continue
+            value = json.loads(r["value"])
+            if not isinstance(value, str) or not value or vault.is_sealed(value):
+                continue
+            self.set(name, value)
+            done.append(name)
+        if done:
+            # Overwriting the row is not the same as removing the plaintext:
+            # SQLite leaves the old value in a freed page, and in the write-ahead
+            # log, where `strings scouting.db` finds it exactly as before. So the
+            # log is folded back in and the file rebuilt. This costs one pass
+            # over the database, once, on the first start after upgrading - and
+            # skipping it would make this whole migration cosmetic.
+            c = self.conn()
+            try:
+                c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                c.execute("VACUUM")
+                c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except sqlite3.Error:
+                # A vacuum that will not run (another connection mid-write, a
+                # read-only volume) is not a reason to refuse to start. The keys
+                # are sealed either way; what is left behind is the old copy.
+                pass
+        return done
 
     def mutate(self, key, fn, default=None):
         """Read-modify-write one kv row atomically. Returns what `fn` returned.
@@ -140,7 +233,15 @@ class Store:
 
         `fn` receives the current value and returns `(new_value, result)`.
         Returning `(None, result)` for an unchanged value skips the write.
+
+        Not a route for credentials, and it says so rather than quietly being
+        one: the rows in `vault.SECRETS` are sealed by `set`, and a
+        read-modify-write that went around it would put a key back into the
+        database in the clear with nothing on any screen to say so. Nothing
+        needs it - a key is replaced whole, never edited in place.
         """
+        if key in vault.SECRETS:
+            raise ValueError("%s is a credential: use set(), which seals it" % key)
         c = self.conn()
         c.execute("BEGIN IMMEDIATE")
         try:

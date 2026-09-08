@@ -42,6 +42,7 @@ import offsite
 import rules
 import solve
 import sources
+import vault
 from store import Store
 
 WEB_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
@@ -148,6 +149,22 @@ class Hub:
         self._recal_pending = False
         self.writes = []          # timestamps, for writes/min
         self.log = []             # ring buffer for the event log panel
+        # Any credential still stored in the clear - every database written
+        # before vault.py existed - is sealed here, before this hub serves a
+        # single request. Done at construction rather than in main() so that
+        # every way in gets it: the server, seed_demo.py, and a script somebody
+        # points at their own database.
+        try:
+            sealed = self.store.seal_secrets()
+        except Exception as e:                      # never a reason not to start
+            sealed = []
+            self.note("error", f"could not encrypt the stored API keys: {e}")
+        if sealed:
+            self.note("info", "encrypted %d stored API key(s) (%s) - the database no longer "
+                              "carries them in the clear; the key to open them is %s in "
+                              ".env. Snapshots taken before now still hold the old copies, "
+                              "so delete any that have left this machine."
+                              % (len(sealed), ", ".join(sealed), vault.KEY_VAR))
 
     WRITES_KEPT = 1000        # five minutes of writes is all writes/min needs
 
@@ -2267,6 +2284,13 @@ class Handler(BaseHTTPRequestHandler):
                 # Whether, never what: no key value leaves the hub, and this
                 # route is open to everything on the venue wifi.
                 "saved": {k: bool(h.cfg(k)) for k in keyhygiene.FIELDS},
+                # A key that is stored but cannot be opened - the .env this
+                # database was written with is gone or was replaced - reads as
+                # an empty box everywhere else, deliberately. This is the one
+                # place that can say why it went blank, which is the difference
+                # between "paste it again" and "the hub has lost my key".
+                # Read after `saved`: h.cfg() above is what fills it in.
+                "unreadable": dict(h.store.secret_problems),
                 # The address is a setting and the setup page has to show what
                 # is saved; the push key is a secret and never comes back out.
                 "mirror": {"url": h.cfg("mirrorUrl") or None, "ok": mir.ok,
@@ -2459,9 +2483,17 @@ class Handler(BaseHTTPRequestHandler):
             for k in ("eventLevel", "ourTeam", "aiProvider", "aiCallLimit"):
                 if k in body:
                     h.store.set(k, body[k])
-            for k, v in cleaned.items():
-                if k not in keyhygiene.CODES:   # hashed, never stored as typed
-                    h.store.set(k, v)
+            try:
+                for k, v in cleaned.items():
+                    if k not in keyhygiene.CODES:   # hashed, never stored as typed
+                        h.store.set(k, v)
+            except vault.VaultError as e:
+                # The keys are encrypted, and the key that opens them lives in
+                # `.env`. If that cannot be written there is nowhere to put a
+                # credential that anyone could get back out, so this says so
+                # instead of storing one that is lost on the next restart.
+                h.note("error", str(e))
+                return self._json({"error": str(e)}, 500)
             # An event key is pasted the same way and gets the same treatment:
             # a whole TBA address, a capitalised code and a stray space are all
             # what somebody means by "2026casf", and none of them work as typed.

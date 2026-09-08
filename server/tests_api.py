@@ -24,6 +24,7 @@ import analytics  # noqa: E402
 import envfile  # noqa: E402
 import hub  # noqa: E402
 import offsite  # noqa: E402
+import vault  # noqa: E402
 from store import Store  # noqa: E402
 
 EK = "2026test"
@@ -41,6 +42,12 @@ class Live:
 
     def __init__(self):
         self.dir = tempfile.mkdtemp(prefix="frc-api-test-")
+        # The API keys this suite saves are encrypted at rest, and the key that
+        # opens them is generated into the checkout's `.env` when there is not
+        # one. A real environment variable wins over that file, so setting one
+        # here keeps a test run from writing anything into somebody's own hub.
+        # tests_vault.py is where the generating path itself is exercised.
+        os.environ.setdefault(vault.KEY_VAR, base64.b64encode(os.urandom(32)).decode())
         self.store = Store(os.path.join(self.dir, "test.db"))
         self.hub = hub.Hub(self.store)
         hub.Handler.hub = self.hub

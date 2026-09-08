@@ -629,8 +629,34 @@ docs/features.md              what every screen and field does
 docs/how-it-works.md          why the tricky parts work the way they do
 ```
 
-`data/` is excluded from git on purpose: it holds your API keys, and the salted hashes of the
-strategy passcode and the admin code.
+`data/` is excluded from git on purpose: it holds the salted hashes of the strategy passcode
+and the admin code, and your API keys — encrypted, but still yours.
+
+### Your API keys are encrypted in the database
+
+All seven credentials the admin panel takes — The Blue Alliance, Nexus and its webhook token,
+FRC Events, Lovat, the AI vendor, the mirror push key — are encrypted before they are written
+to `data/scouting.db`, and decrypted only when the hub is about to use one. `strings` on that
+file no longer prints them. That matters because the database is the thing that *moves*:
+snapshots pile up in `data/snapshots/`, someone emails a copy to themselves so the numbers
+survive the laptop, it lands on a shared drive between events.
+
+The key that opens them is a `HUB_SECRET_KEY` line in `.env`, written for you (mode 0600) the
+first time you save a credential. So:
+
+- **`.env` is now the file that must not travel with the database.** A copy of the database
+  alone is no longer a copy of your keys.
+- **Back up `.env` too, and keep it somewhere else.** If you lose it the keys are not
+  recoverable: the admin panel shows those boxes empty with a line saying why, and you paste
+  them in again from the vendors' sites. That is the same amount of work as a hub that never
+  had them, and it is the price of the line above.
+- **This buys nothing against somebody sitting at the unlocked hub laptop**, and is not meant
+  to. The hub has to reach The Blue Alliance at 8am with nobody standing over it, so it has to
+  be able to open its own keys. Anyone holding the whole machine holds both halves.
+
+Upgrading an existing hub needs nothing: the first start after this rewrites the keys already
+in your database, sealed, and says so in the event log. Snapshots taken before that still hold
+the old plaintext copies, so delete any that have left the machine.
 
 ## Two more documents
 
@@ -648,10 +674,11 @@ python3 server/tests_solver.py    # the accuracy claims above, on 20k simulated 
 python3 server/tests_api.py       # the server: syncing, the passcode, export and import
 python3 server/tests_lovat.py     # reading Lovat's export, which is somebody else's file format
 python3 server/tests_ai.py        # the model adapter, stubbed — no key and no network
+python3 server/tests_vault.py     # your API keys really are encrypted in the database
 python3 mirror/tests_mirror.py    # a real hub pushing to a real mirror, and the restore back out
 ```
 
-All five are plain Python with nothing to install, and all five run on every push
+All six are plain Python with nothing to install, and all six run on every push
 (`.github/workflows/ci.yml`).
 
 ## License

@@ -33,6 +33,13 @@ jobs:
       - name: Lovat import
         run: python3 server/tests_lovat.py
 
+      # The database travels - snapshots, an emailed copy, the occasional
+      # accidental commit - and it used to carry seven live credentials in the
+      # clear. This saves fake ones and greps the raw file, WAL included, for
+      # every byte of them.
+      - name: API keys are encrypted at rest
+        run: python3 server/tests_vault.py
+
       # Both halves of the off-site mirror on real sockets: a seeded hub
       # pushes to a real mirror, and the file the mirror hands back is
       # imported into an empty database. That last step is the claim the

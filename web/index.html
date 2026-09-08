@@ -363,7 +363,7 @@ async function reload() {
   // SET means a string is stored, and has never meant more than that. TEST
   // KEYS below is the only thing on this page that knows whether one works.
   $('#sub').textContent = bits.join(' · ');
-  showSaved(c.saved || {});
+  showSaved(c.saved || {}, c.unreadable || {});
   showMirror(c);
   adminSet = !!(c.admin || {}).set;
   showPassword(c.admin || {});
@@ -389,14 +389,25 @@ const rows = [...document.querySelectorAll('.f[data-key]')]
                   name: el.querySelector('label').childNodes[0].textContent.trim() }));
 const rowFor = (field) => rows.find((r) => r.field === field);
 
-/** Which boxes already hold something, so a blank one is not read as "none". */
-function showSaved(saved) {
+/**
+ * Which boxes already hold something, so a blank one is not read as "none".
+ *
+ * `unreadable` is the third state, and it only exists because the keys are
+ * encrypted: a key that is in the database but sealed with a `HUB_SECRET_KEY`
+ * this hub no longer has counts as absent everywhere else on purpose, so
+ * without this line it would look exactly like a key nobody ever typed. That
+ * is a lead re-fetching a key from a vendor's site when the fix is to put the
+ * old `.env` back.
+ */
+function showSaved(saved, unreadable) {
   for (const r of rows) {
     if (!r.tag) continue;
+    const problem = (unreadable || {})[r.field];
     const on = !!saved[r.field];
     r.tag.className = on ? 'tag on' : 'tag';
     r.tag.textContent = on ? 'SAVED' : '';
     r.input.placeholder = on ? 'saved — type a new one to replace it' : r.hint;
+    if (problem) tell(r, 'bad', problem);
     if (on) {
       const b = document.createElement('button');
       b.className = 'forget'; b.textContent = 'FORGET';

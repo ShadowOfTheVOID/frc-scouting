@@ -162,6 +162,20 @@ Paste into the box, press **SAVE & REFRESH**, then press **TEST KEYS**.
 - Changing the **event key** once the hub holds scouting is asked about twice. Nothing is ever
   deleted — the old event comes back if you set its key again.
 
+#### The keys are encrypted once they are saved
+
+Every key on this page is encrypted before it goes into `data/scouting.db`, so a copy of that
+database is not a copy of your keys. The key that opens them is a `HUB_SECRET_KEY` line the hub
+writes into `.env` for you the first time you save one.
+
+**Back `.env` up somewhere that is not beside the database, and do not copy the two around
+together.** Lose it and the keys cannot be recovered: the boxes come up empty with a line saying
+why, and you paste them in again from the vendors' sites.
+
+This protects a database that travels — a snapshot, an emailed copy, a shared drive. It does
+nothing about somebody sitting at the unlocked laptop, and cannot: the hub opens its own keys at
+8am with nobody there.
+
 ### 6. Optionally, a password on the panel
 
 ```

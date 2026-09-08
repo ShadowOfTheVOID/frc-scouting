@@ -34,6 +34,7 @@ from mirrordb import Store as MirrorStore  # noqa: E402
 # failure a test file is the worst place to debug.
 import hub as hub_mod  # noqa: E402
 import offsite  # noqa: E402
+import vault  # noqa: E402
 from store import Store as HubStore  # noqa: E402
 
 SEED = os.path.abspath(os.path.join(_HERE, "..", "server", "seed_demo.py"))
@@ -92,6 +93,11 @@ class LiveHub:
         # already logged against them.
         subprocess.run([sys.executable, SEED, "--db", path, "--event", EK],
                        check=True, stdout=subprocess.DEVNULL)
+        # Encrypted at rest, and the key that opens them is written into the
+        # checkout's `.env` when the environment has none. Set here so a test
+        # run leaves a developer's own hub alone; server/tests_vault.py covers
+        # the file being written for real.
+        os.environ.setdefault(vault.KEY_VAR, base64.b64encode(os.urandom(32)).decode())
         self.store = HubStore(path)
         self.hub = hub_mod.Hub(self.store)
         self.hub.reconcile()

@@ -547,6 +547,22 @@ are set, never a key value, and the passcode is stored only as a salted hash. Th
 that check and test keys are on the same boundary as the settings they serve: the hub machine
 only.
 
+### And the keys themselves are encrypted where they sit
+
+The seven credentials this panel takes are encrypted before they reach `data/scouting.db` and
+opened only when the hub is about to call that vendor, so `strings` on a copy of the database
+prints none of them. What opens them is a `HUB_SECRET_KEY` line in `.env`, written the first
+time a key is saved — which means the database can be snapshotted, emailed and restored without
+carrying the keys, and it means `.env` has to be backed up separately or the keys are gone.
+
+A box whose key cannot be opened — a `.env` that was replaced, a database carried to another
+machine — reads as empty everywhere in the app, deliberately, and this panel is the one place
+that says why underneath the box. The fix is to paste the key in again.
+
+None of this is protection against somebody at the unlocked laptop. The hub polls The Blue
+Alliance with nobody standing over it, so it holds both halves; what it defends is the copy of
+the database that walks off on its own.
+
 ### And on the mirror
 
 The off-site copy has its own two levels, and they are separate strings on purpose. The **push
