@@ -120,13 +120,32 @@ file.
 | --- |
 | **`?rev=abc` killed the request thread.** `int(rev)` on a query-string value, straight out of `do_GET`: no response, the socket dropped, and on a mirror run with `--open` that is anybody who can reach the address. Proved by restoring the old function body under a live mirror — `RemoteDisconnected: Remote end closed connection without response`. A revision that is not a number is now a revision the mirror does not have, and `mirror/tests_mirror.py` covers four spellings of it. A photo row whose team is not a number no longer takes the rest of its batch with it either |
 
+### The strategy dashboard
+
+Driven in Chromium against a hub serving the seeded demo event, reading the
+rendered DOM rather than the source.
+
+| what was wrong |
+| --- |
+| **Stored XSS through a pit photo id.** `/api/sync` is deliberately open - it is what every phone hits at the buzzer - and `_extract_photos` kept any string in `photos` that was not a `data:` URI as "already an id". Both the dashboard's team detail and the pit tablet then pasted that string straight into an `<img src="...">` with no escaping. A pit record synced with `photos: ['x" onerror="…"']` ran script on the hub's own origin, which is where the strategy token lives. Demonstrated end to end: `document.title` came back `XSS`. The hub now keeps only ids shaped like the ids it issues (the first 16 hex of the image's sha1), and both render sites escape and URI-encode what they are given. The mirror already did this correctly, which is how the shape of the fix was already decided |
+| **The TEAMS table was a column short.** Thirteen headers and thirteen grid tracks, twelve cells per row: the DRIVER cell was never rendered. Everything from DRIVER rightwards sat under the wrong heading - Lovat's fuel appeared under DRIVER, the match count under LOVAT, and MATCHES was blank - while clicking DRIVER sorted correctly by a number that was not on screen. Counted in the rendered DOM: `header cells: 13  row cells: 12` |
+| **Two panels named a match by mangling its key.** `shortCode()` takes a label (`Qualification 4` → `Q4`); the crew board's LAST MATCH column and the flag list on HEALTH hand it a match *key*, and its regex turned `2026demo_qm4` into `24` - the first character of the event key, then the last run of digits. Both are read to decide where to walk. Driven: before `24 · 1s ago` and `24 · clock-offset`, after `Q4 · 1s ago` and `Q4 · clock-offset`. The helper now recognises a key, and both call sites resolve it to its label first |
+| **COVERAGE counted matches nobody had played yet.** The whole schedule was in the denominator, so a crew that had missed nothing read 65% on the seeded demo (26 of 40 played) and would read about 11% on the Saturday morning of a 70-match regional. It is the tile beside MEDIAN ERROR and CALIBRATED under "how much to trust the numbers", and the mirror carries it in its header line. Now 100% of 156 on that same demo. Played means TBA has posted it or somebody scouted it - the second half because TBA lags the buzzer by minutes, and a match nobody watched is exactly the one that must not be quietly dropped |
+| **The "gone unscouted" heads-up could not see a station go quiet.** It asked whether a team had EVER been scouted, which is almost always yes, so a scout who stopped after Q4 named nobody - the failure the panel exists for. Analytics now says per match whether one of our scouts was on that robot (`scouted` on each trend row, which the charts already carry), and the panel asks that over the last three played matches. A seated scout who has never logged a single row is flagged too: the old rule read an age, and an age nobody has is null, so the scout who had not understood the app was the only one it could not see |
+| **The picklist scaled defence wrong.** The phone collects 1..4 ('not at all' .. 'a lot'); the score divided by 5, so a robot a scout had explicitly marked as *not* defending scored 0.2 - which on the second-pick board, where defence is weighted 35, put it seven points ahead of a robot nobody had rated at all. Now `(rating - 1) / 3` |
+| **A projection over an unscouted alliance read as a weak one.** A robot nobody has scouted contributes nothing to the sum, so PROJECTED FUEL showed a real number with a warn colour and no hint that two of the three robots were unknown. The row table underneath said `not scouted`; the tile - the thing that gets read out loud - now does too |
+
 ## Checked and clean
 
 Do not re-litigate these without new evidence.
 
 - **`chart.js` coordinate math** — swept with generated data, no off-by-ones.
-- **XSS through six untrusted paths** — `esc()` holds. An earlier "finding"
-  here was my detector matching `esc()`-decoded attribute values.
+- **XSS through six untrusted paths** — `esc()` holds *where it is called*.
+  The second pass found two places it was not: the pit photo id, on the
+  dashboard's team detail and on the pit tablet (fixed above). An earlier
+  "finding" in this section was my detector matching `esc()`-decoded attribute
+  values, and that one was genuinely nothing. The lesson from the second pass
+  is that a sweep for "is `esc` wrong" will not find "`esc` is absent".
 - **`csv.writer` quoting**, and `rules` / `solve` / `analytics` under
   degenerate input.
 - **Mixed time units.** Nexus sends milliseconds, TBA seconds, both into the

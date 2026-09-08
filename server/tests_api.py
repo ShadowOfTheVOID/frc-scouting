@@ -9,6 +9,7 @@ zero.  All stdlib, no fixtures on disk beyond a temp database.
 import base64
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -230,6 +231,25 @@ def test_trend_series(L):
     t = a["teams"].get("101") or a["teams"].get(101)
     ok &= check("a scheduled match nobody has played yet adds no point",
                 len(t["trend"]) == 1, f"({len(t['trend'])})")
+    ok &= check("and the row says whether a scout was on this robot in this match",
+                t["trend"][0].get("scouted") is True, f"({t['trend'][0].get('scouted')})")
+
+    # COVERAGE is read as "are we watching the robots", beside MEDIAN ERROR and
+    # CALIBRATED under "how much to trust the numbers". Counting matches nobody
+    # has played yet made it a number a perfect crew could never move: on the
+    # seeded demo, 26 of 40 played and every robot watched read 65%.
+    cov = a["coverage"]
+    # qm1 is played and one robot on it was scouted; qm2 is scheduled and has
+    # not happened. Only qm1's six robots may be in the denominator.
+    ok &= check("coverage counts the robots that have taken the field, not the schedule",
+                cov["robotsExpected"] == 6 and cov["robotsScouted"] == 1, f"({cov})")
+    L.store.put_match(EK, f"{EK}_qm3", label="Qualification 3", comp_level="qm", match_number=3,
+                      red=[101, 102, 103], blue=[201, 202, 203],
+                      breakdown={"red": {"windows": {"auto": 10}}, "blue": {"windows": {}}})
+    _, a = L.req("/api/analytics")
+    ok &= check("a match that WAS played and nobody watched still counts against it",
+                a["coverage"]["robotsExpected"] == 12 and a["coverage"]["robotsScouted"] == 1,
+                f"({a['coverage']})")
     return ok
 
 
@@ -458,6 +478,28 @@ def test_hostile_input(L):
         code, _ = L.req("/api/matchstart", body)
         ok &= check(f"a matchKey that is {name} is a 400, not a dropped thread", code == 400,
                     f"({code})")
+
+    # A pit photo is stored by id and the id is pasted into an `<img src>` on
+    # the dashboard and the pit tablet. A "photo" that is not an id is a string
+    # of somebody's choosing inside an HTML attribute on the hub's own origin,
+    # where the strategy token lives. Driven in Chromium before this: a pit
+    # record synced with the id below ran script on the dashboard.
+    png = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"x" * 40).decode()
+    hostile = 'x" onerror="document.title=`XSS`" data-x="'
+    code, _ = L.req("/api/sync", {"pit": [{
+        "eventKey": EK, "team": 9991, "scoutId": "XX", "deviceId": "d-x",
+        "updatedAt": time.time(),
+        "payload": {"photos": [hostile, "../../etc/passwd", "",
+                               "data:image/png;base64," + png]},
+    }]})
+    kept = [e for e in L.store.pit_entries(EK) if e["team"] == 9991]
+    photos = (kept[0]["payload"].get("photos") if kept else None) or []
+    ok &= check("a pit photo that is not a photo id is dropped, not stored",
+                code == 200 and hostile not in photos and "../../etc/passwd" not in photos,
+                f"({photos})")
+    ok &= check("and the real one alongside it still lands",
+                len(photos) == 1 and bool(re.match(r"^[0-9a-f]{16}$", photos[0] or "")),
+                f"({photos})")
 
     # And the hub is still answering afterwards.
     code, _ = L.req("/api/state")

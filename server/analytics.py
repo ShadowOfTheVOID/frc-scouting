@@ -307,6 +307,11 @@ def _team_trend(team, matches, entries, solved, lovat, faced_secs):
             "label": m.get("label"),
             "alliance": alliance,
             "played": bool(m.get("breakdown")),
+            # Whether one of our scouts was on this robot in this match. The
+            # dashboard's "gone unscouted" alert had no way to ask that and
+            # asked whether the team had EVER been scouted instead, so a
+            # station going quiet mid-event was invisible to it.
+            "scouted": bool(e),
             # estimated
             "fuel": sv["fuel"] if sv else None,
             "band": sv["band"] if sv else None,
@@ -726,6 +731,20 @@ def _scout_reliability(entries, by_match, solved):
 
 
 def _coverage(matches, entries):
+    """How many of the robots that have taken the field somebody watched.
+
+    Only matches that have actually happened. The whole schedule used to be in
+    the denominator, so a crew that had not missed a single robot read 65% on
+    the seeded demo (26 of 40 played) and would read about 11% on the Saturday
+    morning of a 70-match regional. This tile sits beside MEDIAN ERROR and
+    CALIBRATED under the heading "how much to trust the numbers", and the
+    mirror puts it in its header line; a number that cannot reach 100% until
+    the last match of the event is not that.
+
+    Played means TBA has posted it, or somebody scouted it. The second half
+    matters at a venue: TBA lags the buzzer by minutes, and a match nobody
+    watched at all is exactly the one this must not quietly drop.
+    """
     scouted = {}
     for e in entries:
         scouted.setdefault(e["matchKey"], set()).add(e["team"])
@@ -734,7 +753,10 @@ def _coverage(matches, entries):
         lineup = (m.get("red") or []) + (m.get("blue") or [])
         if not lineup:
             continue
+        seen = scouted.get(m["matchKey"], set()) & set(lineup)
+        if not (m.get("breakdown") or seen):
+            continue                    # not played yet: nobody has missed anything
         expected += len(lineup)
-        total += len(scouted.get(m["matchKey"], set()) & set(lineup))
+        total += len(seen)
     return {"robotsScouted": total, "robotsExpected": expected,
             "pct": round(total / expected * 100.0, 1) if expected else 0.0}

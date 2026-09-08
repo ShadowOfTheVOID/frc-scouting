@@ -1577,6 +1577,17 @@ def _image_mime(raw):
     return m if m in IMAGE_MIMES else "application/octet-stream"
 
 
+#: What this hub calls a photo: the first 16 hex characters of the image's own
+#: sha1, and never anything else. The id is pasted into an `<img src>` on the
+#: dashboard and on the pit tablet, so a "photo" that is not an id is a string
+#: of somebody's choosing inside an HTML attribute on the hub's own origin -
+#: which is where the strategy token lives. Demonstrated: a pit record synced
+#: with `photos: ['x" onerror="..."']` ran script on the dashboard.
+#: Nothing legitimate is lost by this: every id in the table is written by
+#: put_photo below, from that same hash.
+_PHOTO_ID = re.compile(r"^[0-9a-f]{8,40}$")
+
+
 def _extract_photos(store, rec):
     """Pull data: URIs off a pit record into the photo table.
 
@@ -1597,8 +1608,8 @@ def _extract_photos(store, rec):
                 kept.append(pid)
             except Exception:
                 continue
-        elif isinstance(src, str):
-            kept.append(src)          # already an id
+        elif isinstance(src, str) and _PHOTO_ID.match(src):
+            kept.append(src)          # already an id, and shaped like one
     payload["photos"] = kept
     rec["payload"] = payload
 

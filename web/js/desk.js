@@ -66,22 +66,43 @@ function tile(k, v, c, alert) {
     <div class="v">${v}</div><div class="c${alert === 'warn' ? ' warn' : ''}">${c}</div></div>`;
 }
 const shortCode = (label) => {
-  const m = String(label || '').match(/(\w)\w*\s*(\d+)/);
-  return m ? `${m[1].toUpperCase()}${m[2]}` : (label || '—');
+  const s = String(label || '');
+  // A match KEY rather than a label. `2026demo_qm26` used to come out of the
+  // rule below as "26" - the first character of the event key, then the last
+  // run of digits - so the crew board's LAST MATCH column and the flag list on
+  // HEALTH named no match anybody could find. Both of those are read to decide
+  // where to walk.
+  const key = s.match(/_([a-z]+)(\d[\w]*)$/i);
+  if (key) return (key[1] + key[2]).toUpperCase();
+  const m = s.match(/(\w)\w*\s*(\d+)/);
+  return m ? `${m[1].toUpperCase()}${m[2]}` : (s || '—');
 };
 
-/** Robots that took the field in a played match with no scout entry for them. */
+// How far back the heads-up looks. This is the LIVE tab and it is about a
+// station that has gone quiet now, not about the whole morning: a hub that
+// imported a part-scouted event would otherwise open with every robot in it
+// named.
+const UNWATCHED_LOOKBACK = 3;
+
+/**
+ * Robots that took the field in one of the last few played matches with no
+ * scout entry for them.
+ *
+ * It used to ask whether the team had EVER been scouted, which is a different
+ * question and almost always yes: a station that went quiet after Q4 named
+ * nobody, and that is the failure this panel exists for. `scouted` on each
+ * trend row is per match, which is what the question actually needs.
+ */
 function unwatchedRobots() {
-  if (!ANALYTICS || !STATE) return [];
+  if (!ANALYTICS) return [];
+  const played = [];
+  for (const m of (STATE && STATE.matches) || []) if (m.breakdown) played.push(m.matchKey);
+  const recent = new Set(played.slice(-UNWATCHED_LOOKBACK));
+  if (!recent.size) return [];
   const out = new Set();
-  const scoutedFor = new Map();
   for (const t of Object.values(ANALYTICS.teams)) {
-    if (t.matchesScouted) scoutedFor.set(t.team, t.matchesScouted);
-  }
-  for (const m of STATE.matches || []) {
-    if (!m.breakdown) continue;
-    for (const t of [...(m.red || []), ...(m.blue || [])]) {
-      if (!scoutedFor.has(t)) out.add(t);
+    for (const r of t.trend || []) {
+      if (r.played && r.scouted === false && recent.has(r.matchKey)) out.add(t.team);
     }
   }
   return [...out];
@@ -135,7 +156,8 @@ function renderLive() {
     $('#headsup').classList.remove('hide');
     $('#headsupBody').textContent =
       `${unwatched.slice(0, 6).join(', ')} ${unwatched.length === 1 ? 'has' : 'have'} `
-      + `gone unscouted in a played match — check the stations on the CREW tab.`;
+      + `gone unscouted in the last ${UNWATCHED_LOOKBACK} played matches — check the `
+      + `stations on the CREW tab.`;
   } else $('#headsup').classList.add('hide');
 
   const cov = ANALYTICS ? ANALYTICS.coverage : { robotsScouted: 0, pct: 0 };
@@ -299,6 +321,7 @@ function renderTeams() {
       <span class="num">${Math.round(t.observed.stockpileRate)}%</span>
       <span class="num">${t.observed.wastedFuelPct == null ? '—' : Math.round(t.observed.wastedFuelPct) + '%'}</span>
       <span class="num">${Math.round(t.observed.diedRate)}%</span>
+      <span class="num">${t.observed.driver ?? '—'}</span>
       <span class="num">${lovatCell(t)}</span>
       <span class="num">${t.matchesScouted}</span>
     </div>`).join('') || '<div class="empty">No scouted teams yet.</div>';
@@ -328,7 +351,12 @@ function score(t) {
   const l3 = (e.climbRate.Level3 || 0) / 100;
   const rel = 1 - Math.min(1, (o.diedRate + o.noShowRate) / 100);
   const stock = (o.stockpileRate || 0) / 100;
-  const def = (o.defense || 0) / 5;
+  // 1..4 on the phone ('not at all' .. 'a lot'), so 1 is the floor and not a
+  // fifth of a point. Divided by 5 it was: a robot a scout explicitly marked
+  // as not defending scored 0.2 here, which on the second-pick board - where
+  // defence is weighted 35 - put it seven points ahead of a robot nobody had
+  // rated at all.
+  const def = Math.max(0, ((o.defense || 1) - 1) / 3);
   const maxFuel = maxFuelAcross(ANALYTICS);
   return W.climb * (climb * .6 + l3 * .4) + W.reliability * rel +
          W.stockpile * stock + W.fuel * (s.avgFuel / maxFuel) + W.defense * def;
@@ -756,7 +784,7 @@ function renderHealth() {
   renderScoutPanel();
 
   $('#flags').innerHTML = flags.length ? flags.map((f) => `
-    <div class="callout"><div class="h">${esc(shortCode(f.match_key))} · ${esc(f.kind)}</div>
+    <div class="callout"><div class="h">${esc(shortCode(matchLabel(f.match_key)))} · ${esc(f.kind)}</div>
       <div class="b">${esc(f.detail || '')}</div></div>`).join('')
     : '<div class="hint">nothing flagged</div>';
 
@@ -867,6 +895,7 @@ const ago = (s) => s == null ? '—' : s < 60 ? `${Math.round(s)}s ago` : s < 36
 // and the endpoint could never answer "nothing has changed" - and the board
 // froze between polls instead of counting up.
 const secsSince = (at) => (at == null ? null : Math.max(0, net.serverNow() - at));
+const playedCount = () => ((STATE && STATE.matches) || []).filter((m) => m.breakdown).length;
 
 function renderCrew() {
   const seated = CREW.filter((c) => c.scoutId);
@@ -888,7 +917,13 @@ function renderCrew() {
     // hub records "last heard" off that at most once a minute, so the quietest
     // a perfectly healthy phone can look is about a minute and a half.
     else if (secsSince(c.lastSeenAt) > 240) problems.push(`${who} — gone quiet ${ago(secsSince(c.lastSeenAt))}, check their wifi`);
-    else if (secsSince(c.lastMatchAt) > 25 * 60) problems.push(`${who} — nothing logged in ${ago(secsSince(c.lastMatchAt))}`);
+    else if (c.lastMatchAt == null) {
+      // Never logged anything at all. The rule below reads an age, and an age
+      // nobody has is null, so the scout who has not sent one row all day -
+      // the one who has not understood the app - was the only one it could
+      // not see.
+      if (playedCount() > 0) problems.push(`${who} — nothing logged yet`);
+    } else if (secsSince(c.lastMatchAt) > 25 * 60) problems.push(`${who} — nothing logged in ${ago(secsSince(c.lastMatchAt))}`);
   }
   $('#crewAlert').innerHTML = problems.length
     ? `<div class="callout" style="margin:0 0 4px"><div class="h">GO TALK TO SOMEONE</div>
@@ -910,7 +945,7 @@ function renderCrew() {
       <span class="num" style="color:${ok ? 'var(--green-soft)' : 'var(--red-alert)'};font:800 10.5px Barlow,sans-serif;letter-spacing:.1em">
         ${c.scoutId ? (ok ? 'LIVE' : 'NOT SEEN') : '—'}</span>
       <span class="num">${ago(secsSince(c.lastSeenAt))}</span>
-      <span class="num">${c.lastMatch ? esc(shortCode(c.lastMatch)) + ' · ' + ago(secsSince(c.lastMatchAt)) : '—'}</span>
+      <span class="num">${c.lastMatch ? esc(shortCode(matchLabel(c.lastMatch))) + ' · ' + ago(secsSince(c.lastMatchAt)) : '—'}</span>
     </div>`;
   }).join('');
 
@@ -1034,7 +1069,15 @@ function allianceCard(m, side) {
     ${autoClashNote(teams)}
     ${defenseNote(m, side, teams)}
     <div class="tiles" style="grid-template-columns:repeat(3,1fr)">
-      ${tile('PROJECTED FUEL', Math.round(fuel), `±${band} · Energized at ${th.energized}`,
+      ${tile('PROJECTED FUEL', Math.round(fuel),
+             // A robot nobody has scouted contributes nothing to this sum, so
+             // an alliance with one unknown robot reads as a weak alliance
+             // rather than an unknown one. The table below names them; the
+             // tile has to say it too, because the tile is the thing that gets
+             // read out loud.
+             pr.scouted < lineup.length
+               ? `${pr.scouted} of ${lineup.length} robots scouted — incomplete`
+               : `±${band} · Energized at ${th.energized}`,
              fuel >= th.energized ? '' : 'warn')}
       ${tile('TOWER POINTS', Math.round(tower), `Traversal at ${th.traversal}`,
              tower >= th.traversal ? '' : 'warn')}
@@ -1289,7 +1332,7 @@ function renderTeamDetail() {
     <div style="margin-top:8px" class="hint">${esc(p.autos || '')}</div>
     <div style="margin-top:6px" class="hint">${esc(p.notes || '')}</div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">
-      ${(p.photos || []).map((id) => `<img src="/api/photo/${id}" style="width:88px;height:88px;object-fit:cover;border-radius:8px;border:1px solid var(--btn)">`).join('')}
+      ${(p.photos || []).map((id) => `<img src="/api/photo/${esc(encodeURIComponent(id))}" style="width:88px;height:88px;object-fit:cover;border-radius:8px;border:1px solid var(--btn)">`).join('')}
     </div>`
     : '<div class="hint">Not pit scouted yet.</div>');
 }

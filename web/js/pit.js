@@ -171,8 +171,13 @@ function paintChips() {
 }
 
 function renderShots() {
+  // The id goes into an attribute, so it is escaped like anything else that
+  // came off the network. A pit record is synced by whatever is on the venue
+  // wifi, and the hub used to keep any string in `photos` as "already an id" -
+  // one shaped like `x" onerror="...` ran script on this page's origin. The
+  // hub now refuses those on the way in; this is the other half of it.
   $('#pShots').innerHTML = (draft.photos || []).map((p) =>
-    `<img src="${p.startsWith('data:') ? p : '/api/photo/' + p}" alt="">`).join('')
+    `<img src="${p.startsWith('data:') ? esc(p) : '/api/photo/' + esc(encodeURIComponent(p))}" alt="">`).join('')
     + '<div class="addshot" id="addShot">+ PHOTO</div>';
   const add = $('#addShot');
   if (add) add.onclick = () => $('#pPhoto').click();
