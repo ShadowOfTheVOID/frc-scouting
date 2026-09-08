@@ -31,9 +31,12 @@ is fine. Keep the folder together; the server, the web pages and the mirror all 
 - **Windows** — double-click `start-server.bat`
 - **Mac** — double-click `start-server.command`
 
-> **Mac, first run:** if it "cannot be opened", the ZIP stripped the execute bit. In Terminal
-> type `chmod +x ` (with the space), drag `start-server.command` into the window, press Enter.
-> Once, forever. Or skip it and run `python3 server/hub.py` from the folder.
+> **Mac, first run:** if it "cannot be opened", read which message you got. *"Do not have
+> appropriate access privileges"* means the unzipper dropped the execute bit — in Terminal type
+> `chmod +x ` (with the space), drag `start-server.command` into the window, press Enter.
+> *"Unidentified developer"* is the download quarantine — Control-click the file, choose **Open**,
+> then **Open** again. Either way, once, forever. Or skip both and run `python3 server/hub.py`
+> from the folder.
 
 Leave the black window open — closing it stops the server. It prints the three addresses:
 

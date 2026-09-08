@@ -39,12 +39,18 @@ somewhere you will find again — the Desktop is fine.
 - **Windows** — open the unzipped folder and double-click **`start-server.bat`**
 - **Mac** — open the unzipped folder and double-click **`start-server.command`**
 
-> **Mac, first time: "cannot be opened" or nothing happens?** Downloading a ZIP strips the
-> permission that lets a file be double-clicked. Fix it once and it works forever after:
-> open the **Terminal** app, type `chmod +x ` (with the space), then **drag the
-> `start-server.command` file into the Terminal window** and press Enter. Now double-click it.
+> **Mac, first time: "cannot be opened" or nothing happens?** The message tells you which of
+> two things went wrong, and each is a one-time fix:
 >
-> If you would rather skip that entirely, you can always start it by dragging the *folder* into
+> - **"you do not have appropriate access privileges"** — whatever unzipped the folder dropped
+>   the permission that lets a file be double-clicked. Open the **Terminal** app, type
+>   `chmod +x ` (with the space), then **drag the `start-server.command` file into the Terminal
+>   window** and press Enter. Now double-click it.
+> - **"from an unidentified developer"** — macOS quarantines anything that arrived from the web.
+>   **Control-click** (or right-click) the file, choose **Open**, then click **Open** in the box
+>   that appears. It will not ask again.
+>
+> If you would rather skip all of that, you can always start it by dragging the *folder* into
 > a Terminal window and typing `python3 server/hub.py`.
 
 A black window appears and prints something like this:
