@@ -444,8 +444,11 @@ class Handler(BaseHTTPRequestHandler):
                 # type this file actually starts with, or as a download.
                 if not raw or len(raw) > 24 * 1024 * 1024:
                     continue
-                m.store.put_photo(rec["photoId"], ek, rec.get("team"),
-                                  _image_mime(rec.get("mime"), raw), raw)
+                try:
+                    m.store.put_photo(rec["photoId"], ek, rec.get("team"),
+                                      _image_mime(rec.get("mime"), raw), raw)
+                except (TypeError, ValueError):
+                    continue          # a team that is not a number: skip the row, keep the batch
                 stored += 1
             return self._json({"ok": True, "stored": stored})
 

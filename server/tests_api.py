@@ -1069,8 +1069,19 @@ def test_admin_panel(L):
     ok &= check("and nothing unlocks it - the answer says what to fix",
                 code == 403 and "base64" in r.get("error", ""), f"({code} {r})")
 
+    # Trimmed on both sides or neither. It used to be stripped off what was
+    # typed in and not off what was stored, so a password chosen with a space
+    # on the end could never be entered again by anybody.
+    os.environ[envfile.ADMIN] = envfile.encode("  hub 6059  ")
+    code, r = L.req("/api/admin/unlock", {"code": "hub 6059"})
+    ok &= check("a password stored with spaces around it still unlocks",
+                code == 200 and bool(r.get("token")), f"({code} {r})")
+    code, r = L.req("/api/admin/unlock", {"code": "hub"})
+    ok &= check("and a wrong one still does not", code == 403, f"({code})")
+
     # The name people type out of habit is not read as a password, and is not
     # silently ignored either.
+    os.environ.pop(envfile.ADMIN, None)
     os.environ.pop(envfile.ADMIN, None)
     os.environ[envfile.ADMIN_PLAIN] = "hub-6059"
     code, c = L.req("/api/config")
@@ -1688,6 +1699,49 @@ def test_nexus_broadcasts_only_on_change(L):
     return ok
 
 
+def test_vendor_backoff_is_remembered(L):
+    """A vendor that says stop has to still be saying it on the next call.
+
+    `Lovat.down_until` and `ai.Client.down_until` are the whole of this hub's
+    politeness to two rate-limited services - Lovat allows one request every
+    three seconds, and an AI key that was just rejected will be rejected
+    again. Both clients used to be rebuilt from the settings row on every
+    single call, so the field was written onto an object thrown away on the
+    next line: nothing ever backed off, and the diagnostics panel could never
+    show that anything had.
+    """
+    ok = True
+    L.store.set("lovatKey", "lvt-" + "a" * 20)
+    first = L.hub.lovat()
+    ok &= check("the same lovat client answers twice", L.hub.lovat() is first)
+    first.down_until = time.time() + 300
+    ok &= check("so a rate-limit backoff is still there on the next call",
+                L.hub.lovat().down_until > time.time())
+    ok &= check("and the diagnostics panel can see it",
+                any(s["name"] == "lovat" and "backing off" in s["detail"]
+                    for s in L.hub.diag()["services"]))
+
+    L.store.set("aiProvider", "anthropic")
+    L.store.set("aiKey", "sk-ant-" + "b" * 20)
+    L.store.set("aiModel", "claude-opus-5")
+    client = L.hub.ai()
+    ok &= check("the same ai client answers twice", L.hub.ai() is client and client.ok)
+    client.down_until = time.time() + 60
+    ok &= check("so a refused key sits its minute out", L.hub.ai().down_until > time.time())
+
+    # ...and editing the key is what clears it, because that is what somebody
+    # fixing a wrong key means by fixing it.
+    L.store.set("lovatKey", "lvt-" + "c" * 20)
+    L.store.set("aiKey", "sk-ant-" + "d" * 20)
+    ok &= check("a corrected key is a new client, with no backoff on it",
+                L.hub.lovat().down_until == 0.0 and L.hub.ai().down_until == 0.0)
+    L.store.set("lovatKey", None)
+    L.store.set("aiKey", None)
+    L.store.set("aiProvider", None)
+    L.store.set("aiModel", None)
+    return ok
+
+
 def main():
     L = Live()
     try:
@@ -1708,6 +1762,7 @@ def main():
                    test_scout_data_is_lead_only,
                    test_cheap_polling, test_write_counters, test_static_revalidates,
                    test_nexus_broadcasts_only_on_change, test_scope_lists_are_complete,
+                   test_vendor_backoff_is_remembered,
                    test_collection_path_is_intact):
             print(f"\n{fn.__name__.replace('test_', '').replace('_', ' ')}")
             passed &= fn(L)

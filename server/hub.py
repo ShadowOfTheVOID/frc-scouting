@@ -148,6 +148,9 @@ class Hub:
         self._recal_pending = False
         self.writes = []          # timestamps, for writes/min
         self.log = []             # ring buffer for the event log panel
+        # The source clients that carry state - see _client() below.
+        self._clients = {}
+        self._clients_lock = threading.Lock()
 
     WRITES_KEPT = 1000        # five minutes of writes is all writes/min needs
 
@@ -259,11 +262,38 @@ class Hub:
     def frc_events(self):
         return sources.FRCEvents(self.cfg("frcEventsUser"), self.cfg("frcEventsToken"))
 
+    # The two clients that remember something between calls, and so are the two
+    # that cannot be rebuilt per call.
+    #
+    # `Lovat.down_until` and `Client.down_until` are how this hub honours a
+    # vendor saying stop: Lovat allows one request every three seconds and 403s
+    # a team that is not verified, and an AI key that was just rejected will be
+    # rejected again. Both set that field on themselves - and both were handed
+    # out fresh from here on every single call, so the field was written onto an
+    # object that was thrown away on the next line. Nothing ever backed off:
+    # every press of TEST KEYS and every save (which fires _poll_all) went
+    # straight back at a vendor that had just refused us, and the diagnostics
+    # panel's "rate limited, backing off" line could never appear, because it
+    # reads `down_until` off a client that was one millisecond old.
+    #
+    # Cached by the credentials they were built from, so a key edited on the
+    # Setup page still takes effect on the next call - and clears the backoff
+    # with it, which is what somebody fixing a wrong key means by fixing it.
+    def _client(self, name, sig, build):
+        with self._clients_lock:
+            have = self._clients.get(name)
+            if have is None or have[0] != sig:
+                have = (sig, build())
+                self._clients[name] = have
+            return have[1]
+
     def lovat(self):
-        return sources.Lovat(self.cfg("lovatKey"))
+        key = self.cfg("lovatKey")
+        return self._client("lovat", key, lambda: sources.Lovat(key))
 
     def ai(self):
-        return ai.client(self.cfg)
+        sig = (self.cfg("aiProvider"), self.cfg("aiKey"), self.cfg("aiModel"))
+        return self._client("ai", sig, lambda: ai.client(self.cfg))
 
     def mirror(self):
         return offsite.Mirror(self.cfg("mirrorUrl"), self.cfg("mirrorKey"))
@@ -865,7 +895,13 @@ class Hub:
             return False           # a broken password locks, it does not open
         if not password:
             return True            # none set: the panel's own lock is the guard
-        return hmac.compare_digest(password, (code or "").strip())
+        # Both sides trimmed, not just the one typed in. A password set with a
+        # space on the end - which `--set-admin-password` accepts, and which a
+        # password manager or a paste puts there - was stored with the space
+        # and compared against a value that had just had it taken off, so it
+        # could never be entered again by anybody, including the person who
+        # chose it.
+        return hmac.compare_digest(password.strip(), (code or "").strip())
 
     def issue_admin_token(self):
         return self._issue("adminTokens", self.ADMIN_MINUTES * 60)
@@ -2091,7 +2127,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.send_response(204)
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Strategy-Token")
+        # Every header this API is ever sent. X-Admin-Token was missing, so an
+        # admin request from any origin but the hub's own was refused at the
+        # preflight - which is every admin request on a hub started with
+        # --allow-remote-config, and every one from a phone that found the hub
+        # again at a second address.
+        self.send_header("Access-Control-Allow-Headers",
+                         "Content-Type, X-Strategy-Token, X-Admin-Token")
         self.send_header("Access-Control-Max-Age", "86400")
         self.send_header("Content-Length", "0")
         self.end_headers()

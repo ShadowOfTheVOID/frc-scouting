@@ -1810,16 +1810,24 @@ async function main() {
   };
   await loadPicklistState();
   await refresh();
-  // These are the names the hub actually broadcasts. 'alliances' was not one of
-  // them - alliance selection arrives inside 'nexus' - so that listener had
-  // never fired, and the four below it were only ever picked up by the 30s
-  // poll below.
+  // 'alliances' was dropped from this list on the grounds that alliance
+  // selection arrives inside 'nexus'. It does not: poll_nexus sends it as its
+  // own message (hub.py `_nexus_side`), and the 'nexus' message carries only
+  // the queueing status, the schedule and the announcements. So during
+  // selection this board learned that a team had been picked when the
+  // ten-second poll came round and not before - on the one screen, in the one
+  // twenty minutes of the event, where being ten seconds behind the room is
+  // the whole complaint the push exists to answer.
+  //
+  // The other three names the hub sends - 'pits', 'pitMap' and 'inspection' -
+  // are deliberately not here: nothing on this dashboard draws them, and the
+  // pit tablet is the screen that does.
   // Coalesced. The hub fires several of these together - a TBA poll that lands
   // new results broadcasts `results`, `solved` and `scout` within milliseconds
   // of each other - and each one used to be its own full refresh.
   const nudge = coalesce(refresh, 750);
-  for (const t of ['nexus', 'results', 'scout', 'calibration', 'matchStatus', 'seats',
-                   'matchStart', 'lovat', 'solved', 'rankings', 'epa', 'earlyScores'])
+  for (const t of ['nexus', 'alliances', 'results', 'scout', 'calibration', 'matchStatus',
+                   'seats', 'matchStart', 'lovat', 'solved', 'rankings', 'epa', 'earlyScores'])
     net.on(t, nudge);
   // Settings are not in refresh() any more: /api/config carries serverTime, so
   // it can never answer 304, and nothing on it changes without one of these.

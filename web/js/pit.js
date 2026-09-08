@@ -275,12 +275,13 @@ async function main() {
   ourTeam = Number((cfg && cfg.ourTeam) || 0) || null;
   await refresh();
   net.onChange(() => { $('#pdot').className = 'dot' + (net.state.online ? '' : ' amber'); });
-  // Pit data, the pit map and inspection status all arrive from Nexus under one
-  // broadcast name. These used to listen for 'pits', 'pitMap' and 'inspection',
-  // which the hub has never sent, so the map only ever caught up on the 30s
-  // poll below.
+  // The pit list, the pit map and inspection status each arrive under their own
+  // broadcast name - hub.py's `_nexus_side` sends them that way, from the slow
+  // Nexus poll, and none of them is inside the 'nexus' message. Listening only
+  // for 'nexus' meant a pit map that turned up, or an inspection that passed,
+  // reached this tablet only when the thirty-second poll came round.
   const nudge = coalesce(refresh, 750);
-  net.on('nexus', nudge); net.on('scout', nudge);
+  for (const t of ['nexus', 'pits', 'pitMap', 'inspection', 'scout']) net.on(t, nudge);
   // Stops while the tablet is asleep or on another tab, and catches up once on
   // the way back.
   every(30000, refresh, { leading: false });

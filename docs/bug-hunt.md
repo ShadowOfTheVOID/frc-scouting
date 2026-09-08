@@ -1,7 +1,11 @@
 # Bug hunt — handoff notes
 
-Working branch: `claude/seat-bugs-cl68f2`, 26 commits on top of `e669eaa`.
-Everything below is committed and pushed. Four test suites pass, and both CI
+First pass: `claude/seat-bugs-cl68f2`, 26 commits on top of `e669eaa`.
+Second pass: `claude/bug-hunt-logic-review-7oavun`, over everything that landed
+after it — the off-site mirror, the admin panel and key checking, the battery
+and ETag work, and OpenRouter.
+
+Everything below is committed and pushed. Five test suites pass, and both CI
 gates hold (accuracy 9.4% of TBA over 253 fitted windows; the Nexus/TBA merge
 gate at 40 canonical rows in schedule order).
 
@@ -23,7 +27,7 @@ fixed, which is backwards from a real DHCP move and skipped the subnet sweep
 entirely. Both are corrected below. If a before/after table looks too tidy,
 check that the "before" leg really was the old code.
 
-## Fixed
+## Fixed — first pass
 
 ### The seat / station claim
 
@@ -84,6 +88,38 @@ after:   the phone's own sweep found it: http://192.0.2.2:6059 (t+15s)
 `fd35d85` cache figures measured against a 75-match schedule, not the demo's 40 ·
 `a1375a4` why there is no Lovat API-keys page
 
+## Fixed — second pass
+
+Everything in this section is on `claude/bug-hunt-logic-review-7oavun`. The
+phone ones were driven in Chromium against a real hub, with the browser's radio
+taken away under a loaded page rather than by killing the server, and each was
+proved by stashing `web/js/hud.js` and running the same drive against the old
+file.
+
+### The phone stopped opening for a match
+
+| what was wrong |
+| --- |
+| **`On field` only armed the HUD when it arrived by webhook.** The status a phone acts on has two paths into it: Nexus's push, which broadcasts `matchStatus`, and `poll_nexus`, which lands in `/api/state` and broadcasts `nexus`. Only the first one armed anything; `applyState` took the new schedule, redrew standby and stopped. A webhook has to reach the hub *from the internet*, and the hub sits behind the venue's NAT — which is the whole reason `server/offsite.py` exists and pushes outward — so at an actual event the polled path is the only path there is. Driven: seated on RED 1, `On field` applied exactly as `poll_nexus` applies it. Before: `s-standby`, and it stays there while the match is played. After: `s-live`, on 9001. Arming is one-way per match, so pressing DONE and landing back on standby while the field still reads `On field` cannot hand the scout a second empty entry for a match they have just sent |
+| **Arming threw away the pre-match answers.** `loadMatch` builds a fresh entry, and standby is where the preload and the start zone are typed — against the very match that is about to arm. Both paths reloaded unconditionally, so at the buzzer the scout had a blank entry and no spare thumb to retype them. Arming keeps the entry when it already belongs to that match and that robot, and adopts the shared clock itself. Driven: CENTRE and 3 balls entered on standby, then `On field`, then one logged run. Before: `start None, pre None`. After: `start centre, pre 3` |
+| **Nothing ever took a phone off the offline screen.** It is only ever entered — DONE, HAND OVER or SIT while out of range — and the way back was a reload. So a phone that lost the hub once stayed there for the rest of the day, still queueing and still syncing when the hub came back, but off the one screen the auto-arm fires from. Driven: standby → radio off → HAND OVER → `s-offline`; radio back on → before, `s-offline` for as long as the drive ran; after, `s-standby` inside one tick |
+| **The standby list said SENT about everything.** The QUEUED/SENT tag read a `_queued` flag on the row that nothing in the codebase ever wrote, so a phone that had never once reached the hub told the scout their morning was sent. Driven: one match logged out of range, chip `1 WAITING` — before, no QUEUED tag on it; after, `QUEUED`. The tag is now kept beside the rows rather than stamped on them (`history[0]` is handed straight to FIX THE LAST MATCH as the live entry, and a display flag welded into a record gets saved and synced with it), and the list is re-read when the queue drains |
+
+### The hub
+
+| what was wrong |
+| --- |
+| **Two vendors' back-offs were written to objects that were thrown away.** `hub.lovat()` and `hub.ai()` built a fresh client from the settings row on every call, and `Lovat.down_until` / `ai.Client.down_until` are instance fields those clients set on themselves. Lovat allows one request every three seconds and 403s a team that is not verified; an AI key that was just rejected will be rejected again. Neither ever backed off — every TEST KEYS press and every settings save (which fires `_poll_all`) went straight back at a vendor that had just refused us — and the diagnostics panel's `rate limited, backing off` line could not appear, because it reads `down_until` off a client one millisecond old. Both clients are now cached by the credentials they were built from, so a key corrected on the Setup page still takes effect at once, and clears the backoff with it |
+| **A password with a space on the end locked its own owner out.** `check_admin` stripped what was typed in and not what was stored, and `--set-admin-password` stores what it is given. Both sides are trimmed now |
+| **The CORS preflight did not allow `X-Admin-Token`.** Every other header the API is sent was listed. This is only reachable with `--allow-remote-config`, or from a phone that found the hub again at a second address, but it fails as a browser refusal with nothing in the response to read |
+| **Broadcasts nobody was listening to.** `_nexus_side` sends `alliances`, `pits`, `pitMap` and `inspection` under their own names. The dashboard's listener list had dropped `alliances` on the stated grounds that alliance selection arrives inside `nexus` — it does not; the `nexus` message carries the queueing status, the schedule and the announcements — so during selection the board learned a team had been picked only when the ten-second poll came round, on the one screen where hub.py's own comment says that is the thing not to do. The pit tablet had the same note about `pits`/`pitMap`/`inspection` and the same thirty-second wait behind it. Both now listen for what the hub actually sends, coalesced; the dashboard deliberately still ignores the three pit names, because nothing on it draws them |
+
+### The mirror
+
+| what was wrong |
+| --- |
+| **`?rev=abc` killed the request thread.** `int(rev)` on a query-string value, straight out of `do_GET`: no response, the socket dropped, and on a mirror run with `--open` that is anybody who can reach the address. Proved by restoring the old function body under a live mirror — `RemoteDisconnected: Remote end closed connection without response`. A revision that is not a number is now a revision the mirror does not have, and `mirror/tests_mirror.py` covers four spellings of it. A photo row whose team is not a number no longer takes the rest of its batch with it either |
+
 ## Checked and clean
 
 Do not re-litigate these without new evidence.
@@ -123,6 +159,24 @@ Nothing is blocked. These are the threads that were live when the hunt paused.
    The seed also generates intervals strictly inside each window, which is why
    the phase-straddle bug in `0db516f` could not be caught by the existing
    Monte Carlo.
+5. **A HAND OVER mid-match is read three different ways.** `hub.solve_match`
+   takes the newest of the two rows for one (match, team) on the grounds that
+   the outgoing scout's row is a partial match; `analytics._team_trend` and
+   `analytics.score_report` take the *first* on the grounds that it covers the
+   start of the match. Both comments are right about their own half and neither
+   row is the whole match — the incoming scout gets a fresh entry, so the two
+   are complementary halves of one observation. Nothing here is wrong enough to
+   have shown up in the accuracy gate, and merging them is a solver change
+   rather than a fix, so it is written down rather than done.
+6. **`Handler._body()` does not drain a body it refuses.** A bogus or oversized
+   `Content-Length` gets a JSON answer, and then the unread bytes are parsed as
+   the next request on a keep-alive connection. Only reachable by a malformed
+   request, and it costs that one connection.
+7. **`db.saveScout` stamps `updatedAt` from `Date.now()`, not `net.serverNow()`.**
+   Last-write-wins on the hub is decided by that number, and the skew-corrected
+   clock exists three modules away. It only bites when two phones write the same
+   (match, team, scout) — a HAND OVER onto a second phone — and `db.js` cannot
+   import `net.js` without a cycle, so it is a small refactor rather than a line.
 
 ## The harness is gone
 
@@ -136,3 +190,16 @@ what you need; the drives that mattered most were:
   Chromium routes 254 LAN probes through a proxy that cannot reach them
 - unique match keys per run — `start_match` is first-tap-wins, so a reused key
   broadcasts nothing and a control leg silently reads zero
+
+The second pass rebuilt three of those drives and they went the same way. Two
+notes for whoever rebuilds them next:
+
+- `pip install playwright` pulls a version whose browser build does not match
+  the one on the image. Launch with
+  `executable_path="/opt/pw-browsers/chromium"` rather than downloading another.
+- Take the radio away with the browser's own offline switch
+  (`context.set_offline(True)`), not by stopping the hub. There is no service
+  worker — plain HTTP is not a secure context — so a phone whose hub is gone
+  cannot reload the page at all, and killing the server tests a state a scout
+  never reaches. Leaving the page loaded and cutting its network is exactly the
+  scout who has walked into the stands.
