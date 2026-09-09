@@ -122,23 +122,55 @@ Two smaller pads:
 - **UNDO** takes back the most recently finished run of any kind — shooting, feeding or
   defending.
 - **CLIMB** cycles `None → L1 → L2 → L3`. During auto it is a single toggle, because the auto
-  tower is Level 1 only.
+  tower is Level 1 only. The tap is also **timed**: the first press of a climb records the
+  second of the match it happened on, which is the one number an alliance captain always asks
+  for — how long before the buzzer does this robot have to leave? Cycling `L1 → L2` keeps the
+  first time (the scout settling on a level, not the robot starting again); going back round to
+  `None` clears it. A tap before the clock is running or after the buzzer records **no** time
+  rather than a wrong one.
 
 ### AFTER THE BUZZER
 
-Reached automatically when the match clock runs out. Everything here is a tap.
+Reached automatically when the match clock runs out. Everything here is a tap. It is two
+pages: the first is the one every scout fills in on the way to the next match, the second is
+optional and holds the questions that are worth asking but never worth delaying a match for.
 
 - **HOW WAS THEIR DRIVING** — rough / okay / solid / great / best.
 - **DID THEY GET IN THE WAY** — not at all / a little / some / a lot.
+- **HOW MUCH OF IT WENT IN** — sprayed it / half in / mostly in / nearly all / never missed.
+  The rate ladder says how hard a robot was shooting; this says how much of it counted, and it
+  is the one thing the hold pad cannot see.
 - **ANYTHING GO WRONG** — `STOPPED MOVING`, `TIPPED`, `NO-SHOW`, `LOTS OF FOULS`,
-  `AUTO DID NOTHING`. The last one is deliberately distinct from the first two: the robot
-  turned up and moved, but auto did nothing.
-- **WHO WERE THEY BLOCKING** — three chips, one per opposing robot. **Only appears if this
-  scout actually logged defence**, so a scout who logged none never sees the question.
-- **WHERE DID THEY START** — the same picker as standby, mirrored here for a scout who was
-  thrown straight into the HUD by a match already on the field.
+  `AUTO DID NOTHING`, and `CLIMB FELL OFF` / `AUTO CLIMB FELL OFF`. `AUTO DID NOTHING` is
+  deliberately distinct from the first two: the robot turned up and moved, but auto did
+  nothing. The two climb chips are how a robot that *tried* stops reading the same as one that
+  never left the floor, and each disappears the moment a climb is actually recorded — a robot
+  cannot both climb and fall.
 - **A note** — one line of free text.
 - **SEND IT IN** — saves, sends if the hub is reachable, and loads the next match.
+
+**A FEW MORE THINGS** opens the second page and says how many of its questions this entry has
+answered. Nothing on it is required, and an unanswered question stays *unknown* everywhere
+downstream — never a no, and never a zero:
+
+- **WHERE DID THEY START** — the same picker as standby, mirrored here for a scout who was
+  thrown straight into the HUD by a match already on the field.
+- **WHICH LANE** — `TRENCH` / `BUMP`. The side is visible from the stands as they roll out; the
+  lane usually is not until they move, which is why it is asked here rather than on standby.
+- **WHO WERE THEY BLOCKING** — three chips, one per opposing robot. **Only appears if this
+  scout actually logged defence**, so a scout who logged none never sees the question.
+- **WHERE ON THE TOWER** — `FRONT`/`BACK` × `SIDE`/`MIDDLE`, and only when they climbed. Two
+  robots that both want the middle of the same face cannot climb together, and nothing else we
+  record can say so.
+- **HOW DID THEY GET ACROSS** — `TRENCH` / `BUMP` / `BOTH` / `STAYED THEIR SIDE`.
+- **DID THEY GET STUCK** — `ON THE FUEL` / `ON THE BUMP` / `BOTH` / `NO`. Which kind, not just
+  how often: stuck on the bump is a route you can send a robot around.
+- **ANYTHING ELSE** — `SHOOTS ON THE MOVE` and `KNOCKS SHOTS DOWN`. These two are chips rather
+  than questions, so an unticked chip reads as a no, the same as `TIPPED` beside it.
+
+Every question on the second page is one other teams' scouts have always answered on
+[Lovat](#what-lovat-actually-gives-us) and ours never could, which is why a robot could read
+`beached 40% · on the bump` in the LOVAT panel and have nothing at all to say in ours.
 
 ### OFFLINE
 
@@ -366,10 +398,18 @@ it doing arithmetic, and an alliance total it worked out itself is a number nobo
 Reached by clicking a team. Fuel — with its band and, where we could time it, fuel per second —
 climb, tower points, reliability, EPA and OPR as tiles; then
 what scouts saw — stockpiling, wasted fuel, feeding, defence in **both** directions (who this
-robot defends, and who defends it), usual start zone, auto failures, fouls, driver rating,
-average preload — then two charts, then **FROM LOVAT** if other teams scouted them, then **WHAT
-THE NOTES ADD UP TO** (generated, see [AI](#ai)), then every note anyone typed about them, and
-their pit scouting with photos.
+robot defends, and who defends it), usual start zone and lane, auto failures, fouls, driver
+rating, average preload, and then the answers off the after screen's second page: how much
+went in, how it crosses the field and how often it gets stuck doing it, whether it shoots on
+the move or knocks shots down, the second it leaves to climb and where on the tower it goes,
+and how often a climb was tried and lost — then two charts, then **FROM LOVAT** if other teams
+scouted them, then **WHAT THE NOTES ADD UP TO** (generated, see [AI](#ai)), then every note
+anyone typed about them, and their pit scouting with photos.
+
+The second-page rows are deliberately worded to match the LOVAT panel below them — *crosses the
+field*, *gets stuck*, *scores while moving*, *leaves to climb at* — so the same question about
+the same robot can be read from our scouts and from theirs without translating anything. A row
+that says **not asked** is a question nobody answered, which is not the same as a no.
 
 The two charts are this robot alone, match by match:
 
@@ -417,12 +457,36 @@ pits about.
 | fuel, throughput, fuel per second, accuracy, volleys | their scouts' count of the same robot, next to ours |
 | feeding — seconds, rate, feeds per match, balls fed | |
 | defence — total, contact, camping, effectiveness | |
-| **climb start time**, per level, and auto climb start | the second the robot left to go and climb. Our scouting cannot produce this: a scout with two thumbs cannot time a climb |
+| **climb start time**, per level, and auto climb start | the second the robot left to go and climb. Theirs is a timer and ours is the CLIMB button's own timestamp, so the two sit in different blocks — but ours is no longer blank |
 | climbs and climb rate per level, best climb | `L2`, `Level 2` and `2` all normalise onto our vocabulary; a label we cannot read is unknown, never a failed climb |
 | points — total, auto, teleop — and driver ability | |
 | beached, scores-while-moving, disrupts, field traversal | booleans, counted as a rate over the rows that answered |
 | outpost intakes, robot roles, feeder types, intake type | |
 | scouter names and free-text notes | notes are shown beside ours, tagged `· lovat` |
+
+#### What we ask now because they did
+
+Their export was for a long time the only place several of these questions had an answer at
+all, which made a robot other teams had scouted look better understood than one ours had
+watched all day. The after screen's second page closes most of that gap, in their vocabulary
+where the field has its own names for things:
+
+| Lovat column | Ours | Where it is asked |
+|---|---|---|
+| `l1/l2/l3StartTime`, `autoClimbStartTime` | `climbStartSecs`, `autoClimbStartSecs` | the CLIMB button, timed |
+| `endgameClimb` = `FAILED`, `autoClimb` = `FAILED` | `climbFailed`, `autoClimbFailed` | `ANYTHING GO WRONG` |
+| `fieldTraversal` | `traversal` | `HOW DID THEY GET ACROSS` |
+| `beached` | `beached` | `DID THEY GET STUCK` |
+| `scoresWhileMoving`, `disrupts` | same names | `ANYTHING ELSE` |
+| `accuracy` | `accuracyRating`, 1–5 | `HOW MUCH OF IT WENT IN` |
+| `climbPosition`, `climbSide` | `climbSpot` | `WHERE ON THE TOWER` |
+| the lane half of their start position | `startLane` | `WHICH LANE` |
+
+Three of their columns are still theirs alone, and on purpose. `robotRoles` we already infer
+from the intervals a scout holds; `intakeType` is a pit question we ask once per robot rather
+than once per match; and their per-event counts (`outpostIntakes`, `volleysPerMatch`,
+`totalBallThroughput`) come from a tap-per-action collection model that our two-thumb hold pad
+deliberately is not.
 
 Two things their exporter does that cannot be undone on our side: commas inside free text were
 replaced with semicolons before export, and playoff rows carry a label (`SF2-1`) that does not

@@ -282,3 +282,30 @@ You will find things you would have done differently. Some of them you are right
 process is: implement it as specified, then list your suggestions at the end. A build that
 matches and comes with three good suggestions is worth far more than a build that improved
 things unasked and now matches nothing.
+
+## Where the build has since moved away from these files
+
+Listed here rather than silently, so the next person diffing against `reference/` knows which
+differences are decisions and which are drift.
+
+**`Phone 05 - After the Buzzer`** — the mock has three columns (`1fr 1fr 186px`) and four
+questions. The build had drifted to a two-column grid with three columns of content in it, so
+the third wrapped onto a second grid row and every question added after the mock — who they
+were blocking, where they started — overflowed the row above it. That is now back on the
+mock's own three-column grid, at the mock's own `gap:10`.
+
+It also asks more than the mock does, because scouts on other teams have always been asked
+these and ours never were (see *What we ask now because they did* in `docs/features.md`):
+
+- a third rate ladder in column one, `HOW MUCH OF IT WENT IN`, built from the mock's own
+  `.steps`/`.step` components. The three ladders share the column height, so each is shorter
+  than the two in the mock.
+- two more chips in `ANYTHING GO WRONG` — `CLIMB FELL OFF` and `AUTO CLIMB FELL OFF` — each
+  hidden when a climb of that kind was actually recorded.
+- a second page, reached by `A FEW MORE THINGS` in the right-hand column, holding six optional
+  one-tap questions. A second page rather than a taller column: nothing on this screen may
+  scroll, and none of these questions is worth delaying the next match for.
+
+Every one of those is built from components already in the mocks — `.picks`/`.pick` (with its
+`.sub`), `.steps`/`.step`, `.wrongs`/`.wrong`, `.caption.plain`, `.cta.flat`. No new colour,
+radius, font size or spacing value was invented for any of it.

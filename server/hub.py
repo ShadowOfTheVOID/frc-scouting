@@ -1601,8 +1601,17 @@ def _csv_table(h, ek, table):
                   "autoClimbPct", "avgTowerPoints", "avgRP", "stockpilePct", "wastedFuelPct",
                   "feedPct", "feedSecs", "defenseSecs", "defenseFacedSecs",
                   "defenseFacedMatches", "defenseAgainst", "defendedBy",
-                  "startZone", "startZonePct", "autoFailPct", "foulPct", "avgPreload",
-                  "driver", "defense", "diedPct", "tippedPct", "noShowPct"]
+                  "startZone", "startZonePct", "startLane", "autoFailPct", "foulPct",
+                  # `shotAccuracy`, not `accuracy`: in a flat file that word
+                  # already means the scouts-versus-official check two columns
+                  # to the left, and this one is how much of what a robot threw
+                  # actually went in.
+                  "avgPreload", "driver", "defense", "shotAccuracy",
+                  "diedPct", "tippedPct", "noShowPct",
+                  "traversalPct", "traversalKinds", "beachedPct", "beachedKinds",
+                  "scoresWhileMovingPct", "disruptPct",
+                  "climbSpot", "climbStartSecs", "autoClimbStartSecs",
+                  "climbFailPct", "autoClimbFailPct"]
         # How far the raw scout estimate ran from the official total on the
         # matches this team played - the same check the HEALTH tab shows, so it
         # survives into a spreadsheet.
@@ -1632,17 +1641,25 @@ def _csv_table(h, ek, table):
                 o["feedRate"], o["feedSecs"], o["defenseSecs"],
                 o.get("defenseFacedSecs"), o.get("defenseFacedMatches"),
                 _counts(o.get("defenseAgainst")), _counts(o.get("defendedBy")),
-                o.get("startZone"), o.get("startZonePct"),
+                o.get("startZone"), o.get("startZonePct"), o.get("startLane"),
                 o.get("autoFailRate"), o.get("foulRate"), o.get("avgPreload"),
-                o["driver"], o["defense"],
+                o["driver"], o["defense"], o.get("accuracy"),
                 o["diedRate"], o["tippedRate"], o["noShowRate"],
+                o.get("traversalRate"), _counts(o.get("traversalKinds")),
+                o.get("beachedRate"), _counts(o.get("beachedKinds")),
+                o.get("scoresWhileMovingRate"), o.get("disruptRate"),
+                o.get("climbSpot"), o.get("climbStartSecs"), o.get("autoClimbStartSecs"),
+                o.get("climbFailRate"), o.get("autoClimbFailRate"),
             ])
         return header, rows
 
     if table == "scout":
         header = ["matchKey", "team", "alliance", "station", "scoutId", "runs", "activeSecs",
                   "feedSecs", "defenseSecs", "defenseTarget", "preload", "startPosition",
-                  "autoTower", "endgameTower", "driverRating", "defenseRating",
+                  "startLane", "autoTower", "endgameTower", "climbStartSecs",
+                  "autoClimbStartSecs", "climbSpot", "climbFailed", "autoClimbFailed",
+                  "driverRating", "defenseRating", "accuracyRating",
+                  "traversal", "beached", "scoresWhileMoving", "disrupts",
                   "died", "tipped", "noShow", "autoFailed", "fouls", "note"]
         rows = []
         for e in sorted(h.store.scout_entries(ek), key=lambda x: (x["matchKey"], x["team"])):
@@ -1652,8 +1669,12 @@ def _csv_table(h, ek, table):
                 len(p.get("intervals") or []), _secs(p.get("intervals")),
                 _secs(p.get("feedIntervals")), _secs(p.get("defenseIntervals")),
                 p.get("defenseTarget"), p.get("preload"), p.get("startPosition"),
-                p.get("autoTower"), p.get("endgameTower"),
-                p.get("driverRating"), p.get("defenseRating"),
+                p.get("startLane"), p.get("autoTower"), p.get("endgameTower"),
+                p.get("climbStartSecs"), p.get("autoClimbStartSecs"), p.get("climbSpot"),
+                bool(p.get("climbFailed")), bool(p.get("autoClimbFailed")),
+                p.get("driverRating"), p.get("defenseRating"), p.get("accuracyRating"),
+                p.get("traversal"), p.get("beached"),
+                bool(p.get("scoresWhileMoving")), bool(p.get("disrupts")),
                 bool(p.get("died")), bool(p.get("tipped")), bool(p.get("noShow")),
                 bool(p.get("autoFailed")), bool(p.get("fouls")),
                 (p.get("note") or "").strip(),
@@ -1793,7 +1814,12 @@ def _ai_team_payload(rec, rank=None):
         "observed": {k: o.get(k) for k in
                      ("stockpileRate", "wastedFuelPct", "feedRate", "feedSecs",
                       "defenseSecs", "driver", "defense", "diedRate", "tippedRate",
-                      "noShowRate", "foulRate", "autoFailRate", "startZone")},
+                      "noShowRate", "foulRate", "autoFailRate", "startZone",
+                      # The after screen's second page. A match read that can
+                      # say "they cross on the bump and get stuck there" is
+                      # reading our own scouts, not guessing from Lovat.
+                      "startLane", "accuracy", "traversalRate", "beachedRate",
+                      "scoresWhileMovingRate", "disruptRate", "climbStartSecs")},
         "epa": rec.get("epa") or {},
         "noteCount": len(rec.get("notes") or []),
     }

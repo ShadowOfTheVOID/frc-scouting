@@ -1421,6 +1421,15 @@ def test_collection_path_is_intact(L):
         "note": "crossed a window edge mid-hold",
         "startPosition": "left", "autoFailed": False, "defenseTarget": 201,
         "clockShared": True, "clockBy": "AK",
+        # The after screen's second page. Optional to a scout, but once
+        # answered they are observations like any other and have to survive
+        # the same round trip - a lane that arrives as None is a robot the
+        # dashboard says nobody watched.
+        "startLane": "bump", "traversal": "trench", "beached": "fuel",
+        "climbSpot": "backMiddle", "accuracyRating": 4,
+        "scoresWhileMoving": True, "disrupts": False,
+        "climbFailed": False, "autoClimbFailed": False,
+        "climbStartSecs": 131.5, "autoClimbStartSecs": 12.5,
     }
     rec = {"eventKey": EK, "matchKey": mk, "team": 101, "scoutId": "PATH",
            "deviceId": "path-test", "alliance": "red", "station": 1,
@@ -1688,6 +1697,87 @@ def test_nexus_broadcasts_only_on_change(L):
     return ok
 
 
+def test_after_screen_extras_reach_the_dashboard(L):
+    """The optional questions have to survive as observations, not as zeros.
+
+    Everything on the after screen's second page is skippable, and most of it
+    will be skipped. That makes the unanswered case the important one: a robot
+    nobody was asked about must read "not asked" everywhere, never 0% - the
+    same rule the lovat block has always followed for a robot nobody uploaded.
+    """
+    ok = True
+    now = time.time()
+    mk = f"{EK}_qm1"
+
+    def send(scout, extra, when=None):
+        rec = entry(mk, 103, scout, when or now)
+        rec["payload"].update(extra)
+        return L.req("/api/sync", {"scout": [rec]})
+
+    # Two scouts, two matches' worth of answers, one of them left blank.
+    send("EX1", {"startLane": "bump", "traversal": "bump", "beached": "bump",
+                 "accuracyRating": 4, "scoresWhileMoving": True, "disrupts": False,
+                 "climbSpot": "frontSide", "climbStartSecs": 128.0})
+    send("EX2", {"startLane": "bump", "traversal": "none", "beached": "neither",
+                 "accuracyRating": 2, "scoresWhileMoving": True, "disrupts": True,
+                 "climbSpot": "frontSide", "climbStartSecs": 134.0})
+    send("EX3", {})
+
+    o = analytics.event_summary(L.store, EK)["teams"][103]["observed"]
+    ok &= check("the lane is tallied and named", o["startLane"] == "bump"
+                and o["startLanes"] == {"bump": 2}, f"({o['startLane']} {o['startLanes']})")
+    ok &= check("accuracy averages only the matches that answered",
+                o["accuracy"] == 3.0 and o["accuracyMatches"] == 2, f"({o['accuracy']})")
+    # One crossed, one stayed home, one was never asked: 50% of the answers,
+    # not 33% of the matches.
+    ok &= check("crossing is a rate over the answers, not over the matches",
+                o["traversalRate"] == 50.0, f"({o['traversalRate']})")
+    ok &= check("the kinds are kept beside the rate",
+                o["traversalKinds"] == {"bump": 1, "none": 1}
+                and o["beachedKinds"] == {"bump": 1, "neither": 1},
+                f"({o['traversalKinds']} {o['beachedKinds']})")
+    # The two chips are not tri-state: not ticked is a no, so their denominator
+    # is every match scouted rather than the ones that answered.
+    n = analytics.event_summary(L.store, EK)["teams"][103]["matchesScouted"]
+    ok &= check("a chip nobody ticked is a no, and one two scouts ticked is a rate",
+                o["disruptRate"] == round(1 / n * 100.0, 1)
+                and o["scoresWhileMovingRate"] == round(2 / n * 100.0, 1),
+                f"({o['disruptRate']} {o['scoresWhileMovingRate']} over {n})")
+    ok &= check("climb timing averages the taps that had a clock behind them",
+                o["climbStartSecs"] == 131.0 and o["climbsTimed"] == 2,
+                f"({o['climbStartSecs']} {o['climbsTimed']})")
+    ok &= check("and where on the tower is the one they used",
+                o["climbSpot"] == "frontSide", f"({o['climbSpot']})")
+
+    # A robot that was scouted with the second page left alone. This is the
+    # case that matters: most entries at a real event will look like this.
+    plain = entry(mk, 202, "EX4", now)
+    plain["alliance"] = "blue"
+    L.req("/api/sync", {"scout": [plain]})
+    blank = analytics.event_summary(L.store, EK)["teams"][202]["observed"]
+    ok &= check("a team nobody answered for reads unknown, not zero",
+                blank["accuracy"] is None and blank["traversalRate"] is None
+                and blank["beachedRate"] is None and blank["startLane"] is None
+                and blank["climbStartSecs"] is None,
+                f"({blank['accuracy']} {blank['traversalRate']} {blank['climbStartSecs']})")
+
+    # And out through the two files a lead actually opens.
+    code, body = L.req("/api/export.csv?table=scout", raw=True)
+    head = body.splitlines()[0]
+    ok &= check("every new field has a column in the per-entry csv",
+                code == 200 and all(c in head for c in
+                                    ("startLane", "climbStartSecs", "climbSpot", "traversal",
+                                     "beached", "accuracyRating", "scoresWhileMoving",
+                                     "disrupts", "climbFailed")), f"({head})")
+    code, body = L.req("/api/export.csv?table=teams", raw=True)
+    head = body.splitlines()[0]
+    ok &= check("and the team summary carries the aggregates",
+                code == 200 and all(c in head for c in
+                                    ("startLane", "shotAccuracy", "traversalPct", "beachedKinds",
+                                     "climbStartSecs", "climbFailPct")), f"({head})")
+    return ok
+
+
 def main():
     L = Live()
     try:
@@ -1708,7 +1798,8 @@ def main():
                    test_scout_data_is_lead_only,
                    test_cheap_polling, test_write_counters, test_static_revalidates,
                    test_nexus_broadcasts_only_on_change, test_scope_lists_are_complete,
-                   test_collection_path_is_intact):
+                   test_collection_path_is_intact,
+                   test_after_screen_extras_reach_the_dashboard):
             print(f"\n{fn.__name__.replace('test_', '').replace('_', ' ')}")
             passed &= fn(L)
         print()

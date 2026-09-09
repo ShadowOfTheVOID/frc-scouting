@@ -84,6 +84,21 @@ body{
 .body.three{grid-template-columns:var(--col-l) 1fr var(--col-r); gap:var(--gap); padding-top:12px}
 .body.split-260{grid-template-columns:1fr 260px}
 .body.split-300{grid-template-columns:1fr 300px}
+/* After the buzzer: three columns, as the mock has it. It used to be
+   split-300, which is two - so the third column wrapped onto a second
+   grid row, and every question added since the mock (who they were
+   blocking, where they started) overflowed the row above it. The extra
+   questions now sit on a second page instead of a taller column,
+   because nothing on this screen may scroll. */
+/* gap 10, not the 12 the other screens use, because the mock's after-screen
+   grid is gap:10 - and at 844 those two pixels are the difference between a
+   four-choice row sitting on one line and wrapping onto two. */
+.body.after{grid-template-columns:1fr 1fr 186px;gap:10px}
+/* Page two is the one place a column here may scroll. It is optional, it is
+   between matches, and on a small phone a scout who played defence AND
+   climbed can ask for more rows than the screen holds - losing a question
+   off the bottom would be worse than a scroll nobody usually sees. */
+#afPage2a,#afPage2b{overflow-y:auto}
 .body.seat{grid-template-columns:218px 1fr 186px}
 
 .col{display:flex;flex-direction:column;gap:6px;min-width:0;min-height:0}
@@ -92,6 +107,11 @@ body{
 /* nowrap is for the HUD's tight thumb columns; the seat screen has room and
    its instruction is a full sentence, so let it wrap as the mock shows. */
 .caption.plain{padding-left:0;white-space:normal;line-height:1.35}
+/* A row of choices has a 44px floor and a caption does not, so a column
+   with one question too many silently squashes the labels to nothing and
+   leaves the controls looking unlabelled. Keep the labels and let the
+   overflow show instead - it is the same bug, but visible. */
+.col .caption{flex-shrink:0}
 
 /* ------------------------------------------------------------ rate ladder */
 .ladder{flex:1;display:flex;flex-direction:column;gap:6px;min-height:0}
