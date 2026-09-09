@@ -148,9 +148,24 @@ class Hub:
         self._recal_pending = False
         self.writes = []          # timestamps, for writes/min
         self.log = []             # ring buffer for the event log panel
+        # Both of those are written from every request thread at once - six
+        # phones flush at the buzzer - and read from another while the
+        # diagnostics panel is open. Rebuilding a list and assigning it back is
+        # not one step, so entries went missing and, on the log, a trim racing
+        # an append could drop a line somebody was about to need.
+        self._note_lock = threading.Lock()
         # The source clients that carry state - see _client() below.
         self._clients = {}
         self._clients_lock = threading.Lock()
+        self._last_poll_all = 0.0
+        # One push to the mirror at a time. The poller and the PUSH NOW button
+        # are two threads, and a push is a whole event over a venue uplink.
+        self._push_lock = threading.Lock()
+        # apply_nexus_event is reached from the poller and from the webhook
+        # handler, and it decides what is news by comparing against the last
+        # payload it saw. Two threads inside that comparison at once is two
+        # copies of the same broadcast, or a dropped update.
+        self._nexus_lock = threading.Lock()
 
     WRITES_KEPT = 1000        # five minutes of writes is all writes/min needs
 
@@ -162,18 +177,23 @@ class Hub:
         here with no ceiling on it.
         """
         now = time.time()
-        keep = [t for t in self.writes if now - t < 300]
-        keep.extend([now] * max(0, min(int(n), self.WRITES_KEPT)))
-        self.writes = keep[-self.WRITES_KEPT:]
+        with self._note_lock:
+            keep = [t for t in self.writes if now - t < 300]
+            keep.extend([now] * max(0, min(int(n), self.WRITES_KEPT)))
+            self.writes = keep[-self.WRITES_KEPT:]
 
     def note(self, level, msg):
-        self.log.append({"at": time.time(), "level": level, "msg": msg})
-        if len(self.log) > 300:
-            del self.log[:100]
+        with self._note_lock:
+            self.log.append({"at": time.time(), "level": level, "msg": msg})
+            if len(self.log) > 300:
+                del self.log[:100]
 
     def diag(self):
         now = time.time()
-        self.writes = [t for t in self.writes if now - t < 300]
+        with self._note_lock:
+            self.writes = [t for t in self.writes if now - t < 300]
+            writes = len(self.writes)
+            log = list(reversed(self.log[-40:]))
         mem = None
         try:
             import resource
@@ -234,7 +254,7 @@ class Hub:
             "python": platform.python_version(),
             "uptimeSec": int(now - self.started_at),
             "memoryMB": round(mem, 1) if mem else None,
-            "writesPerMin": round(len(self.writes) / 5.0, 1),
+            "writesPerMin": round(writes / 5.0, 1),
             "sseClients": len(self.subs),
             "services": services,
             # A short age rather than the default: this is the panel a lead
@@ -243,7 +263,7 @@ class Hub:
             # collapse a tab left open and polling.
             "addresses": discover.urls(self.port, max_age=30.0),
             "seats": self.seats(),
-            "log": list(reversed(self.log[-40:])),
+            "log": log,
         }
 
     # --------------------------------------------------------- settings
@@ -395,6 +415,8 @@ class Hub:
         if not self.mirror().ok:
             return
         res = offsite.push_once(self)
+        if res.get("skipped") == "already pushing":
+            return
         if res.get("ok"):
             self.status["mirror"] = time.time()
         elif res.get("reason"):
@@ -489,9 +511,22 @@ class Hub:
 
     # --------------------------------------------------------- ingest
     def apply_nexus_event(self, payload):
-        """Nexus live event status, from push or poll.  Ordering guarded by dataAsOfTime."""
+        """Nexus live event status, from push or poll.  Ordering guarded by dataAsOfTime.
+
+        One thread at a time. Two reach this - the poller every twenty seconds,
+        and the webhook handler whenever Nexus pushes - and everything that
+        decides whether this payload is news (`last_nexus_at`, and the compare
+        against `last_nexus_live` at the end) is read and then written. Two
+        threads inside that is two copies of the same broadcast to every phone
+        in the building, or an update dropped because the other thread had
+        already moved the clock past it.
+        """
         if not payload:
             return False
+        with self._nexus_lock:
+            return self._apply_nexus_event(payload)
+
+    def _apply_nexus_event(self, payload):
         try:
             as_of = float(payload.get("dataAsOfTime") or 0)
         except (TypeError, ValueError):
@@ -921,11 +956,15 @@ class Hub:
     def end_admin(self, tok):
         self._drop_token("adminTokens", tok)
 
+    #: Every field of the board, so a hub that has never been edited answers
+    #: the same shape as one that has.
+    PICKLIST_BASE = {"weights": {}, "weights2": {}, "dnp": [], "order": [],
+                     "order2": [], "rev": 0}
+
     def picklist(self):
         # Two lists, because alliance selection asks two different questions:
         # the best robot left, and the best complement to the one we have.
-        base = {"weights": {}, "weights2": {}, "dnp": [], "order": [], "order2": []}
-        return {**base, **(self.store.get("picklist") or {})}
+        return {**self.PICKLIST_BASE, **(self.store.get("picklist") or {})}
 
     # ------------------------------------------------------- match clock
     def start_match(self, match_key, scout_id, client_now=None):
@@ -1899,11 +1938,34 @@ def _ai_notes_payload(rec):
     }
 
 
-def _poll_all(h):
-    """Kick every source off the request thread. A poll must never block a save."""
+#: How often a button may kick the whole set of sources. A save has just
+#: changed a key and must go through; REFRESH is a button two people can lean
+#: on together, and every press is six outbound calls on somebody's quota.
+POLL_ALL_SECONDS = 10
+
+
+def _poll_all(h, force=False):
+    """Kick every source off the request thread. A poll must never block a save.
+
+    Rate limited unless a save asked for it. Two leads pressing REFRESH at the
+    same moment - or one lead pressing it repeatedly because nothing seems to
+    be happening, which is exactly when they will - used to be six fresh
+    threads per press against five vendors, with nothing between them and the
+    key's quota.
+    """
+    now = time.time()
+    if not force:
+        with h._clients_lock:
+            if now - getattr(h, "_last_poll_all", 0.0) < POLL_ALL_SECONDS:
+                return False
+            h._last_poll_all = now
+    else:
+        with h._clients_lock:
+            h._last_poll_all = now
     for fn in (h.poll_nexus, h.poll_nexus_slow, h.poll_tba, h.poll_frc_events,
                h.poll_statbotics, h.poll_lovat):
         threading.Thread(target=fn, daemon=True).start()
+    return True
 
 
 def _round(v, places=1):
@@ -2551,7 +2613,7 @@ class Handler(BaseHTTPRequestHandler):
                 h.set_pin(cleaned["strategyPin"])
             if h.cfg("eventKey") and "eventKey" in body:
                 h.store.put_event(h.cfg("eventKey"), level=body.get("eventLevel"))
-            _poll_all(h)
+            _poll_all(h, force=True)      # a save has just changed a key
             # Saved, and everything that was quietly fixed or looks off on the
             # way in, so the page can say so rather than leaving it to be found
             # out on the Saturday.
@@ -2621,16 +2683,38 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/picklist":
             if not self._unlocked():
                 return self._json({"error": "picklist is read-only without the passcode"}, 403)
-            base = {"weights": {}, "weights2": {}, "dnp": [], "order": [], "order2": []}
-
+            # A patch, not a document. Two leads work this board at once during
+            # alliance selection - that is what the second dashboard is FOR -
+            # and both of them used to send the whole picklist on every edit.
+            # Measured, three runs out of three: one lead marks 254 do-not-pick
+            # while the other drags 1678 to the top, and the board ends up with
+            # one of the two edits and no sign the other ever happened. The
+            # write itself was always atomic; what collided was the payload.
+            #
+            # So only the fields actually sent are touched, and the flags come
+            # as add/remove rather than as a list - two leads flagging two
+            # different robots in the same second is not a conflict at all and
+            # must not be resolved as one.
             def apply(cur):
-                cur = {**base, **(cur or {})}
+                cur = {**Hub.PICKLIST_BASE, **(cur or {})}
                 for k in ("weights", "weights2", "dnp", "order", "order2"):
                     if k in body:
                         cur[k] = body[k]
+                dnp = [t for t in (_int(x) for x in (cur.get("dnp") or [])) if t is not None]
+                for x in (body.get("dnpAdd") or []):
+                    t = _int(x)
+                    if t is not None and t not in dnp:
+                        dnp.append(t)
+                drop = {t for t in (_int(x) for x in (body.get("dnpRemove") or []))
+                        if t is not None}
+                cur["dnp"] = [t for t in dnp if t not in drop]
+                # Which version of the board this is. The broadcast carries it
+                # so a second dashboard can tell the echo of its own edit from
+                # somebody else's, and a reader can tell it has fallen behind.
+                cur["rev"] = int(cur.get("rev") or 0) + 1
                 return cur, cur
             cur = h.store.mutate("picklist", apply, {})
-            h.broadcast("picklist", {"updatedAt": time.time()})
+            h.broadcast("picklist", {"updatedAt": time.time(), "rev": cur["rev"]})
             return self._json({"ok": True, "picklist": cur})
 
         if p == "/api/seat":
@@ -2770,8 +2854,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(offsite.push_once(h, force=True))
 
         if p == "/api/refresh":
-            _poll_all(h)
-            return self._json({"ok": True})
+            # 200 either way: "already asked a moment ago" is not a failure, and
+            # the button has nothing useful to do with an error code.
+            return self._json({"ok": True, "polled": _poll_all(h)})
 
         if p == "/api/resolve":
             mk = body.get("matchKey")

@@ -319,6 +319,72 @@ def test_picklist_lock(L):
     return ok
 
 
+def test_two_leads_on_one_board(L):
+    """Two dashboards, alliance selection, edits in the same second.
+
+    A second dashboard is the point of alliance selection - one lead reads, one
+    lead drives - and both used to send the WHOLE picklist on every edit, so
+    whichever clicked second silently undid the other. Measured before this,
+    three runs out of three: one lead marks 254 do-not-pick while the other
+    drags 1678 to the top, and the hub ends up holding one of the two edits.
+    The write was always atomic; it was the payload that collided.
+    """
+    ok = True
+    L.req("/api/picklist", {"order": [], "order2": [], "dnp": [],
+                            "weights": {}, "weights2": {}})
+
+    # The two edits, sent as the two pages send them - only what changed.
+    def edit(payload, out):
+        out.append(L.req("/api/picklist", payload)[0])
+    ready = threading.Barrier(2)
+
+    def run(payload, out):
+        ready.wait()
+        edit(payload, out)
+    outs = []
+    ts = [threading.Thread(target=run, args=(pl, outs)) for pl in
+          ({"dnpAdd": [254]}, {"order": [1678, 118, 254]})]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    _, pl = L.req("/api/picklist")
+    ok &= check("one lead's flag and the other's drag both survive",
+                pl["dnp"] == [254] and pl["order"] == [1678, 118, 254], f"({pl})")
+
+    # Six leads flagging six different robots is not a conflict at all.
+    teams = [971, 195, 2056, 1114, 118, 33]
+    bar = threading.Barrier(len(teams))
+
+    def flag(t):
+        bar.wait()
+        L.req("/api/picklist", {"dnpAdd": [t]})
+    ts = [threading.Thread(target=flag, args=(t,)) for t in teams]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    _, pl = L.req("/api/picklist")
+    ok &= check("six flags in the same instant are six flags, not one",
+                sorted(pl["dnp"]) == sorted(teams + [254]), f"({sorted(pl['dnp'])})")
+
+    _, pl = L.req("/api/picklist", {"dnpRemove": [254]})
+    ok &= check("and un-flagging one leaves the rest alone",
+                254 not in pl["picklist"]["dnp"] and len(pl["picklist"]["dnp"]) == len(teams),
+                f"({pl['picklist']['dnp']})")
+
+    # The revision is what lets a second dashboard tell somebody else's edit
+    # from the echo of its own.
+    before = pl["picklist"]["rev"]
+    _, pl2 = L.req("/api/picklist", {"weights": {"climb": 31}})
+    ok &= check("every write moves the revision", pl2["picklist"]["rev"] == before + 1,
+                f"({before} -> {pl2['picklist']['rev']})")
+    ok &= check("and a field nobody sent is not touched",
+                pl2["picklist"]["order"] == [1678, 118, 254], f"({pl2['picklist']})")
+    L.req("/api/picklist", {"order": [], "order2": [], "dnp": [], "weights": {}})
+    return ok
+
+
 def test_export_import_idempotent(L):
     ok = True
     code, dump = L.req("/api/export")
@@ -1790,7 +1856,8 @@ def main():
         seed_event(L)
         passed = True
         for fn in (test_sync_and_last_write_wins, test_solving_ran, test_analytics_null_safe,
-                   test_picklist_lock, test_export_import_idempotent,
+                   test_picklist_lock, test_two_leads_on_one_board,
+                   test_export_import_idempotent,
                    test_snapshot_and_restore, test_csv_export,
                    test_hostile_input, test_burst_of_connections,
                    test_junk_payload_cannot_blank_the_dashboard,

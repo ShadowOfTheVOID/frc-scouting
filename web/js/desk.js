@@ -129,8 +129,13 @@ function matchLabel(matchKey) {
 function renderLive() {
   const matches = (STATE && STATE.matches) || [];
   const live = (STATE && STATE.live) || {};
-  const onField = matches.find((m) => m.status === 'On field');
-  const queuing = matches.find((m) => m.status === 'Now queuing' || m.status === 'On deck');
+  // A played match is never "on field", whatever Nexus last said about it: the
+  // status comes from a volunteer with a tablet and goes stale, the breakdown
+  // comes from the field and does not. Without this the board can spend the
+  // afternoon showing a match that finished at lunchtime as the live one.
+  const onField = matches.find((m) => m.status === 'On field' && !m.breakdown);
+  const queuing = matches.find((m) => !m.breakdown
+    && (m.status === 'Now queuing' || m.status === 'On deck'));
   const played = matches.filter((m) => m.breakdown).length;
   const upcoming = matches.filter((m) => !m.breakdown && m !== onField && m !== queuing).slice(0, 1);
 
@@ -391,6 +396,12 @@ function takenTeams() {
 // the lead's hand-ordering; it wins outright, and `was` carries the computed
 // rank alongside so the board shows what has drifted since they moved things.
 let ORDER = [], ORDER2 = [];
+// Which version of the board this tab has seen. The hub bumps it on every
+// write and names it in the broadcast, so a tab can tell the echo of its own
+// edit from somebody else's.
+let PICK_REV = 0;
+const saveWeightsSoon = coalesce(
+  () => savePicklist(PICK_MODE === 'first' ? { weights: WEIGHTS } : { weights2: WEIGHTS2 }), 400);
 const activeOrder = () => (PICK_MODE === 'first' ? ORDER : ORDER2);
 function setActiveOrder(v) { if (PICK_MODE === 'first') ORDER = v; else ORDER2 = v; }
 
@@ -436,7 +447,7 @@ function moveInOrder(team, before) {
   const at = before == null ? order.length : order.indexOf(before);
   order.splice(at < 0 ? order.length : at, 0, team);
   setActiveOrder(order);
-  savePicklist();
+  savePicklist(PICK_MODE === 'first' ? { order } : { order2: order });
 }
 // ------------------------------------------------------------- filters
 //
@@ -621,6 +632,7 @@ async function loadPicklistState() {
     for (const n of pl.dnp || []) DNP.add(Number(n));
     ORDER = (pl.order || []).map(Number);
     ORDER2 = (pl.order2 || []).map(Number);
+    PICK_REV = pl.rev || 0;
     CAN_EDIT = pl.canEdit !== false;
     PIN_SET = !!pl.locked;
     renderWeights();
@@ -628,14 +640,36 @@ async function loadPicklistState() {
   renderEditBar();
 }
 
-/** Picklist state lives on the hub so every authorised screen agrees. */
-async function savePicklist() {
+/**
+ * Picklist state lives on the hub so every authorised screen agrees.
+ *
+ * One field at a time, never the whole board. Two leads work this during
+ * alliance selection - that is what the second dashboard is for - and sending
+ * the whole document meant whichever of them clicked second silently undid the
+ * other: measured, one lead marking 254 do-not-pick while the other dragged
+ * 1678 to the top left the hub with one of the two edits, three runs out of
+ * three. The flags go as add/remove for the same reason: two leads flagging
+ * two different robots is not a conflict and must not be resolved as one.
+ */
+async function savePicklist(patch) {
   if (!CAN_EDIT) return;
   try {
-    await net.api('/api/picklist', { method: 'POST',
-      body: JSON.stringify({ weights: WEIGHTS, weights2: WEIGHTS2, dnp: [...DNP],
-                             order: ORDER, order2: ORDER2 }) });
-  } catch { /* stays local until the hub is back */ }
+    const r = await net.api('/api/picklist', { method: 'POST', body: JSON.stringify(patch) });
+    if (r && r.picklist) PICK_REV = r.picklist.rev || 0;
+  } catch (e) {
+    // A refused write is the one thing that must not be swallowed. The
+    // passcode is rotated during an event and a token lasts sixteen hours, so
+    // a board can sit there saying EDITING UNLOCKED while every drag is thrown
+    // away by the hub and nothing on screen says so.
+    if (e.locked) {
+      localStorage.removeItem('strategyToken');
+      CAN_EDIT = false;
+      renderEditBar();
+      const msg = $('#pinMsg');
+      if (msg) msg.textContent = 'That passcode session has expired — unlock again.';
+    }
+    /* offline: stays local until the hub is back */
+  }
 }
 
 // Both of these are filterable, so both have to be readable on the row - a
@@ -727,9 +761,10 @@ function renderPicklist() {
   if (CAN_EDIT) wireDrag();
   for (const b of $$('[data-dnp]')) b.onclick = () => {
     const n = Number(b.dataset.dnp);
-    DNP.has(n) ? DNP.delete(n) : DNP.add(n);
+    const on = !DNP.has(n);
+    on ? DNP.add(n) : DNP.delete(n);
     localStorage.setItem('dnp', JSON.stringify([...DNP]));
-    savePicklist();
+    savePicklist(on ? { dnpAdd: [n] } : { dnpRemove: [n] });
     renderPicklist(); renderPickMini();
   };
   $('#dnpList').innerHTML = [...DNP].length
@@ -746,7 +781,7 @@ function renderPicklist() {
     reset.classList.toggle('hide', !(CAN_EDIT && activeOrder().length));
     reset.onclick = () => {
       setActiveOrder([]);
-      savePicklist();
+      savePicklist(PICK_MODE === 'first' ? { order: [] } : { order2: [] });
       renderPicklist(); renderPickMini();
     };
   }
@@ -760,7 +795,11 @@ function renderWeights() {
   for (const el of $$('[data-w]')) el.oninput = () => {
     activeWeights()[el.dataset.w] = Number(el.value);
     $(`#w-${el.dataset.w}`).textContent = el.value;
-    savePicklist();
+    // Every pixel of a slider drag used to be its own POST of the whole board.
+    // The board still re-ranks per pixel - that is the point of the slider -
+    // but only the weights this pane owns are sent, and only once the hand
+    // stops moving.
+    saveWeightsSoon();
     renderPicklist(); renderPickMini();
   };
 }
@@ -961,7 +1000,8 @@ function renderCrew() {
 
   // which robot in the current match has nobody on it
   const ms = (STATE && STATE.matches) || [];
-  const m = ms.find((x) => x.status === 'On field') || ms.find((x) => !x.breakdown);
+  const m = ms.find((x) => x.status === 'On field' && !x.breakdown)
+    || ms.find((x) => !x.breakdown);
   $('#crewMatch').innerHTML = m ? ['red', 'blue'].map((side) =>
     `<div class="r" style="grid-template-columns:70px repeat(3,1fr)">
       <span style="color:${side === 'red' ? 'var(--red-label)' : 'var(--blue-label)'};font:800 11px Barlow,sans-serif;letter-spacing:.12em">${side.toUpperCase()}</span>
@@ -1126,9 +1166,10 @@ let openMatch = null;
 
 function nextMatch() {
   const ms = (STATE && STATE.matches) || [];
-  return ms.find((x) => x.status === 'On field')
-      || ms.find((x) => x.status === 'Now queuing' || x.status === 'On deck')
-      || ms.find((x) => !x.breakdown)
+  const live = ms.filter((x) => !x.breakdown);      // results beat a queueing status
+  return live.find((x) => x.status === 'On field')
+      || live.find((x) => x.status === 'Now queuing' || x.status === 'On deck')
+      || live[0]
       || ms[ms.length - 1];
 }
 
@@ -1881,8 +1922,12 @@ async function main() {
   // during alliance selection; the second one kept its boot-time copy all
   // afternoon, and the next edit made on it wrote that stale copy back over
   // everyone else's DNP flags and ordering. Nothing said a thing.
-  net.on('picklist', async () => {
+  net.on('picklist', async (msg) => {
     if (dragTeam) return;              // mid-drag: the drop re-renders anyway
+    // Not our own edit coming back. renderWeights() rebuilds the sliders, so
+    // the echo of a save landed on the pane the lead still had a finger on and
+    // snapped the handle back to the value the hub had a moment ago.
+    if (msg && msg.rev && msg.rev === PICK_REV) return;
     await loadPicklistState();
     renderPicklist(); renderPickMini(); renderWeights();
   });

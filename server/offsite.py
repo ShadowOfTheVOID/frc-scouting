@@ -279,7 +279,29 @@ def push_once(hub, force=False):
     `force` sends the bundle even when nothing has changed - what the SAVE
     button on the setup page uses, so a lead who just typed a URL finds out
     immediately whether it works rather than within the minute.
+
+    One at a time. Two threads reach this - the poller every sixty seconds and
+    the PUSH NOW button on the setup page - and a push is a whole event over a
+    shared venue uplink: two of them at once means the bundle is built twice
+    (analytics, both CSVs, a hash of the lot), sent twice, and stored twice as
+    two revisions, and then the two `mirrorState` writes race, so the panel can
+    end up reporting the older of the two pushes as the last one. The poller
+    steps aside when the button is in flight; the button waits its turn,
+    because somebody is standing there watching for the answer.
     """
+    lock = getattr(hub, "_push_lock", None)
+    if lock is None:                      # a hub built by a test, without one
+        return _push_once(hub, force)
+    got = lock.acquire(timeout=90) if force else lock.acquire(blocking=False)
+    if not got:
+        return {"ok": True, "skipped": "already pushing"}
+    try:
+        return _push_once(hub, force)
+    finally:
+        lock.release()
+
+
+def _push_once(hub, force=False):
     m = hub.mirror()
     state = dict(hub.store.get("mirrorState") or {})
     if not m.ok:

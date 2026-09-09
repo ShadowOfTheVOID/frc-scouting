@@ -306,10 +306,24 @@ function syncSeat(force = false) {
   }).catch(() => { lastSeatSync = 0; });   // offline: the next tick tries again
 }
 
-/** Ask the hub who is actually in our chair before we act as though it is ours. */
-async function verifySeat() {
-  if (PRACTICE || seatVerified || screen === 'bumped') return;
-  if (Date.now() - lastVerify < 15000) return;
+/**
+ * Ask the hub who is actually in our chair before we act as though it is ours.
+ *
+ * `force` re-asks for a chair this phone already believes is its own, and is
+ * what a reconnection uses. A phone that was out of range while the lead freed
+ * its station and sat somebody else there came back and simply re-asserted the
+ * claim - bumping the scout who had just been put in the chair, on the hub's
+ * own instruction. Two signals about one chair; the hub's is the one that
+ * counts, and asking is the only way to hear it.
+ */
+async function verifySeat({ force = false } = {}) {
+  if (PRACTICE || screen === 'bumped') return;
+  if (!force && seatVerified) return;
+  // The plain call is reached from every connection change, so it is rate
+  // limited. A reconnection is an event rather than a poll and has to get
+  // through - it is the one moment this phone can have missed the news about
+  // its own chair - but a radio flapping in and out must still not spin.
+  if (Date.now() - lastVerify < (force ? 2000 : 15000)) return;
   lastVerify = Date.now();
   let s;
   try { s = await net.api('/api/seats'); } catch { return; }   // retried when we reconnect
@@ -902,10 +916,21 @@ function nextScoutableMatch() {
   return (i >= 0 && matches[i + 1]) || m;
 }
 
+/**
+ * The match this seat is watching now.
+ *
+ * A queueing status and an official result are two signals about one match,
+ * and when they disagree the result wins: TBA does not post a breakdown for a
+ * match that is still being played. Nexus's status comes from a volunteer with
+ * a tablet and it goes stale in exactly the way you would expect - a match
+ * that has been played and scored can still read `On field` for the rest of
+ * the day, because put_match COALESCEs a missing status and keeps the last one
+ * it was told. Every phone in the building then sits on a finished match.
+ */
 function pickCurrentMatch() {
   if (PRACTICE) return practiceMatch();
   for (const st of ['On field', 'On deck', 'Now queuing']) {
-    const m = matches.find((x) => x.status === st);
+    const m = matches.find((x) => x.status === st && !x.breakdown);
     if (m) return m;
   }
   return matches.find((m) => !m.breakdown) || matches[0] || null;
@@ -949,6 +974,8 @@ let armedMatch = null;
  */
 function armIfOnField(m) {
   if (screen !== 'standby' || !m || m.status !== 'On field') return false;
+  // Official results exist, so it is over whatever the queueing status says.
+  if (m.breakdown) return false;
   if (armedMatch === m.matchKey) return false;
   const team = teamForSeat(m);
   if (!team) return false;
@@ -970,8 +997,11 @@ function armIfOnField(m) {
 }
 
 function goStandbyOrLive() {
-  // If our match is already on the field, the scout needs the HUD now, not a countdown.
-  if (currentMatch && currentMatch.status === 'On field' && entry && entry.team) {
+  // If our match is already on the field, the scout needs the HUD now, not a
+  // countdown - unless it has an official result, in which case the status is
+  // stale and the match is over. See pickCurrentMatch.
+  if (currentMatch && currentMatch.status === 'On field' && !currentMatch.breakdown
+      && entry && entry.team) {
     show('live'); renderLive(); return;
   }
   if (!net.state.online) { renderOffline(); show('offline'); return; }
@@ -1069,7 +1099,10 @@ async function main() {
     // phone that never opened for a match again.
     if (cameBack && screen === 'offline') goStandbyOrLive();
     if (booted && net.state.online) {
-      if (!seatVerified) verifySeat(); else syncSeat(cameBack);
+      // Coming back from a gap is a re-ask, not a re-assert: while this phone
+      // was away the chair may have been freed and given to somebody else.
+      if (!seatVerified || cameBack) verifySeat({ force: cameBack });
+      else syncSeat(false);
     }
   });
 

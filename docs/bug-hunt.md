@@ -135,6 +135,31 @@ rendered DOM rather than the source.
 | **The picklist scaled defence wrong.** The phone collects 1..4 ('not at all' .. 'a lot'); the score divided by 5, so a robot a scout had explicitly marked as *not* defending scored 0.2 - which on the second-pick board, where defence is weighted 35, put it seven points ahead of a robot nobody had rated at all. Now `(rating - 1) / 3` |
 | **A projection over an unscouted alliance read as a weak one.** A robot nobody has scouted contributes nothing to the sum, so PROJECTED FUEL showed a real number with a warn colour and no hint that two of the three robots were unknown. The row table underneath said `not scouted`; the tile - the thing that gets read out loud - now does too |
 
+### Two people clicking at once
+
+The database was never the problem: `store.mutate` takes the write lock before
+it reads, and every kv write already goes through it. What collided was above
+that - whole documents where a patch was meant, and shared objects in the hub
+process with nothing round them.
+
+| what was wrong |
+| --- |
+| **The picklist was sent as a whole document.** Every edit - a flag, a slider, a drag, a reset - POSTed `weights`, `weights2`, `dnp`, `order` and `order2` together, out of that tab's own memory. Two dashboards during alliance selection is the case the second dashboard exists for, and whichever lead clicked second silently undid the other. Driven, three runs out of three: one lead marks 254 do-not-pick while the other drags 1678 to the top, and the hub keeps one of the two. Now each control sends only what it changed, and the flags go as `dnpAdd` / `dnpRemove` - six leads flagging six different robots in the same instant is not a conflict and is no longer resolved as one. The board carries a `rev` the hub bumps on every write and names in the broadcast, so a tab can tell somebody else's edit from the echo of its own - which also stops a slider being yanked back under the hand still dragging it |
+| **A refused picklist write was swallowed.** The passcode gets rotated during an event and a token lasts sixteen hours, so a board could sit there saying EDITING UNLOCKED while the hub threw away every drag. It now drops the dead token, falls back to read-only and says the session expired |
+| **Two threads could push to the mirror at once.** The poller runs every sixty seconds and PUSH NOW is a button: two pushes meant the bundle built twice (analytics, both CSVs, a hash of the lot), sent twice over a shared venue uplink, stored as two revisions, and then a race between the two `mirrorState` writes that could leave the panel reporting the older push as the last one. One at a time now - the poller steps aside, the button waits its turn |
+| **`writes` and the event log were rebuilt-and-reassigned from every request thread.** Six phones flush at the buzzer and the diagnostics panel reads the same two lists from another thread. Both are under a lock, and `diag()` takes its copy inside it |
+| **`apply_nexus_event` had two callers and no lock.** The poller and the webhook handler both read `last_nexus_at`, decide whether the payload is news, and write it back - so two of them inside that is either the same broadcast sent twice to every phone in the building, or an update dropped because the other thread had already moved the clock past it |
+| **REFRESH was six outbound calls per press, unlimited.** Two leads pressing it together - or one lead pressing it repeatedly because nothing seems to be happening, which is exactly when they will - went straight at five vendors' quotas. Rate limited to one round every ten seconds; a settings save still forces one through, because it has just changed a key |
+
+### Conflicting signals
+
+Two sources describing one thing, and the app believing the wrong one.
+
+| what was wrong |
+| --- |
+| **A played match still read `On field`.** Nexus's status comes from a volunteer with a tablet, and `put_match` COALESCEs a missing status - so once a match drops out of the live feed it keeps whatever it was last told, for the rest of the day. TBA's breakdown comes from the field and means the match is over. Driven with Q1 scored and still marked `On field`: before, the phone opened the live HUD on it - a scout logging a match that finished an hour ago, one tap from sending the row - and the dashboard's LIVE panel headlined it as the match on the field. After, the phone sits on standby counting down to Q2 and the board leads with Q2. An official result now beats a queueing status everywhere the two are read together: `pickCurrentMatch`, the arm, the boot jump, the LIVE panel, the match preview and the crew board |
+| **A reconnecting phone took its chair back off whoever the lead had just given it to.** The station is freed on the crew board and somebody else sits down; the original phone was out of range and heard none of it; on reconnect it re-asserted the claim it still believed in and bumped the new scout - on the hub's own instruction. Driven with the hub genuinely stopped, so the stream really breaks (Playwright's offline switch leaves an established EventSource alive, which is why the first run of this drive proved nothing): before, `POST /api/seat` and AK has the chair back; after, `GET /api/seats`, AK gets the bump screen, and BK keeps the chair. A reconnection is a re-ask, not a re-assert - and the 15s rate limit on that read now lets a forced one through, or the phone would go on believing the chair was its own |
+
 ## Checked and clean
 
 Do not re-litigate these without new evidence.
