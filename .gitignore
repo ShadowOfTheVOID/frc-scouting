@@ -1,9 +1,11 @@
-# The admin password, and on a mirror host its two secrets. `.env.example` is
-# the committed one; this is the filled-in copy and it never goes near git.
+# Every API key, the admin password, and on a mirror host its two secrets.
+# `.env.example` is the committed one; this is the filled-in copy and it never
+# goes near git. It is also the one file worth backing up somewhere private.
 .env
 
-# Runtime state — never commit. Holds the event database, which contains the
-# strategy passcode hash, unlock tokens, and any API keys the hub was given.
+# Runtime state — never commit. Holds the event database: the scouting, the
+# strategy passcode hash and unlock tokens. The API keys are not in here; they
+# live in .env, which is what keeps them out of every snapshot.
 data/
 
 # The mirror's own database, on whatever host it runs on. Same reasoning: it

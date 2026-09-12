@@ -126,6 +126,19 @@ class Store:
             (key, json.dumps(value), time.time()))
         self.bump(self.kv_scope(key))
 
+    def forget(self, key):
+        """Delete one settings row, for good.
+
+        `set(key, "")` would read the same to every caller, but the old value
+        stays in the WAL and in every snapshot under `data/snapshots/`. This is
+        for the credentials that moved to `.env`: a key taken off a hub has to
+        actually leave the database it was in, not merely stop being returned.
+        """
+        cur = self.conn().execute("DELETE FROM kv WHERE key=?", (key,))
+        if cur.rowcount:
+            self.bump(self.kv_scope(key))
+        return bool(cur.rowcount)
+
     def mutate(self, key, fn, default=None):
         """Read-modify-write one kv row atomically. Returns what `fn` returned.
 
@@ -205,6 +218,19 @@ class Store:
         rows = self.conn().execute(
             "SELECT team,name,data FROM teams WHERE event_key=? ORDER BY team", (event_key,)).fetchall()
         return [{"team": r["team"], "name": r["name"], **(json.loads(r["data"]) if r["data"] else {})} for r in rows]
+
+    def how_many(self, event_key):
+        """How much of an event has arrived, without building any of it.
+
+        The setup checklist asks "did the schedule actually turn up?", and the
+        honest answer is a row count.  It is a count rather than `len(teams())`
+        on purpose: that decodes a JSON blob per team, and this is read from
+        /api/config, which every phone on the wifi uses as its "are you there"
+        probe.
+        """
+        n = lambda t: self.conn().execute(
+            f"SELECT COUNT(*) FROM {t} WHERE event_key=?", (event_key,)).fetchone()[0]
+        return {"teams": n("teams"), "matches": n("matches"), "scout": n("scout_entries")}
 
     # ------------------------------------------------------------ matches
     def put_match(self, event_key, match_key, **f):

@@ -62,15 +62,45 @@ A black window appears and prints something like this:
 
 **Leave that black window open.** Closing it stops the server. Minimise it instead.
 
+On a hub that has never been set up it also **opens the admin panel in your browser for you**,
+and lists what is left to do in that window — the same checklist the panel leads with. Once an
+event key is set it stops doing that, because by then the panel is somewhere you go on purpose;
+`--no-browser` turns it off for good.
+
 > **Windows will pop up a firewall warning the first time.** Tick **Private networks** and click
 > **Allow access**. If you click Cancel, phones will not be able to connect and there is no
 > other symptom — it just silently does not work. This is the single most common problem.
 
-### 4. Open the admin panel and add your API keys
+### 4. Work down the checklist on the admin panel
 
 **The admin panel is `http://localhost:6059/` — the hub laptop's own browser, at the site root.**
-It is the same page the server prints as `Admin:` when it starts. Everything about this hub is
-set there: the event, all the API keys, the strategy passcode, and the off-site mirror.
+It is the same page the server prints as `Admin:` when it starts, and the one it opens for you on
+a first run. Everything about this hub is set there: the event, all the API keys, the strategy
+passcode, and the off-site mirror.
+
+It opens with **START HERE** and five lines, in the order to do them:
+
+1. **Unlock this panel** — it opens read-only; press **UNLOCK**.
+2. **Name the event** — the event key, the level, and your team number.
+3. **Paste the Nexus key** — the one that matters, and the only one in front of you to start
+   with. The other seven boxes are folded away under **THE OPTIONAL ONES**.
+4. **Press TEST KEYS** — after **SAVE & REFRESH**.
+5. **Open it on a phone** — which is also how you find out the firewall prompt was dismissed.
+
+Every line ticks itself off from what the hub actually holds, not from a box having been typed
+into: the event line reads done when the teams and the schedule have arrived, and the phone line
+when a phone has really connected. That is deliberate, so the same list answers "what now?"
+tonight and "did that work?" on the Saturday morning.
+
+**The keys are saved in a `.env` file beside the hub**, never in the event database — so a key
+is not carried around in a database snapshot, and that one file is the whole of a hub's setup.
+Copy `.env` to a spare laptop, set the event key there, and you have a second hub. A hub set up
+by an older build keeps its keys in the database; it moves them into the file the next time it
+starts, and says so in the black window.
+
+**None of the API keys expire.** Set them once, at home, and the only thing that changes from
+one competition to the next is the event key. [setup.md](setup.md#set-once-or-set-every-event)
+has that as a table.
 
 There is **no password out of the box, and nothing generates one.** The panel opens read-only
 and you press **UNLOCK** at the top; with no password set, that is the whole of it.
@@ -104,9 +134,9 @@ On the **laptop itself**, open a browser and go to **http://localhost:6059/**
 **The page opens locked.** Press **UNLOCK** at the top before you can type into anything. It
 locks itself again after ten minutes and whenever the page is reloaded, because this laptop
 spends two days on a table with people around it and one stray keystroke in the event key box
-changes every screen in the building. If you want it to ask for a code as well as a click, set
-an **admin code** in the panel — and if your team ever forgets it, start the hub with
-`--clear-admin-code` on the laptop.
+changes every screen in the building. If you want it to ask for a password as well as a click,
+`python3 server/hub.py --set-admin-password` sets one — and the same command is the way back in
+when nobody can remember it.
 
 All of the keys are free. **Nexus is required** — see below. The rest are optional and the app
 runs without them, just with less live data.
@@ -332,7 +362,9 @@ Practice with a fake event before you are standing in a venue. See
    the network works for the whole event. If it does not, see
    [If phones cannot reach the hub](#if-phones-cannot-reach-the-hub) — do that now, not at
    match 1.
-4. **Check the event key is right** at http://localhost:6059/ — it changes every competition.
+4. **Change the event key** at http://localhost:6059/ — it is the one setting that changes every
+   competition. Nothing else needs touching: the API keys do not expire, and the panel's
+   checklist will tell you if one of them has stopped answering.
 5. **Put the rest of the phones on the same wifi.**
 6. **Open http://localhost:6059/join on the laptop screen.** It shows a big QR code.
 7. **Each scout points their normal camera at the QR** and taps the link that pops up. Not a
@@ -706,18 +738,23 @@ Friday.
 
 ```
 start-server.bat / .command   double-click these
+.env                          your API keys and the admin password — back this up, never share it
+.env.example                  what goes in that file, line by line
 server/                       the hub — Python, no dependencies to install
 web/                          what phones and laptops actually open
 mirror/                       the optional off-site copy — a separate website, run elsewhere
 design/                       the UI specification the screens were built to
-data/                         your event database — never share this, it holds your keys
+data/                         your event database — the scouting, and the salted passcode hashes
 data/snapshots/               automatic backups, newest is the one to restore from
 docs/features.md              what every screen and field does
 docs/how-it-works.md          why the tricky parts work the way they do
 ```
 
-`data/` is excluded from git on purpose: it holds your API keys, and the salted hashes of the
-strategy passcode and the admin code.
+`.env` and `data/` are both excluded from git on purpose. `.env` holds every API key and the
+admin password, and is the one file worth backing up: with it, setting up a replacement laptop
+is Python, this folder, and the event key. `data/` holds the event and the salted hashes of the
+strategy passcode — no keys, since they moved into `.env`, which is what makes a snapshot safe
+to hand to somebody.
 
 ## Two more documents
 

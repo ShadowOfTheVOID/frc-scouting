@@ -614,7 +614,7 @@ only.
 ### And on the mirror
 
 The off-site copy has its own two levels, and they are separate strings on purpose. The **push
-key** is the write key: the hub proves it is the hub, and it lives in one settings field on one
+key** is the write key: the hub proves it is the hub, and it lives in one line of `.env` on one
 laptop. The **view passcode** is what a person types to read the site, and it gets shared around
 a team over a weekend. If one string did both jobs, anyone it reached could overwrite the event.
 
@@ -654,8 +654,22 @@ it is in the phone's database, not the page. Tell scouts not to reload.
 
 ### Keys and settings
 
-Entered at `/` on the hub laptop. All keys are free. **Nexus is required** in practice — without
-it nothing arms the match screen and every scout opens each match by hand. The rest are optional.
+Entered at `/` on the hub laptop. All keys are free except the AI one. **Nexus is required** in
+practice — without it nothing arms the match screen and every scout opens each match by hand. The
+rest are optional and folded away on the page until they are wanted.
+
+**Where the keys live.** In `.env` beside the hub (`NEXUS_API_KEY`, `TBA_API_KEY`,
+`FRC_EVENTS_USER`, `FRC_EVENTS_TOKEN`, `NEXUS_WEBHOOK_TOKEN`, `LOVAT_API_KEY`, `AI_API_KEY`,
+`MIRROR_PUSH_KEY`), written there by the panel and never in the event database. That matters
+beyond tidiness: the database is snapshotted to `data/snapshots/` and handed around as a file,
+and a credential should not travel with an event. It also makes the file the whole of a hub's
+setup — copy `.env` to a spare laptop, set the event key, and that laptop is a hub. A hub built
+by an older build still has its keys in the database; `Hub.adopt_keys()` moves them into the file
+at startup, once, and drops the rows. A real environment variable always wins over the file, so a
+machine configured through systemd is never overridden by a checkout.
+
+**None of them expire.** No key here is per-event or per-season: the event key and the event level
+are the only settings a new competition needs.
 
 | Setting | What it does |
 |---|---|
@@ -673,8 +687,34 @@ it nothing arms the match screen and every scout opens each match by hand. The r
 | **OpenRouter** | The fourth group, and not a model-maker: one key and one bill in front of everybody else's models, including the open-weight ones nobody else sells. Its ids name the maker first — `anthropic/claude-opus-5` — and a slash in the id is the whole routing rule, so the same model bought direct and bought through OpenRouter stay two different choices with two different keys. The list shows three; **other** takes any of the hundreds it carries. Prices are the makers' own; OpenRouter takes its cut when the credit is bought. |
 | **AI key** | The key for whoever the model above goes to. A key from any of the others is refused here rather than saved: that mismatch has no symptom anywhere except every AI answer reading *the model could not be reached*. The pair worth naming is an `sk-or-` key under `claude-opus-5` rather than `anthropic/claude-opus-5` — the two read the same and only one of them takes it. |
 | **Mirror address** | Optional. The root of an off-site mirror, e.g. `https://systemoverload.org`. A trailing slash or a pasted `/api/push` is trimmed, and a bare hostname gets `https://`. Blank sends nothing anywhere. |
-| **Mirror push key** | Whatever `MIRROR_PUSH_KEY` is on that host. The write key, and not the passcode people type to read the site. |
+| **Mirror push key** | Whatever `MIRROR_PUSH_KEY` is on that host. The write key, and not the passcode people type to read the site. It is kept under that same name in the hub's `.env`, which is also the name the mirror itself reads — so a mirror tried out on one laptop needs the string in one place, not two. |
 | Statbotics | EPA. No key needed. |
+
+### The setup checklist
+
+The panel opens with **START HERE**: five steps in the order they are done — unlock, name the
+event, paste the Nexus key, press TEST KEYS, open it on a phone — and a short list of what can
+wait (the other keys, an AI model, an admin password, the mirror).
+
+Each line is ticked off from what the hub **holds**, not from a box having been typed into. The
+event line reads done when the teams and the schedule have actually arrived and says how many;
+the Nexus line when a key is stored; the TEST KEYS line from the verdicts of the last run against
+*this* event key, naming anything that came back wrong and refusing to count a test run against a
+different event; the phone line when a device has really connected, and while none has, it names
+the dismissed Windows firewall prompt, which is what it usually is.
+
+That is what makes one list serve two questions: "what now?" on the Friday night, and "did that
+actually work?" on the Saturday morning. The steps come from `Hub.setup_steps()` and are served
+inside `/api/config`, to the hub machine only — that route is also what every phone on the wifi
+uses as its "are you there?" probe, so the extra work is not done for them.
+
+Unlocking is the one step the page adds for itself, and it has to be that way round: whether the
+panel is open is a property of the browser tab, and a hub with no admin password would otherwise
+report every tab unlocked, including the locked one asking the question.
+
+The hub prints the same list in its own window on a first run, and opens the panel in a browser
+when no event key is set at all (`--no-browser` turns that off). Nothing is opened once the hub is
+configured: by then the panel is somewhere you go on purpose.
 
 ### The admin panel
 
@@ -775,10 +815,13 @@ Two more things on that page:
 
 ```
 python3 server/hub.py [--port 6059] [--db data/scouting.db] [--no-mdns] [--no-poll]
-                      [--allow-remote-config] [--set-admin-password]
+                      [--allow-remote-config] [--no-browser] [--set-admin-password]
 ```
 
-`--no-mdns` skips answering to `scout.local`. `--allow-remote-config` lets any device on the
+`--no-mdns` skips answering to `scout.local`. `--no-browser` stops a hub with no event key from
+opening the admin panel in a browser, which is otherwise the first thing a fresh one does — as
+does starting it with its output redirected, since a service or a CI runner has nobody in front
+of it. `--allow-remote-config` lets any device on the
 network change hub settings — off by default, and rarely what you want. `--set-admin-password`
 asks for a password twice, writes it into `.env`, and then carries on serving; it is how the
 password is set, changed, and — with a blank answer — removed.

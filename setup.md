@@ -11,7 +11,8 @@ For *why* any of this is the way it is, read the [README](README.md) and
 
 ## Part A — the hub laptop
 
-The one laptop that runs everything. About 20 minutes, once, at home.
+The one laptop that runs everything. Three things to do here; the hub tells you the rest as you
+go. About 20 minutes, once, at home.
 
 ### 1. Install Python 3
 
@@ -21,12 +22,10 @@ The one laptop that runs everything. About 20 minutes, once, at home.
 
 There is nothing else to install. No `pip`, no dependencies.
 
-### 2. Download the ZIP
+### 2. Download the ZIP and start it
 
 Green **Code** button → **Download ZIP**. Unzip it somewhere you will find again — the Desktop
 is fine. Keep the folder together; the server, the web pages and the mirror all live in it.
-
-### 3. Start it
 
 - **Windows** — double-click `start-server.bat`
 - **Mac** — double-click `start-server.command`
@@ -43,33 +42,81 @@ http://<laptop-ip>:6059/dashboard    strategy, on any device on the same wifi
 http://localhost:6059/               admin panel, this laptop only
 ```
 
-### 4. Let it through the firewall
+**On a hub that has never been set up, it opens the admin panel in your browser for you** and
+prints what is left to do in that black window. Once an event key is set it stops doing that —
+by then the panel is somewhere you go on purpose. `--no-browser` turns it off entirely, and so
+does starting the hub from a script rather than by double-clicking it.
 
-**Windows pops up a warning on the first run. Tick "Private networks" and click Allow.**
-Click Cancel and phones silently fail to connect, with no other symptom.
+**Windows pops up a firewall warning on this first run. Tick "Private networks" and click
+Allow.** Click Cancel and phones silently fail to connect, with no other symptom. It is the
+single most common problem, and the checklist below notices it for you: nothing ever connects.
 
-### 5. Set the event and the keys
+### 3. Work down the checklist on that page
 
-On the laptop itself open **http://localhost:6059/**. It opens read-only — press **UNLOCK**
-at the top. It re-locks after ten minutes and on every reload.
+The panel — **http://localhost:6059/** on this laptop, and nowhere else — opens with **START
+HERE** and five lines. Each one ticks itself off when the hub actually has the thing, so the
+same list answers "what now?" tonight and "did that work?" on the Saturday morning:
 
-Fill in the top three first: **EVENT KEY** (like `2026casf` — the code on frc.events or The
-Blue Alliance), **EVENT LEVEL**, and **OUR TEAM** (`6059`).
+| | | |
+|---|---|---|
+| 1 | **Unlock this panel** | It opens read-only. Press **UNLOCK**; it re-locks after ten minutes and on every reload. |
+| 2 | **Name the event** | **EVENT KEY** (`2026casf`, the code on frc.events or The Blue Alliance — a pasted event address works too), **EVENT LEVEL**, and **OUR TEAM**. |
+| 3 | **Paste the Nexus key** | Free, from [frc.nexus/api](https://frc.nexus/api). The one key worth stopping for — without it every scout taps **THEY'RE ON THE FIELD** by hand, six times an hour. |
+| 4 | **Press TEST KEYS** | After **SAVE & REFRESH**. It asks each vendor whether the key works, which is the only thing in the app that can tell a wrong key from a service with nothing to say yet. |
+| 5 | **Open it on a phone** | Same wifi, `http://<laptop-ip>:6059/scout` — or open `http://localhost:6059/join` here and let scouts scan the QR code. |
 
-| Box | Needed? | Costs | Get it at |
-|---|---|---|---|
-| **NEXUS** | **required** | free | [frc.nexus/api](https://frc.nexus/api) |
-| NEXUS WEBHOOK TOKEN | only with a webhook | free | same place, only if you register one |
-| THE BLUE ALLIANCE | optional | free | [thebluealliance.com/account](https://www.thebluealliance.com/account) |
-| FRC EVENTS USERNAME + TOKEN | optional | free | [frc-events.firstinspires.org](https://frc-events.firstinspires.org/services/API) |
-| LOVAT API KEY | optional | free | no page for it — a `curl`, see below |
-| AI MODEL + AI KEY | optional | cents per answer | Anthropic, Google, OpenAI or OpenRouter |
-| Statbotics | — | free | nothing to do, no key exists |
+Everything else — The Blue Alliance, FRC Events, Lovat, the AI model, the strategy passcode —
+is behind **THE OPTIONAL ONES** on the same page, folded away until you want it. A first event
+is fine without any of it. [Where each key comes from](#where-each-key-comes-from) is below.
+
+Three things about that page worth knowing before the Saturday:
+
+- The page takes the wrapping off a paste for you — a header name, quotes from a code sample, a
+  line break from an email — and shows you what will actually be saved. A key that belongs in a
+  different box is refused and told where to go. Nothing saves at all when one box is refused,
+  so fix that box and save again.
+- **Keys are saved in `.env` beside the hub**, never in the event database. That one file is the
+  whole backup: copy it to a spare laptop and that laptop is a hub. See
+  [`.env.example`](.env.example) for the line each key sits on if you would rather type them
+  there — a hand-edited file needs the hub restarted.
+- Changing the **event key** once the hub holds scouting is asked about twice. Nothing is ever
+  deleted — the old event comes back if you set its key again.
 
 Do all of this **at home**. A key that turns out to be wrong is not a thing you can replace on
 a Saturday morning.
 
-#### Getting each key
+### 4. Optionally, a password on the panel
+
+```
+python3 server/hub.py --set-admin-password
+```
+
+Asks twice, writes `ADMIN_PASSWORD_B64` into `.env` beside the hub, and carries on serving.
+That file is the only place it lives, the same command changes or removes it, and `.env` is
+in `.gitignore` — never commit it. Base64 is not encryption; keep the file off shared drives.
+
+No password set means **UNLOCK** is one button, which is a fine way to run an event.
+
+**That is the whole app.** Part B below is the mirror.
+
+---
+
+## Set once, or set every event?
+
+Short answer: **the keys are a once-ever job, the event key is the per-event one.**
+
+| | Changes when | |
+|---|---|---|
+| Every API key on this page | never — until you revoke it | No key here is per-event or per-season. Nexus, TBA, FRC Events, Lovat and the AI keys all keep working at the next competition and the next season. |
+| **EVENT KEY**, **EVENT LEVEL** | every competition | The one thing to change on the Friday. Two boxes, ten seconds. Old events stay in the database behind their own key. |
+| **OUR TEAM**, strategy passcode, admin password, mirror settings | when you decide to | Not touched by moving to a new event. |
+| The Lovat *browser token* | every 72 hours | Not a key and not stored anywhere — it is only used to mint the `lvt-` key once, and that key does not expire. |
+
+So: set the keys at home before your first event, back up `.env`, and at every event after that
+the setup is the event key and a phone check. A replacement laptop needs Python, the folder,
+`.env`, and the event key.
+
+## Where each key comes from
 
 **Nexus — the one you cannot skip.** It is what tells the hub a match has taken the field, and
 that is what arms the scouting screen on all six phones. Without it every scout taps
@@ -182,41 +229,14 @@ somebody presses a button. Leave the model on *none* and none of it appears.
 
 **Statbotics** needs no key and no account — EPA shows up beside your own numbers on its own.
 
-#### Then save and check
+**The strategy passcode** is not a key and no vendor issues it: you make it up, it gates the
+picklist and every AI answer, and blank means no lock. A space on the end is a lockout nobody
+ever finds, so it is trimmed for you. It is in **THE OPTIONAL ONES** with the rest.
 
-Paste into the box, press **SAVE & REFRESH**, then press **TEST KEYS**.
-
-- The page takes the wrapping off a paste for you — a header name, quotes from a code sample, a
-  line break from an email — and shows you what will actually be saved. A key that belongs in a
-  different box is refused and told where to go. Nothing saves at all when one box is refused,
-  so fix that box and save again.
-- **TEST KEYS asks each vendor whether the key works**, and reports each on its own line. `SET`
-  beside a box only ever meant that something is stored there. This is the only thing that tells
-  a wrong key apart from a service with nothing to say yet — at a competition those look
-  identical everywhere else, on purpose.
-- **STRATEGY PASSCODE** is optional and gates the picklist and every AI answer. Blank means no
-  lock; a space on the end is a lockout nobody ever finds, so it is trimmed for you.
-- Changing the **event key** once the hub holds scouting is asked about twice. Nothing is ever
-  deleted — the old event comes back if you set its key again.
-
-### 6. Optionally, a password on the panel
-
-```
-python3 server/hub.py --set-admin-password
-```
-
-Asks twice, writes `ADMIN_PASSWORD_B64` into `.env` beside the hub, and carries on serving.
-That file is the only place it lives, the same command changes or removes it, and `.env` is
-in `.gitignore` — never commit it. Base64 is not encryption; keep the file off shared drives.
-
-No password set means **UNLOCK** is one button, which is a fine way to run an event.
-
-### 7. Check it from a phone
-
-Same wifi, open `http://<laptop-ip>:6059/scout`. Or open `http://localhost:6059/join` on the
-laptop and let scouts scan the QR code.
-
-**That is the whole app.** Everything below is the mirror.
+**Where they are kept.** Every key above is written to `.env` beside the hub — one file, mode
+`0600`, in `.gitignore`, and never part of the event database or of anything the mirror is sent.
+A hub set up by an older build had them in its database; it moves them into the file the next
+time it starts and says so in the black window.
 
 ---
 
@@ -308,6 +328,11 @@ MIRROR_PUSH_KEY=test-key MIRROR_VIEW_PASSCODE=1234 python3 mirror/server.py
 
 Then point the hub at `http://localhost:8060` with push key `test-key`. Flags: `--port`,
 `--bind`, `--db`, `--behind-proxy`, and `--open` for no read passcode at all.
+
+Both sides read `MIRROR_PUSH_KEY`, so one line in `.env` is both halves — put
+`MIRROR_PUSH_KEY=test-key` in the file, start the mirror with only
+`MIRROR_VIEW_PASSCODE=1234`, and the hub already has the push key. Only the address still needs
+typing into the panel.
 
 ## Getting the event back
 
