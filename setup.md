@@ -30,9 +30,11 @@ is fine. Keep the folder together; the server, the web pages and the mirror all 
 - **Windows** — double-click `start-server.bat`
 - **Mac** — double-click `start-server.command`
 
-> **Mac, first run:** if it "cannot be opened", the ZIP stripped the execute bit. In Terminal
-> type `chmod +x ` (with the space), drag `start-server.command` into the window, press Enter.
-> Once, forever. Or skip it and run `python3 server/hub.py` from the folder.
+> **Mac, first run:** macOS may ask you to confirm an app from the internet — right-click the
+> file and choose **Open** the first time. If it says "cannot be opened" instead, the execute
+> bit did not survive the download: in Terminal type `chmod +x ` (with the space), drag
+> `start-server.command` into the window, press Enter. Once, forever. Or skip it and run
+> `python3 server/hub.py` from the folder.
 
 Leave the black window open — closing it stops the server. It prints the three addresses:
 
@@ -47,9 +49,12 @@ prints what is left to do in that black window. Once an event key is set it stop
 by then the panel is somewhere you go on purpose. `--no-browser` turns it off entirely, and so
 does starting the hub from a script rather than by double-clicking it.
 
-**Windows pops up a firewall warning on this first run. Tick "Private networks" and click
-Allow.** Click Cancel and phones silently fail to connect, with no other symptom. It is the
-single most common problem, and the checklist below notices it for you: nothing ever connects.
+**On Windows the hub asks, in that same black window, whether to allow phones through the
+firewall. Answer yes** — it adds one rule (this port, inbound, private networks only) and
+Windows asks you to confirm it. Windows may also show its own popup: tick **Private networks**
+and click Allow. Dismissing both is the single most common setup failure there is, and it is
+silent — the hub runs, this laptop's browser works, and every phone times out. The checklist
+below notices it for you: nothing ever connects.
 
 ### 3. Work down the checklist on that page
 
@@ -59,10 +64,10 @@ same list answers "what now?" tonight and "did that work?" on the Saturday morni
 
 | | | |
 |---|---|---|
-| 1 | **Unlock this panel** | It opens read-only. Press **UNLOCK**; it re-locks after ten minutes and on every reload. |
-| 2 | **Name the event** | **EVENT KEY** (`2026casf`, the code on frc.events or The Blue Alliance — a pasted event address works too), **EVENT LEVEL**, and **OUR TEAM**. |
+| 1 | **Unlock this panel** | Already done on a hub with nothing set up and no admin password — there is nothing to protect yet, so it opens itself. After that it opens read-only every time: press **UNLOCK**, and it re-locks after ten minutes and on every reload. |
+| 2 | **Name the event** | Type your team number into **OUR TEAM** and press **FIND MY EVENTS**. The hub looks up what you are registered for and fills in the key and the level. No API key needed for that — the list comes from Statbotics. Typing `2026casf` yourself still works. |
 | 3 | **Paste the Nexus key** | Free, from [frc.nexus/api](https://frc.nexus/api). The one key worth stopping for — without it every scout taps **THEY'RE ON THE FIELD** by hand, six times an hour. |
-| 4 | **Press TEST KEYS** | After **SAVE & REFRESH**. It asks each vendor whether the key works, which is the only thing in the app that can tell a wrong key from a service with nothing to say yet. |
+| 4 | **Press SAVE & REFRESH** | On a hub that has never had a passing key test, saving also tests: it asks each vendor whether the key really works and prints what each one said. **TEST KEYS** does it again any time. |
 | 5 | **Open it on a phone** | Same wifi, `http://<laptop-ip>:6059/scout` — or open `http://localhost:6059/join` here and let scouts scan the QR code. |
 
 Everything else — The Blue Alliance, FRC Events, Lovat, the AI model, the strategy passcode —
@@ -75,10 +80,12 @@ Three things about that page worth knowing before the Saturday:
   line break from an email — and shows you what will actually be saved. A key that belongs in a
   different box is refused and told where to go. Nothing saves at all when one box is refused,
   so fix that box and save again.
-- **Keys are saved in `.env` beside the hub**, never in the event database. That one file is the
-  whole backup: copy it to a spare laptop and that laptop is a hub. See
-  [`.env.example`](.env.example) for the line each key sits on if you would rather type them
-  there — a hand-edited file needs the hub restarted.
+- **Keys are saved in `.env` beside the hub**, base64-encoded and never in the event database.
+  That one file is the whole backup: copy it to a spare laptop and that laptop is a hub.
+  Encoding is not encryption — anyone holding the file can decode it in one command — it keeps a
+  key off the screen at a glance. You can still type a plain `NEXUS_API_KEY=` line in yourself
+  and the hub will encode it on its next start; [`.env.example`](.env.example) has the name each
+  key sits under, and a hand-edited file needs the hub restarted.
 - Changing the **event key** once the hub holds scouting is asked about twice. Nothing is ever
   deleted — the old event comes back if you set its key again.
 
@@ -144,9 +151,18 @@ boxes, because FIRST authenticates with a username *and* a token.
 
 1. Go to [frc-events.firstinspires.org/services/API](https://frc-events.firstinspires.org/services/API)
    and request an API key with your FIRST account.
-2. They send back a **username** and an **authorization token**.
+2. They send back a **username** and an **authorization token**. The username is the one you
+   chose; the token is a **UUID** — 8-4-4-4 hex digits and then 12, like
+   `1f0c8b3a-77d2-4a51-9d6e-3b0a5c9e4477`. Nothing else about it is meaningful, and it does not
+   expire. If yours does not look like that, you are probably holding the wrong half.
 3. Username into **FRC EVENTS USERNAME**, token into **FRC EVENTS TOKEN**. Do not paste the
    combined `Basic ...` blob into one box.
+
+   The `Basic` blob in their documentation is just those two joined and base64-encoded —
+   `base64("username:token")` — and it is the one thing the API actually sends. Paste that whole
+   blob, or a plain `username:token`, into the token box and the hub splits it and fills both.
+   The box warns you if the token is not UUID-shaped, but saves it anyway: shapes are advisory,
+   and only **TEST KEYS** knows whether FIRST accepts it.
 
 Skip this one and you still get every result — just when TBA posts it rather than a few minutes
 before.
@@ -233,10 +249,17 @@ somebody presses a button. Leave the model on *none* and none of it appears.
 picklist and every AI answer, and blank means no lock. A space on the end is a lockout nobody
 ever finds, so it is trimmed for you. It is in **THE OPTIONAL ONES** with the rest.
 
-**Where they are kept.** Every key above is written to `.env` beside the hub — one file, mode
-`0600`, in `.gitignore`, and never part of the event database or of anything the mirror is sent.
-A hub set up by an older build had them in its database; it moves them into the file the next
-time it starts and says so in the black window.
+**Where they are kept.** Every key above is written to `.env` beside the hub, base64-encoded on
+a `_B64` line — one file, mode `0600`, in `.gitignore`, and never part of the event database or
+of anything the mirror is sent. Encoding is not encryption and nothing here pretends it is:
+anyone holding the file decodes it in one command. It keeps a key from being legible over a
+shoulder, on a projector, or in a screenshot, which is the same reason the admin password has
+always been kept that way.
+
+A hub set up by an older build had its keys in the database, or on plain lines; it tidies both
+into the encoded form the next time it starts and says so in the black window. A plain line you
+type in yourself keeps working until then, and a `_B64` line that will not decode is called out
+by name on the panel rather than being sent to a vendor as mangled bytes.
 
 ---
 
@@ -344,9 +367,11 @@ anything already there, so it is safe to run twice. The mirror keeps the last 60
 
 | What you see | What to do |
 |---|---|
-| Phones cannot reach the hub | the Windows firewall prompt was dismissed — allow it on Private networks |
+| Phones cannot reach the hub | a firewall prompt was dismissed. Restart the hub and answer yes when it offers to add the rule, or run: `netsh advfirewall firewall add rule name=FRC-Scouting-Hub dir=in action=allow protocol=TCP localport=6059 profile=private` in an Administrator Command Prompt |
 | Admin panel refuses to open on a phone | on purpose; keys are set on the hub laptop only |
 | Panel stays locked and complains about `.env` | a typo in `ADMIN_PASSWORD_B64` — re-run `--set-admin-password` |
+| A key box says SAVED but the panel says the line cannot be read | a `_B64` line was hand-edited into something that is not base64. Paste the key into the box again, or write it as a plain `NEXUS_API_KEY=` line and restart |
+| **FIND MY EVENTS** comes back with nothing | no internet on the laptop, or the schedule is not published yet. Type the event key in by hand |
 | `could not be reached` on the mirror line | laptop has no internet, or the address is wrong |
 | `rejected the push key` | `systemctl show frc-mirror -p Environment` on the host |
 | Mirror header amber / red | nothing has arrived for 5 minutes / an hour — everything on screen is that old |

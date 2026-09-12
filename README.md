@@ -39,9 +39,10 @@ somewhere you will find again — the Desktop is fine.
 - **Windows** — open the unzipped folder and double-click **`start-server.bat`**
 - **Mac** — open the unzipped folder and double-click **`start-server.command`**
 
-> **Mac, first time: "cannot be opened" or nothing happens?** Downloading a ZIP strips the
-> permission that lets a file be double-clicked. Fix it once and it works forever after:
-> open the **Terminal** app, type `chmod +x ` (with the space), then **drag the
+> **Mac, first time.** macOS may ask you to confirm an app downloaded from the internet:
+> right-click `start-server.command` and choose **Open**, once. If instead it says "cannot be
+> opened", the permission that lets a file be double-clicked did not survive the download — open
+> the **Terminal** app, type `chmod +x ` (with the space), then **drag the
 > `start-server.command` file into the Terminal window** and press Enter. Now double-click it.
 >
 > If you would rather skip that entirely, you can always start it by dragging the *folder* into
@@ -67,9 +68,12 @@ and lists what is left to do in that window — the same checklist the panel lea
 event key is set it stops doing that, because by then the panel is somewhere you go on purpose;
 `--no-browser` turns it off for good.
 
-> **Windows will pop up a firewall warning the first time.** Tick **Private networks** and click
-> **Allow access**. If you click Cancel, phones will not be able to connect and there is no
-> other symptom — it just silently does not work. This is the single most common problem.
+> **Windows: the firewall.** On the first run the hub asks, in that same black window, whether
+> to let phones through — say yes, and click **Yes** on the confirmation Windows shows. It adds
+> exactly one rule: this port, inbound, private networks only. Windows may also pop up its own
+> warning; tick **Private networks** and click **Allow access**. Dismiss both and phones will not
+> be able to connect, with no other symptom — it just silently does not work. This is the single
+> most common problem, which is why the hub now asks rather than hoping you saw the popup.
 
 ### 4. Work down the checklist on the admin panel
 
@@ -80,23 +84,36 @@ passcode, and the off-site mirror.
 
 It opens with **START HERE** and five lines, in the order to do them:
 
-1. **Unlock this panel** — it opens read-only; press **UNLOCK**.
-2. **Name the event** — the event key, the level, and your team number.
+1. **Unlock this panel** — and on a hub with nothing set up and no admin password, it has
+   already unlocked itself: there is nothing to protect yet. Every run after that opens
+   read-only, because that is when a stray keystroke costs something.
+2. **Name the event** — put your team number in **OUR TEAM** and press **FIND MY EVENTS**. The
+   hub looks up the events you are registered for and fills in the key and the level, so nobody
+   has to know that Bay Area Regional is `2026casf`. It needs no API key to do that. Typing the
+   key in yourself still works.
 3. **Paste the Nexus key** — the one that matters, and the only one in front of you to start
    with. The other seven boxes are folded away under **THE OPTIONAL ONES**.
-4. **Press TEST KEYS** — after **SAVE & REFRESH**.
-5. **Open it on a phone** — which is also how you find out the firewall prompt was dismissed.
+4. **Press SAVE & REFRESH** — which, while this hub has never had a passing key test, also asks
+   every vendor whether its key works and prints what each one said. **TEST KEYS** repeats that
+   whenever you want it.
+5. **Open it on a phone** — which is also how you find out a firewall prompt was dismissed.
 
 Every line ticks itself off from what the hub actually holds, not from a box having been typed
 into: the event line reads done when the teams and the schedule have arrived, and the phone line
 when a phone has really connected. That is deliberate, so the same list answers "what now?"
 tonight and "did that work?" on the Saturday morning.
 
-**The keys are saved in a `.env` file beside the hub**, never in the event database — so a key
-is not carried around in a database snapshot, and that one file is the whole of a hub's setup.
-Copy `.env` to a spare laptop, set the event key there, and you have a second hub. A hub set up
-by an older build keeps its keys in the database; it moves them into the file the next time it
-starts, and says so in the black window.
+**The keys are saved in a `.env` file beside the hub**, base64-encoded and never in the event
+database — so a key is not carried around in a database snapshot, and that one file is the whole
+of a hub's setup. Copy `.env` to a spare laptop, set the event key there, and you have a second
+hub. A hub set up by an older build keeps its keys in the database, or on plain lines; it tidies
+both into the encoded form the next time it starts, and says so in the black window.
+
+> **Base64 is not encryption**, here or on the admin password. Anybody who can read that file can
+> decode every line in it with one command. What it buys is that a key is not legible over a
+> shoulder or on a projector, and that the file can be shown to somebody helping without eight
+> secrets being read off it at a glance. The permissions (`0600`) and keeping it off shared
+> drives are what actually protect it.
 
 **None of the API keys expire.** Set them once, at home, and the only thing that changes from
 one competition to the next is the event key. [setup.md](setup.md#set-once-or-set-every-event)

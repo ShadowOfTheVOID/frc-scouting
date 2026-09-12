@@ -63,14 +63,64 @@ KEYS = {
 }
 
 
+#: What the hub writes: `NEXUS_API_KEY_B64`, holding base64 of the key, the same
+#: shape and the same suffix as the admin password above.  The plain name is
+#: still read - see `key()` - because a hand-typed line and a systemd
+#: `Environment=` are both real ways a key arrives.
+B64 = "_B64"
+
+
+def encoded_name(field):
+    return KEYS[field] + B64
+
+
 def key(field):
     """One credential, out of the environment.  `""` when it is not set.
+
+    Two lines can hold it and both are read, encoded first: `NEXUS_API_KEY_B64`
+    is what the admin panel writes, and plain `NEXUS_API_KEY` is what somebody
+    typed into the file by hand or what a systemd unit sets on a mirror host.
+    A plain one is not second-class - it works, and the hub re-writes it in the
+    encoded form the next time it starts.
+
+    A `_B64` line that will not decode returns nothing rather than garbage: a
+    key made of mangled bytes reads to every vendor as a wrong key, and to
+    everybody here as a wrong key that was typed correctly.  `problems()` is
+    what says so out loud.
 
     Trimmed, because a key in a hand-edited file picks up a trailing space about
     as often as one pasted into a box, and the symptom is identical: a vendor
     that answers 401 all weekend for no visible reason.
     """
+    raw = (os.environ.get(encoded_name(field)) or "").strip()
+    if raw:
+        return decode(raw) or ""
     return (os.environ.get(KEYS[field]) or "").strip()
+
+
+def decode(raw):
+    """base64 back to text, or None if it is not base64 of text."""
+    try:
+        return base64.b64decode(raw, validate=True).decode("utf-8").strip() or None
+    except (binascii.Error, UnicodeDecodeError, ValueError):
+        return None
+
+
+def problems():
+    """`{field: what is wrong}` for every credential line that cannot be read.
+
+    A key that is present and unreadable is the worst of the three states: the
+    panel would say SET, every vendor would say no, and nothing anywhere would
+    connect the two.  So it is named, on the panel and in the hub's window.
+    """
+    out = {}
+    for field in KEYS:
+        raw = (os.environ.get(encoded_name(field)) or "").strip()
+        if raw and decode(raw) is None:
+            out[field] = (f"{encoded_name(field)} in .env is not valid base64, so this key "
+                          "cannot be read at all. Paste the key into the box again, or write it "
+                          f"as a plain {KEYS[field]}= line and the hub will encode it.")
+    return out
 
 
 _LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$")
@@ -194,6 +244,10 @@ def write_many(values, path=PATH):
             out.append("")                   # one blank line before the new block, not eight
         added = True
         out.append(f"{name}={value}")
+    # Leading blanks are what a removed line leaves behind, and they accumulate:
+    # a file that starts with two empty lines reads as a file somebody gave up on.
+    while out and not out[0].strip():
+        out.pop(0)
     text = "\n".join(out).rstrip("\n") + "\n"
     # 0600 from the moment it exists: this file is the password.
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

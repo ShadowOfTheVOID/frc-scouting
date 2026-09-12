@@ -36,6 +36,7 @@ import ai
 import analytics
 import discover
 import envfile
+import firewall
 import keys as keyhygiene
 import lovat as lovat_report
 import offsite
@@ -51,6 +52,11 @@ WEB_ROOT = os.path.abspath(WEB_ROOT)
 # and it is not a port some other tool on a borrowed laptop is likely to have
 # taken already. --port still overrides it, and web/js/net.js has to agree.
 PORT = 6059
+
+# The season this build is for. Only ever a default: everything that matters
+# reads the year out of the event key itself, so a hub pointed at 2027casf keeps
+# working. It is what the event picker asks about when nothing is set yet.
+SEASON = 2026
 
 # One nonce per run of the process, mixed into every ETag. The store's write
 # counters live in memory and start again from zero, so without this a phone
@@ -266,8 +272,17 @@ class Hub:
     def save_keys(self, values):
         """Write credentials to `.env`, and take them out of the database.
 
+        Written base64-encoded, on a `_B64` line, the same shape the admin
+        password has always had. **That is not encryption** and nothing here
+        pretends otherwise - anyone holding the file can decode it in one
+        command. What it buys is that a key is not legible over a shoulder or on
+        a projector, and that the file can be shown to somebody helping without
+        eight secrets being read off it at a glance. The permissions (`0600`) are
+        what actually protect it.
+
         `""` (the FORGET button, or a box deliberately cleared) removes the line
-        rather than blanking it. `os.environ` is updated in the same breath: this
+        rather than blanking it, and the plain-named line goes with it either
+        way: one key, one home. `os.environ` is updated in the same breath - this
         hub is serving an event, and a key that only takes effect after a restart
         is a key that did not work when it was pasted.
         """
@@ -277,13 +292,18 @@ class Hub:
         fields = [f for f in envfile.KEYS if f in values]
         lines, gone = {}, []
         for field in fields:
-            name = envfile.KEYS[field]
+            plain, coded = envfile.KEYS[field], envfile.encoded_name(field)
             value = (values[field] or "").strip()
-            lines[name] = value or None
+            # The plain line always goes: it is either being replaced by the
+            # encoded one, or being forgotten. Two lines for one key is a key
+            # that changes depending on which one the reader wins with.
+            lines[plain] = None
+            lines[coded] = envfile.encode(value) if value else None
+            os.environ.pop(plain, None)
             if value:
-                os.environ[name] = value
+                os.environ[coded] = envfile.encode(value)
             else:
-                os.environ.pop(name, None)
+                os.environ.pop(coded, None)
                 gone.append(field)
         if not fields:
             return self.env_path
@@ -296,29 +316,38 @@ class Hub:
             self.note("info", "forgotten: " + ", ".join(sorted(gone)))
         return self.env_path
 
-    def adopt_keys(self):
-        """Move any key still in the database into `.env`.  Returns the fields.
+    def adopt_keys(self, from_file=None):
+        """Put every key in one place, in one form.  Returns the fields it moved.
 
-        A one-way migration, run at startup, for the hubs that were set up when
-        keys were settings rows. It is not only tidiness: those rows are in every
-        snapshot under `data/snapshots/` and in any copy of the `.db` file that
-        gets sent to a mentor to look at, and this is what gets them out.
+        Run once at startup, and it tidies two kinds of history:
 
-        A value already in the environment wins and the row is simply dropped -
-        a machine that is explicit about a key does not get overruled by a
-        database that is older than the file.
+        * **A key in the database**, from a hub set up before they moved to the
+          file. Not only untidy: those rows are in every snapshot under
+          `data/snapshots/` and in any copy of the `.db` sent to a mentor to look
+          at, and this is what gets them out.
+        * **A plain `NEXUS_API_KEY=` line in `.env`**, typed there by hand, which
+          is a perfectly good way to set one - it is rewritten in the encoded
+          form so the file ends up consistent with itself.
+
+        `from_file` is what `envfile.load()` said the file set, and it is the
+        difference between those two: a plain variable that came from the
+        *machine* (a systemd unit, a one-off on the command line) is left exactly
+        as it is. Copying that into a checked-out file would be the hub deciding
+        to persist something the machine deliberately kept outside it.
         """
+        from_file = from_file or {}
         moved = []
         for field in envfile.KEYS:
+            plain = envfile.KEYS[field]
             row = self.store.get(field)
-            if not (isinstance(row, str) and row.strip()):
-                self.store.forget(field)        # an empty row is nothing to keep
+            if isinstance(row, str) and row.strip() and not envfile.key(field):
+                self.save_keys({field: row})
+                moved.append(field)
                 continue
-            if envfile.key(field):
-                self.store.forget(field)
-                continue
-            self.save_keys({field: row})
-            moved.append(field)
+            self.store.forget(field)            # an empty row, or one now beaten
+            if plain in from_file and not (os.environ.get(envfile.encoded_name(field)) or ""):
+                self.save_keys({field: from_file[plain]})
+                moved.append(field)
         return moved
 
     def event_key(self):
@@ -402,6 +431,38 @@ class Hub:
                                    "states": {n: v["state"] for n, v in out.items()}})
         return {"eventKey": ek, "at": time.time(), "checked": out}
 
+    def find_events(self, team, year=None):
+        """The events one team is registered for, for the setup page's picker.
+
+        The event key is the only thing in setup that cannot be looked up in the
+        room: it is not on the pit map, it is not on the schedule taped to the
+        wall, and `2026casf` is not guessable from "Bay Area Regional". So the
+        hub goes and gets the list.
+
+        Statbotics first because it needs no key, which is the whole point - this
+        runs on a hub that has just been unzipped. The Blue Alliance is the
+        fallback for a hub that already has that key, and is authoritative when
+        it answers.  Neither answering is a normal outcome (no internet at home
+        is common), and the box stays typeable throughout.
+        """
+        team = _int(team)
+        if not team:
+            return {"events": [], "problem": "a team number is needed"}
+        year = int(year or SEASON)
+        rows = self.statbotics.events_for_team(team, year)
+        out = _events_from(rows, ("event", "key"), ("event_name", "name"))
+        if out:
+            return {"events": out, "source": "statbotics"}
+        tba = self.tba()
+        if tba.ok:
+            out = _events_from(tba.events_for_team(team, year), ("key",), ("name",))
+            if out:
+                return {"events": out, "source": "tba"}
+        return {"events": [], "problem":
+                f"nothing came back for team {team} in {year}. Either the schedule is not "
+                "published yet, or this laptop is offline - the event key can always be typed "
+                "in by hand."}
+
     # --------------------------------------------------------------- setup
     #
     # What is left to do, in the order to do it. Everything below is read from
@@ -446,10 +507,11 @@ class Hub:
         steps = []
         if not ek:
             steps.append(step("event", "Name the event", False,
+                              "Type your team number into OUR TEAM and press FIND MY EVENTS: "
+                              "the hub looks up what you are registered for and fills the key "
+                              "and the level in. It needs no API key for that. Failing that, "
                               "EVENT KEY is the code on frc.events or The Blue Alliance, like "
-                              "2026casf - paste the whole event address if that is what you "
-                              "have. EVENT LEVEL sets the fuel target. OUR TEAM is optional "
-                              "and highlights you in every table."))
+                              "2026casf - a pasted event address works too."))
         elif counts["teams"]:
             steps.append(step("event", "Name the event", True,
                               f"{ek} - {many(counts['teams'], 'team')} and "
@@ -516,6 +578,10 @@ class Hub:
                 # than the docs having to. Local-only, like the rest of this
                 # block.
                 "envPath": self.env_path,
+                # A key that is present and unreadable: the panel would say
+                # SET, every vendor would say no, and nothing would connect the
+                # two. Named here so both places can say it.
+                "keyProblems": envfile.problems(),
                 # Nothing set at all: the panel leads with the checklist and
                 # keeps the optional keys folded away until it is worked through.
                 "firstRun": not ek or not nexus_set,
@@ -2118,6 +2184,89 @@ def _nested(d, *path):
     return d
 
 
+def _events_from(rows, key_names, name_names):
+    """Somebody else's event list, as `{key, name, week, start, where, level}`.
+
+    Two APIs with two shapes and neither one ours: Statbotics calls the key
+    `event` and The Blue Alliance calls it `key`, and either can add a field or
+    rename one without telling us. So this takes the names it knows, keeps only
+    rows that have a usable key, and drops anything it cannot read rather than
+    raising in front of somebody who is trying to set a hub up.
+    """
+    out = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        pick = lambda names: next((row[n] for n in names
+                                   if isinstance(row.get(n), str) and row[n].strip()), None)
+        key = (pick(key_names) or "").strip().lower()
+        if not key or not key[:4].isdigit():
+            continue
+        where = ", ".join(str(row[f]) for f in ("city", "state_prov", "state", "country")
+                          if isinstance(row.get(f), str) and row[f].strip())
+        week = row.get("week")
+        out.append({
+            "key": key,
+            "name": pick(name_names) or key,
+            "week": week if isinstance(week, int) else None,
+            # Both APIs date an event, under different names, and either may be
+            # missing - which is why the sort below falls back to the key. One
+            # of them dates it as an epoch, so everything becomes YYYY-MM-DD or
+            # the two sort against each other as strings and interleave.
+            "start": _event_date(row),
+            "where": where,
+            "level": _event_level(row),
+        })
+    out.sort(key=lambda e: (e["start"] or "", e["week"] if e["week"] is not None else 99,
+                            e["key"]))
+    # One row per event: a team-events list is already one row per event, but a
+    # source that ever changes its mind about that must not double the list.
+    seen, unique = set(), []
+    for e in out:
+        if e["key"] not in seen:
+            seen.add(e["key"])
+            unique.append(e)
+    return unique
+
+
+def _event_date(row):
+    """`YYYY-MM-DD` for an event row, or `""`.  Epochs and ISO strings both."""
+    for field in ("start_date", "start", "time"):
+        v = row.get(field)
+        if isinstance(v, str) and v.strip():
+            return v.strip()[:10]
+        if isinstance(v, (int, float)) and v > 0:
+            try:
+                return time.strftime("%Y-%m-%d", time.localtime(v))
+            except (OverflowError, ValueError, OSError):
+                return ""
+    return ""
+
+
+def _event_level(row):
+    """`regional` / `dcmp` / `champs` out of whatever the source calls the type.
+
+    It only sets the dropdown's starting position - the fuel target the solver
+    uses comes from what is saved, and that is still a box somebody can change.
+    Guessing wrong is a wrong number on one screen; not guessing at all is a
+    lead who never knew there was a choice.
+    """
+    kind = row.get("event_type") if isinstance(row.get("event_type"), int) else row.get("type")
+    text = " ".join(str(row.get(f) or "") for f in ("type", "event_type_string", "name",
+                                                    "event_name")).lower()
+    # TBA numbers its types: 3 is district championship, 4 championship division,
+    # 5 championship final, 2 district championship division.
+    if kind in (3, 2) or "district championship" in text or "district cmp" in text:
+        return "dcmp"
+    if kind in (4, 5) or "einstein" in text or "world championship" in text:
+        return "champs"
+    if isinstance(kind, str) and kind.lower() in ("district_cmp", "district_cmp_division"):
+        return "dcmp"
+    if isinstance(kind, str) and kind.lower() in ("champs", "cmp_division", "cmp_finals"):
+        return "champs"
+    return "regional"
+
+
 def _split_event_key(ek):
     """'2026casf' -> ('2026', 'casf').  FRC Events takes the two separately."""
     ek = str(ek or "")
@@ -2654,6 +2803,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._csv(f"{ek}-{table}.csv", header, rows)
         if p == "/picklist/print":
             return self._file("picklist_print.html")
+        if p == "/api/eventsfor":
+            # The setup page's, so the same boundary as the rest of it: the hub
+            # machine, and past the lock. It reaches out to the internet, which
+            # is not something anything on the venue wifi gets to make it do.
+            if not (self._is_local() or Handler.allow_remote_config):
+                return self._json({"error": "The event picker is on the hub machine."}, 403)
+            if not self._admin_ok():
+                return self._locked_out()
+            return self._json(h.find_events((q.get("team") or [""])[0],
+                                            (q.get("year") or [None])[0]))
         if p == "/api/discover":
             return self._json({"urls": discover.urls(self.server.server_address[1])})
         return self._file(p)
@@ -3238,7 +3397,7 @@ def main():
     # still has them in its database, and this is the one-way trip out - done
     # here, before anything is served, so there is never a window where a key is
     # in both places.
-    moved = hub.adopt_keys()
+    moved = hub.adopt_keys(from_file)
     if moved:
         hub.note("info", "moved %d api key(s) out of the database and into .env" % len(moved))
     # Catch up on anything solved-but-not-stored before we start serving, so the
@@ -3289,8 +3448,10 @@ def main():
                              if held else "none set yet. They go in .env, from the admin panel, "
                              "and last for\n             every event until you revoke them."))
     if moved:
-        print("             (%d just moved there out of the database, where older builds "
-              "kept them)" % len(moved))
+        print("             (%d just tidied into it - out of the database where older builds "
+              "kept them,\n              or off a plain line typed in by hand)" % len(moved))
+    for field, why in envfile.problems().items():
+        print(f"  !! {why}")
     print()
 
     # What to do next, in this window, on the run where it matters. A hub with
@@ -3319,6 +3480,10 @@ def main():
               else "  Still to do: " + "; ".join(undone)
                    + f"\n         on  http://localhost:{args.port}/")
         print()
+    # Windows only, and only with somebody in front of it: the one prompt that
+    # decides whether phones can reach this laptop at all. See server/firewall.py.
+    firewall.offer(store, args.port)
+
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

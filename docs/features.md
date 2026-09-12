@@ -663,10 +663,24 @@ rest are optional and folded away on the page until they are wanted.
 `MIRROR_PUSH_KEY`), written there by the panel and never in the event database. That matters
 beyond tidiness: the database is snapshotted to `data/snapshots/` and handed around as a file,
 and a credential should not travel with an event. It also makes the file the whole of a hub's
-setup — copy `.env` to a spare laptop, set the event key, and that laptop is a hub. A hub built
-by an older build still has its keys in the database; `Hub.adopt_keys()` moves them into the file
-at startup, once, and drops the rows. A real environment variable always wins over the file, so a
-machine configured through systemd is never overridden by a checkout.
+setup — copy `.env` to a spare laptop, set the event key, and that laptop is a hub.
+
+**And in what form.** Base64, on a `_B64` line (`NEXUS_API_KEY_B64=…`), the same shape the admin
+password has always had — and, as there, **not encryption**: one command decodes it, and the
+docs say so rather than implying otherwise. It buys legibility, not secrecy: a key is not
+readable over a shoulder, on a projector, or in a screenshot of the file, and the file can be
+shown to somebody helping without eight secrets coming with it. `0600` and the file being yours
+are the actual protection.
+
+Both names are read, encoded first, because there are three real ways a key arrives: pasted into
+the panel (encoded), typed into the file by hand (plain), or set by the machine through a systemd
+unit or a one-off `NEXUS_API_KEY=… python3 server/hub.py` (plain). `Hub.adopt_keys()` runs once at
+startup and tidies the first two into the encoded form — a settings row from an older build, or a
+plain line that came out of the file — and deliberately leaves the third alone: copying a variable
+the machine kept outside the checkout *into* the checkout is not the hub's call. A `_B64` line
+that will not decode is reported by name, on the panel and in the hub's window, rather than being
+sent to a vendor as mangled bytes: present-but-unreadable is the one state where the box says
+SAVED and every vendor says no.
 
 **None of them expire.** No key here is per-event or per-season: the event key and the event level
 are the only settings a new competition needs.
@@ -681,7 +695,7 @@ are the only settings a new competition needs.
 | **The Blue Alliance** | Official results, per-robot climb, rankings, OPR. The fuel solver's only source. |
 | **Nexus** — required | Live queueing and match status, pit map, pit addresses, inspection, alliance selection. Its `On field` is what arms the match screen on the phones; without it every scout has to tap **THEY'RE ON THE FIELD** by hand, six times an hour. |
 | **Nexus webhook token** | Only if you registered a push webhook. |
-| **FRC Events** | The official result a few minutes before TBA posts it. Does not feed the solver. A username and a token, and pasting the joined `username:token` — or the base64 `Basic` blob out of their documentation — into the token box fills in both. |
+| **FRC Events** | The official result a few minutes before TBA posts it. Does not feed the solver. A username and a token: the token is a UUID (`8-4-4-4-12` hex digits) and does not expire, and the box warns — never refuses — when what was pasted is not that shape. Pasting the joined `username:token`, or the base64 `Basic` blob out of their documentation, fills in both boxes: that blob is only `base64("username:token")`, which is what the API actually sends. |
 | **Lovat API key** | Other teams' scouting for this event. It starts `lvt-`, and there is no screen anywhere in Lovat that makes one — the endpoints are on their server and nothing in their own apps calls them, so it is a `POST /v1/manager/apikey` carrying the `Authorization` header off a signed-in dashboard request (setup.md has the steps). Your team email has to be verified on Lovat first, which is what their 403 means. Polled once every five minutes — Lovat allows one request every three seconds per key, so the hub stays well inside it. The export is scoped to what your Lovat account is allowed to see, so a short list is a setting on their side, not a failure on ours. |
 | **AI model** | One list, grouped Claude / Gemini / OpenAI / OpenRouter, each option priced per million tokens. Picking a model picks who it is sent to, so there is no provider field to get wrong. Starts on **Claude Opus 5**, so pasting a key is enough — you never have to touch the list. *none* turns the three panels below off entirely, and stays off even with a key in the box. **other** takes a typed model id for anything released after this list was written; the name decides where it is sent. |
 | **OpenRouter** | The fourth group, and not a model-maker: one key and one bill in front of everybody else's models, including the open-weight ones nobody else sells. Its ids name the maker first — `anthropic/claude-opus-5` — and a slash in the id is the whole routing rule, so the same model bought direct and bought through OpenRouter stay two different choices with two different keys. The list shows three; **other** takes any of the hundreds it carries. Prices are the makers' own; OpenRouter takes its cut when the credit is bought. |
@@ -689,6 +703,22 @@ are the only settings a new competition needs.
 | **Mirror address** | Optional. The root of an off-site mirror, e.g. `https://systemoverload.org`. A trailing slash or a pasted `/api/push` is trimmed, and a bare hostname gets `https://`. Blank sends nothing anywhere. |
 | **Mirror push key** | Whatever `MIRROR_PUSH_KEY` is on that host. The write key, and not the passcode people type to read the site. It is kept under that same name in the hub's `.env`, which is also the name the mirror itself reads — so a mirror tried out on one laptop needs the string in one place, not two. |
 | Statbotics | EPA. No key needed. |
+
+### Finding the event key
+
+The event key is the only thing in setup that cannot be answered from the room: `2026casf` is not
+on the pit map and is not guessable from "Bay Area Regional". So **FIND MY EVENTS**, beside the
+team number, fetches the events that team is registered for and fills in the key — and the fuel
+level, guessed from the kind of event it is.
+
+It asks **Statbotics** first, which needs no key at all; that is the whole point, because this
+runs on a hub that has just been unzipped and has nothing configured. **The Blue Alliance** is
+the fallback for a hub that already has that key, and is authoritative when it answers. Two APIs
+with two shapes and neither one ours, so `_events_from()` takes the field names each uses, keeps
+only rows with a usable key and drops the rest rather than raising in front of somebody who is
+trying to set a hub up. Neither answering is an ordinary outcome — no internet at home is common
+— and the box below stays a plain text box throughout: this is a shortcut past a lookup, not a
+new way of doing it, and it must not become the only way when an event is too new to be listed.
 
 ### The setup checklist
 
@@ -715,6 +745,31 @@ report every tab unlocked, including the locked one asking the question.
 The hub prints the same list in its own window on a first run, and opens the panel in a browser
 when no event key is set at all (`--no-browser` turns that off). Nothing is opened once the hub is
 configured: by then the panel is somewhere you go on purpose.
+
+Two steps take themselves. **The panel unlocks itself** on a hub with no event key and no admin
+password — the lock is there to stop an accident on a *configured* hub, and there is nothing yet
+to have an accident with; every run after that opens read-only as before. And **saving tests**,
+while no key test has ever passed on this hub: the step that gets skipped is the one that catches
+a wrong key, and the morning it is discovered is the one morning it cannot be replaced. Once a
+test has passed, saving stops testing — five vendors over the network is not something to do on
+every save.
+
+### Windows, and the firewall
+
+Windows blocks inbound connections to a new program, asks about it in a popup that opens behind
+the black window, and treats a dismissal as a no. That answer is silent in the worst way: the hub
+runs, the admin panel works, the laptop's own browser works, and every phone in the building
+times out with nothing on any screen to say why. It has been this app's most common setup
+failure.
+
+So on Windows, with somebody actually in front of it, the hub asks in the window they are already
+looking at, and adds one rule through an elevation prompt: inbound, TCP, this port, **private
+networks only** — a venue network is private to Windows, a coffee shop is not. A "no" is
+remembered so it is not asked again; the rule existing is itself the memory of a "yes"; and every
+path through `server/firewall.py`, including a UAC prompt that gets refused and a laptop where
+the account cannot elevate at all, ends with the hub starting and the one-line `netsh` command
+printed. It never runs on macOS or Linux, and never when stdin is not a terminal — a service or a
+CI runner has nobody to answer it.
 
 ### The admin panel
 

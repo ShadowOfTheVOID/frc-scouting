@@ -77,6 +77,9 @@
   details.more[open]>summary::before{content:"▾ "}
   details.more>summary:hover{color:var(--t1)}
   details.more .form{margin-top:14px}
+  /* A box and the button that acts on it, on one line. */
+  .pair{display:flex;gap:8px}
+  .pair input{flex:1;min-width:0}
 </style>
 </head>
 <body>
@@ -128,6 +131,19 @@
     <div class="pane mid">
       <div class="eyebrow">EVENT</div>
       <div class="form">
+        <div class="f"><label>OUR TEAM</label>
+          <div class="pair">
+            <input id="ourTeam" inputmode="numeric" placeholder="6059">
+            <button class="go" id="findEvents" style="background:var(--btn);white-space:nowrap">FIND MY EVENTS</button>
+          </div>
+          <div class="h">Highlights us in every table — and finds the event key below, so
+            there is nothing to look up. Needs no API key: the list comes from Statbotics, and
+            from The Blue Alliance if you have set that key.</div>
+          <div class="say" id="findSay"></div></div>
+        <div class="f hide" id="eventPickRow"><label>PICK THE EVENT</label>
+          <select id="eventPick"></select>
+          <div class="h">Fills in the key and the level below. Everything after this is one
+            press of SAVE.</div></div>
         <div class="f" data-key="eventKey"><label>EVENT KEY</label>
           <input id="eventKey" placeholder="2026casf" autocapitalize="off" autocorrect="off" spellcheck="false">
           <div class="h">As shown on frc.events or The Blue Alliance. Nexus uses the same key.
@@ -140,9 +156,6 @@
             <option value="dcmp">District Championship — 240</option>
             <option value="champs">FIRST Championship — 360</option>
           </select></div>
-        <div class="f"><label>OUR TEAM</label>
-          <input id="ourTeam" inputmode="numeric" placeholder="6059">
-          <div class="h">Optional. Highlights us in every table.</div></div>
         <div class="hide" id="switchAsk"></div>
       </div>
     </div>
@@ -372,12 +385,22 @@ function showSetup(c) {
 
   // Where the keys are written. The page says it because the file is the thing
   // to back up, and because "stored on this machine" was true and useless.
-  $('#keysWhere').textContent = from.envPath
-    ? `Saved in ${from.envPath} on this laptop — never in the event database, and never sent to `
-      + 'a phone. That one file is the whole backup: copy it to a spare laptop and this hub is '
-      + 'set up. None of these keys expire, so it is a once-ever job — only the event key above '
-      + 'changes from one competition to the next.'
+  const where = $('#keysWhere');
+  where.textContent = from.envPath
+    ? `Saved in ${from.envPath} on this laptop — base64-encoded, never in the event database, `
+      + 'and never sent to a phone. Encoding is not encryption: it keeps a key off the screen '
+      + 'at a glance, and the file being yours is what protects it. That one file is the whole '
+      + 'backup — copy it to a spare laptop and this hub is set up. None of these keys expire, '
+      + 'so it is a once-ever job; only the event key changes from one competition to the next.'
     : '';
+  // A line in that file that cannot be read. The box above would say SAVED, the
+  // vendor would say no, and nothing else on this page joins those two up.
+  for (const why of Object.values(from.keyProblems || {})) {
+    const p = document.createElement('div');
+    p.className = 'say bad';
+    p.textContent = why;
+    where.append(p);
+  }
 
   $('#setupDone').textContent = left === -1
     ? 'Nothing left. Open the JOIN QR page on this screen for the scouts, and leave the black '
@@ -776,9 +799,21 @@ async function save(extra = {}) {
     }
     const fixed = Object.keys(res.notes || {}).length + Object.keys(res.warnings || {}).length;
     $('#status').textContent = 'Saved. Fetching event data…'
-      + (fixed ? ' Read the notes under the boxes.' : ' Now press TEST KEYS.');
+      + (fixed ? ' Read the notes under the boxes.' : '');
     for (const k of SECRETS) $('#'+k).value = '';
-    try { await reload(); } catch { /* offline */ }
+    let c = null;
+    try { c = await reload(); } catch { /* offline */ }
+    // Test the keys without being asked, while the hub has never had a passing
+    // test. It is a step that used to be skipped, and skipping it is how a
+    // wrong key survives until the Saturday - which is the one morning it
+    // cannot be replaced. Once a test has passed, the button is enough: it is
+    // five vendors over the network, and not every save is about a key.
+    const step = ((c && c.setup && c.setup.steps) || []).find((x) => x.id === 'test');
+    if (step && !step.done && Object.values((c && c.saved) || {}).some(Boolean)) {
+      $('#status').textContent = 'Saved. Asking each vendor whether its key works…';
+      await testKeys();
+      $('#status').textContent = 'Saved and tested — the lines below are what each one said.';
+    }
   } catch (e) {
     // Nothing was saved, and the boxes still hold what was typed - so this is
     // a re-press, not a re-type, once the named box is fixed.
@@ -805,6 +840,70 @@ async function save(extra = {}) {
 $('#save').onclick = () => save();
 
 /**
+ * Find the event key instead of asking somebody to know it.
+ *
+ * The one field in setup that cannot be answered from the room: `2026casf` is
+ * not written on the pit map and is not guessable from "Bay Area Regional".
+ * Given a team number the hub goes and gets the list - from Statbotics, which
+ * needs no key, so this works on a hub that has just been unzipped.
+ *
+ * The box below stays a text box the whole time. This is a shortcut past a
+ * lookup, not a new way of doing it, and it must not become the only way when
+ * an event is too new to be listed anywhere.
+ */
+async function findEvents() {
+  const team = $('#ourTeam').value.trim();
+  const say = $('#findSay');
+  const row = $('#eventPickRow');
+  say.className = 'say note';
+  if (!team) { say.textContent = 'Put your team number in first.'; return; }
+  say.textContent = `Looking up what team ${team} is registered for…`;
+  row.classList.add('hide');
+  let res;
+  try {
+    res = await admin(`/api/eventsfor?team=${encodeURIComponent(team)}`);
+  } catch (e) {
+    say.className = 'say bad';
+    say.textContent = 'Could not ask: ' + e.message;
+    return;
+  }
+  if (!res.events.length) {
+    say.className = 'say warn';
+    say.textContent = res.problem || 'Nothing came back. Type the key in below.';
+    return;
+  }
+  const sel = $('#eventPick');
+  sel.textContent = '';
+  for (const e of res.events) {
+    const o = document.createElement('option');
+    o.value = e.key;
+    o.dataset.level = e.level;
+    // Text, not markup: every word of this came off somebody else's API.
+    o.textContent = [e.name, e.where, e.start, `(${e.key})`].filter(Boolean).join(' · ');
+    sel.append(o);
+  }
+  const apply = () => {
+    const picked = sel.options[sel.selectedIndex];
+    if (!picked) return;
+    $('#eventKey').value = picked.value;
+    $('#eventLevel').value = picked.dataset.level || 'regional';
+    tell(rowFor('eventKey'), 'ok', 'Filled in from the list. Press SAVE & REFRESH.');
+  };
+  sel.onchange = apply;
+  row.classList.remove('hide');
+  apply();
+  say.className = 'say ok';
+  say.textContent = `${res.events.length} event(s) for team ${team}`
+    + (res.source === 'tba' ? ', from The Blue Alliance.' : ', from Statbotics.')
+    + ' Check the level it picked — it is a guess from the event type.';
+}
+
+$('#findEvents').onclick = findEvents;
+// Enter in the team box is what a person types next, and it is the only button
+// on this page that is not about saving.
+$('#ourTeam').addEventListener('keydown', (e) => { if (e.key === 'Enter') findEvents(); });
+
+/**
  * Ask every vendor whether the key stored here works.
  *
  * The one thing on this page that is not a guess. SET beside a box means a
@@ -813,7 +912,7 @@ $('#save').onclick = () => save();
  * everywhere else in the app - by design, because at a competition a source
  * that is down must read as "we do not know" rather than as an error.
  */
-$('#test').onclick = async () => {
+async function testKeys() {
   $('#test').disabled = true;
   $('#testOut').innerHTML = 'asking the vendors…';
   const WORD = { ok: ['✓', 'var(--green-soft)'], bad: ['✕', 'var(--red-alert)'],
@@ -837,15 +936,33 @@ $('#test').onclick = async () => {
     }
   } catch (e) {
     $('#testOut').textContent = 'Could not test: ' + e.message;
-  } finally { $('#test').disabled = false; }
-};
+  } finally {
+    $('#test').disabled = false;
+    // The checklist's test line is read from the verdicts this just stored.
+    try { await reload(); } catch { /* offline */ }
+  }
+}
+
+$('#test').onclick = testKeys;
 
 // Everything above is definitions; this is the page filling itself in, and it
 // goes last on purpose. `reload` renders through `rows`, and a `const` is not
 // hoisted - called from up where it is defined it threw before it could put a
 // single SAVED beside a box, into the same catch that says the hub cannot be
 // reached, which was a lie about a hub that was answering fine.
-try { await reload(); } catch { $('#sub').textContent = 'HUB NOT REACHABLE'; }
+try {
+  const c = await reload();
+  // A hub with nothing set up and no admin password has nothing to protect, and
+  // the lock exists to stop an *accident* on a configured hub - a stray
+  // keystroke in the event key box on the Saturday. On the very first run it is
+  // one more button between somebody and a working hub, so it opens itself and
+  // says so. Everything after that opens locked, as before.
+  if (!adminToken && !adminSet && c.setup && c.setup.firstRun) {
+    await doUnlock();
+    $('#lockSay').textContent = 'Unlocked itself: this hub is not set up yet and no admin '
+      + 'password is set. Once it has an event it opens locked every time.';
+  }
+} catch { $('#sub').textContent = 'HUB NOT REACHABLE'; }
 </script>
 </body>
 </html>

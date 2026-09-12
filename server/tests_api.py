@@ -50,6 +50,7 @@ class Live:
         self.hub.env_path = os.path.join(self.dir, ".env")
         for name in envfile.KEYS.values():
             os.environ.pop(name, None)
+            os.environ.pop(name + envfile.B64, None)
         hub.Handler.hub = self.hub
         hub.Handler.allow_remote_config = True   # the test client is not localhost-ish enough
         self.srv = hub.Server(("127.0.0.1", 0), hub.Handler)
@@ -957,13 +958,27 @@ def test_keys_live_in_env(L):
     code, _ = L.req("/api/config", {"nexusKey": "nx-inthefile"})
     text = open(path, encoding="utf-8").read()
     ok &= check("a key saved from the panel lands in .env",
-                code == 200 and envfile.parse(text).get("NEXUS_API_KEY") == "nx-inthefile",
-                f"({envfile.parse(text).get('NEXUS_API_KEY')!r})")
+                code == 200
+                and envfile.decode(envfile.parse(text).get("NEXUS_API_KEY_B64") or "")
+                == "nx-inthefile", f"({envfile.parse(text)})")
+    ok &= check("base64-encoded, so it cannot be read off the screen at a glance",
+                "nx-inthefile" not in text)
+    ok &= check("which is not encryption, and the test says so: anyone with the file decodes it",
+                base64.b64decode(envfile.parse(text)["NEXUS_API_KEY_B64"]).decode()
+                == "nx-inthefile")
     ok &= check("and nowhere in the event database", L.store.get("nexusKey") is None)
     ok &= check("the hub reads it back through one call, whichever home it has",
                 L.hub.cfg("nexusKey") == "nx-inthefile")
     ok &= check("and the file it wrote is readable by nobody else",
                 (os.stat(path).st_mode & 0o077) == 0, oct(os.stat(path).st_mode & 0o777))
+
+    # A `_B64` line that will not decode must not become a key made of mangled
+    # bytes: every vendor would refuse it, and nothing would say why.
+    os.environ["NEXUS_API_KEY_B64"] = "this is not base64!"
+    ok &= check("a mangled encoded line reads as no key at all, and is named",
+                not L.hub.cfg("nexusKey") and "nexusKey" in envfile.problems(),
+                f"({envfile.problems()})")
+    os.environ.pop("NEXUS_API_KEY_B64", None)
 
     # A key that is taken off a hub has to leave the file, not sit there as an
     # empty line that reads like a half-finished setup.
@@ -972,6 +987,18 @@ def test_keys_live_in_env(L):
                 "NEXUS_API_KEY" not in open(path, encoding="utf-8").read()
                 and not L.hub.cfg("nexusKey"))
 
+    # Typing a plain line into the file by hand is a supported way to set a key -
+    # it just does not stay that way.
+    envfile.write("LOVAT_API_KEY", "lvt-typedbyhand", path)
+    os.environ.pop("LOVAT_API_KEY", None)
+    applied = envfile.load(path)
+    ok &= check("a plain line typed into the file by hand is read as it stands",
+                L.hub.cfg("lovatKey") == "lvt-typedbyhand")
+    ok &= check("and is rewritten in the encoded form the next time the hub starts",
+                "lovatKey" in L.hub.adopt_keys(applied)
+                and "lvt-typedbyhand" not in open(path, encoding="utf-8").read()
+                and L.hub.cfg("lovatKey") == "lvt-typedbyhand")
+
     # A hub set up by an older build has its keys in the database. Startup moves
     # them, once, and the row goes.
     good = "a" * 64
@@ -979,14 +1006,16 @@ def test_keys_live_in_env(L):
     moved = L.hub.adopt_keys()
     ok &= check("a key left in the database by an older build moves into the file",
                 moved == ["tbaKey"] and L.store.get("tbaKey") is None
-                and envfile.parse(open(path, encoding="utf-8").read()).get("TBA_API_KEY") == good,
-                f"({moved})")
+                and envfile.decode(envfile.parse(open(path, encoding="utf-8").read())
+                                   .get("TBA_API_KEY_B64") or "") == good, f"({moved})")
     ok &= check("and the hub serves it as set, from its new home",
                 L.req("/api/config")[1]["keys"]["tba"] is True)
 
     # The machine being explicit - a systemd unit, or a one-off
     # `NEXUS_API_KEY=... python3 server/hub.py` - must never be overruled by a
-    # settings row older than the file.
+    # settings row older than the file, and must not be copied into the file
+    # either: it was deliberately kept outside it.
+    os.environ.pop("TBA_API_KEY_B64", None)
     os.environ["TBA_API_KEY"] = "from-the-machine"
     L.store.set("tbaKey", "a-stale-row")
     ok &= check("a real environment variable beats a leftover settings row",
@@ -994,10 +1023,102 @@ def test_keys_live_in_env(L):
     ok &= check("and adopting drops that row rather than overwriting the variable",
                 L.hub.adopt_keys() == [] and L.store.get("tbaKey") is None
                 and L.hub.cfg("tbaKey") == "from-the-machine")
+    ok &= check("nor is a variable the machine set written into the file",
+                "from-the-machine" not in open(path, encoding="utf-8").read())
 
     for name in envfile.KEYS.values():           # leave the process as we found it
         os.environ.pop(name, None)
-    envfile.write_many({name: None for name in envfile.KEYS.values()}, path)
+        os.environ.pop(name + envfile.B64, None)
+    envfile.write_many({n: None for name in envfile.KEYS.values()
+                        for n in (name, name + envfile.B64)}, path)
+    return ok
+
+
+def test_event_picker(L):
+    """The event key, looked up instead of remembered.
+
+    `2026casf` is the one thing in setup that cannot be answered from the room -
+    it is not on the pit map and not guessable from "Bay Area Regional" - so the
+    hub fetches the list for a team number.  Two APIs with two shapes feed it and
+    neither is ours, so what is tested here is the normalising: the field names
+    each one uses, a row that is missing them, and the level guessed off the
+    event type.  No network: the parsing is the part that can be wrong.
+    """
+    ok = True
+    statbotics = [
+        {"team": 6059, "event": "2026casf", "event_name": "Bay Area Regional", "week": 3,
+         "time": 1774000000, "city": "San Francisco", "state": "CA", "country": "USA",
+         "type": "regional"},
+        {"team": 6059, "event": "2026cc", "event_name": "Chezy Champs",
+         "start_date": "2026-09-20"},
+        {"team": 6059, "event_name": "no key at all"},          # dropped
+        {"team": 6059, "event": "notakey", "event_name": "no year in it"},   # dropped
+        "junk",                                                  # dropped
+    ]
+    got = hub._events_from(statbotics, ("event", "key"), ("event_name", "name"))
+    ok &= check("statbotics rows normalise, and unusable ones are dropped rather than raising",
+                [e["key"] for e in got] == ["2026casf", "2026cc"], f"({got})")
+    ok &= check("with the name, the place and the date a person recognises",
+                got[0]["name"] == "Bay Area Regional" and "San Francisco" in got[0]["where"]
+                and got[0]["start"].startswith("2026-"), f"({got[0]})")
+
+    tba = [
+        {"key": "2026cmptx", "name": "Einstein Field", "event_type": 4,
+         "start_date": "2026-04-20"},
+        {"key": "2026necmp", "name": "New England District Championship", "event_type": 3,
+         "start_date": "2026-04-10"},
+        {"key": "2026casj", "name": "Silicon Valley Regional", "event_type": 0,
+         "start_date": "2026-03-12", "city": "San Jose", "state_prov": "CA"},
+    ]
+    got = hub._events_from(tba, ("key",), ("name",))
+    ok &= check("tba rows normalise under their own field names, in date order",
+                [e["key"] for e in got] == ["2026casj", "2026necmp", "2026cmptx"], f"({got})")
+    ok &= check("and the fuel target is guessed from the kind of event it is",
+                [e["level"] for e in got] == ["regional", "dcmp", "champs"],
+                f"({[e['level'] for e in got]})")
+
+    # One row per event even if a source ever repeats itself: the picker is a
+    # list somebody scans, and the same regional twice is a list they mistrust.
+    twice = hub._events_from(tba + tba, ("key",), ("name",))
+    ok &= check("a repeated event appears once", len(twice) == 3, f"({len(twice)})")
+
+    code, r = L.req("/api/eventsfor?team=", method="GET")
+    ok &= check("asking with no team number is answered, not crashed on",
+                code == 200 and not r["events"] and "team number" in r["problem"], f"({r})")
+    code, r = L.req("/api/eventsfor?team=six%20thousand", method="GET")
+    ok &= check("and neither is a team number that is not one",
+                code == 200 and not r["events"], f"({code} {r})")
+    return ok
+
+
+def test_firewall_offer_is_windows_only(L):
+    """The one prompt that blocks startup, and the two guards that stop it.
+
+    It waits on `input()`, so anywhere without a person in front of it - a
+    service, a CI runner, a hub started from a script - it must not run at all.
+    Getting this wrong does not fail a test somewhere; it hangs the hub.
+    """
+    ok = True
+    import firewall
+    ok &= check("it is Windows-only, so nothing here can ask on this machine",
+                firewall.relevant() is False)
+
+    asked = []
+
+    class Loud:
+        def get(self, k, d=None):
+            asked.append(k)
+            return None
+
+        def set(self, k, v):
+            asked.append(("set", k))
+
+    ok &= check("offering does nothing at all off Windows, and reads no settings",
+                firewall.offer(Loud(), 6059) is None and not asked, f"({asked})")
+    ok &= check("and the command it would print is the narrow rule, not a blanket one",
+                all(bit in firewall.manual(6059) for bit in
+                    ("dir=in", "protocol=TCP", "localport=6059", "profile=private")),
+                f"({firewall.manual(6059)})")
     return ok
 
 
@@ -1930,7 +2051,8 @@ def main():
                    test_clock_correction_never_invents_numbers,
                    test_seats, test_seat_lifetime, test_match_clock, test_reconcile,
                    test_config_scope, test_key_hygiene, test_keys_live_in_env,
-                   test_setup_checklist, test_env_file, test_admin_panel,
+                   test_setup_checklist, test_event_picker,
+                   test_firewall_offer_is_windows_only, test_env_file, test_admin_panel,
                    test_trend_series, test_defence_counts_both_ways,
                    test_ai_is_gated_and_grounded,
                    test_nexus_tba_one_row, test_legacy_keys_migrate,
