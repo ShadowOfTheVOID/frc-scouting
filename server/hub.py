@@ -36,6 +36,7 @@ import ai
 import analytics
 import discover
 import envfile
+import firewall
 import keys as keyhygiene
 import lovat as lovat_report
 import offsite
@@ -51,6 +52,11 @@ WEB_ROOT = os.path.abspath(WEB_ROOT)
 # and it is not a port some other tool on a borrowed laptop is likely to have
 # taken already. --port still overrides it, and web/js/net.js has to agree.
 PORT = 6059
+
+# The season this build is for. Only ever a default: everything that matters
+# reads the year out of the event key itself, so a hub pointed at 2027casf keeps
+# working. It is what the event picker asks about when nothing is set yet.
+SEASON = 2026
 
 # One nonce per run of the process, mixed into every ETag. The store's write
 # counters live in memory and start again from zero, so without this a phone
@@ -148,6 +154,9 @@ class Hub:
         self._recal_pending = False
         self.writes = []          # timestamps, for writes/min
         self.log = []             # ring buffer for the event log panel
+        # Where the credentials live. An attribute rather than the constant so a
+        # test never writes the developer's own `.env`.
+        self.env_path = envfile.PATH
 
     WRITES_KEPT = 1000        # five minutes of writes is all writes/min needs
 
@@ -245,7 +254,101 @@ class Hub:
 
     # --------------------------------------------------------- settings
     def cfg(self, k, d=None):
+        """A setting out of the database, or a credential out of `.env`.
+
+        One reader for both so that every caller in this file - and `ai.client`,
+        which is handed this method - stays unaware of which is which.
+
+        The database is only a fallback, for a hub set up before the keys moved
+        into the file; `adopt_keys()` empties it on the next start. Which way
+        round that falls back matters: a real environment variable is the machine
+        being explicit (a systemd unit, a one-off `NEXUS_API_KEY=… python3
+        server/hub.py`), and a leftover settings row must never quietly beat it.
+        """
+        if k in envfile.KEYS:
+            return envfile.key(k) or self.store.get(k, d)
         return self.store.get(k, d)
+
+    def save_keys(self, values):
+        """Write credentials to `.env`, and take them out of the database.
+
+        Written base64-encoded, on a `_B64` line, the same shape the admin
+        password has always had. **That is not encryption** and nothing here
+        pretends otherwise - anyone holding the file can decode it in one
+        command. What it buys is that a key is not legible over a shoulder or on
+        a projector, and that the file can be shown to somebody helping without
+        eight secrets being read off it at a glance. The permissions (`0600`) are
+        what actually protect it.
+
+        `""` (the FORGET button, or a box deliberately cleared) removes the line
+        rather than blanking it, and the plain-named line goes with it either
+        way: one key, one home. `os.environ` is updated in the same breath - this
+        hub is serving an event, and a key that only takes effect after a restart
+        is a key that did not work when it was pasted.
+        """
+        # In the order the file documents them, so it stays readable by hand.
+        # Anything that is not a credential is not this method's to write, and
+        # certainly not its to delete from the settings table below.
+        fields = [f for f in envfile.KEYS if f in values]
+        lines, gone = {}, []
+        for field in fields:
+            plain, coded = envfile.KEYS[field], envfile.encoded_name(field)
+            value = (values[field] or "").strip()
+            # The plain line always goes: it is either being replaced by the
+            # encoded one, or being forgotten. Two lines for one key is a key
+            # that changes depending on which one the reader wins with.
+            lines[plain] = None
+            lines[coded] = envfile.encode(value) if value else None
+            os.environ.pop(plain, None)
+            if value:
+                os.environ[coded] = envfile.encode(value)
+            else:
+                os.environ.pop(coded, None)
+                gone.append(field)
+        if not fields:
+            return self.env_path
+        envfile.write_many(lines, self.env_path)
+        # Whatever an older build left in the settings table, so the two can
+        # never disagree and no snapshot carries a key that was forgotten here.
+        for field in fields:
+            self.store.forget(field)
+        if gone:
+            self.note("info", "forgotten: " + ", ".join(sorted(gone)))
+        return self.env_path
+
+    def adopt_keys(self, from_file=None):
+        """Put every key in one place, in one form.  Returns the fields it moved.
+
+        Run once at startup, and it tidies two kinds of history:
+
+        * **A key in the database**, from a hub set up before they moved to the
+          file. Not only untidy: those rows are in every snapshot under
+          `data/snapshots/` and in any copy of the `.db` sent to a mentor to look
+          at, and this is what gets them out.
+        * **A plain `NEXUS_API_KEY=` line in `.env`**, typed there by hand, which
+          is a perfectly good way to set one - it is rewritten in the encoded
+          form so the file ends up consistent with itself.
+
+        `from_file` is what `envfile.load()` said the file set, and it is the
+        difference between those two: a plain variable that came from the
+        *machine* (a systemd unit, a one-off on the command line) is left exactly
+        as it is. Copying that into a checked-out file would be the hub deciding
+        to persist something the machine deliberately kept outside it.
+        """
+        from_file = from_file or {}
+        moved = []
+        for field in envfile.KEYS:
+            plain = envfile.KEYS[field]
+            row = self.store.get(field)
+            if isinstance(row, str) and row.strip() and not envfile.key(field):
+                self.save_keys({field: row})
+                moved.append(field)
+                continue
+            self.store.forget(field)            # an empty row, or one now beaten
+            if plain in from_file and not (os.environ.get(envfile.encoded_name(field)) or ""):
+                self.save_keys({field: from_file[plain]})
+                moved.append(field)
+        return moved
 
     def event_key(self):
         return self.cfg("eventKey")
@@ -320,7 +423,181 @@ class Hub:
             out.setdefault(name, sources.verdict("down", "timed out waiting for an answer"))
         self.note("info", "api keys tested: "
                           + ", ".join(f"{n} {v['state']}" for n, v in sorted(out.items())))
+        # Kept, so the setup checklist can say whether the keys on this hub were
+        # ever actually tried. The verdicts only - never a key, and never a
+        # vendor's prose, which is quoted back at the person who pressed the
+        # button and does not need to outlive the press.
+        self.store.set("keyTest", {"at": time.time(), "eventKey": ek,
+                                   "states": {n: v["state"] for n, v in out.items()}})
         return {"eventKey": ek, "at": time.time(), "checked": out}
+
+    def find_events(self, team, year=None):
+        """The events one team is registered for, for the setup page's picker.
+
+        The event key is the only thing in setup that cannot be looked up in the
+        room: it is not on the pit map, it is not on the schedule taped to the
+        wall, and `2026casf` is not guessable from "Bay Area Regional". So the
+        hub goes and gets the list.
+
+        Statbotics first because it needs no key, which is the whole point - this
+        runs on a hub that has just been unzipped. The Blue Alliance is the
+        fallback for a hub that already has that key, and is authoritative when
+        it answers.  Neither answering is a normal outcome (no internet at home
+        is common), and the box stays typeable throughout.
+        """
+        team = _int(team)
+        if not team:
+            return {"events": [], "problem": "a team number is needed"}
+        year = int(year or SEASON)
+        rows = self.statbotics.events_for_team(team, year)
+        out = _events_from(rows, ("event", "key"), ("event_name", "name"))
+        if out:
+            return {"events": out, "source": "statbotics"}
+        tba = self.tba()
+        if tba.ok:
+            out = _events_from(tba.events_for_team(team, year), ("key",), ("name",))
+            if out:
+                return {"events": out, "source": "tba"}
+        return {"events": [], "problem":
+                f"nothing came back for team {team} in {year}. Either the schedule is not "
+                "published yet, or this laptop is offline - the event key can always be typed "
+                "in by hand."}
+
+    # --------------------------------------------------------------- setup
+    #
+    # What is left to do, in the order to do it. Everything below is read from
+    # what the hub actually holds rather than from a box having been typed into,
+    # so the same list answers both "what now?" on the Friday and "did that
+    # work?" on the Saturday morning.
+    SETUP_STEPS = ("event", "nexus", "test", "phones")
+
+    def setup_steps(self, port=None):
+        """The setup checklist, each step with the one line it needs.
+
+        A hub is set up once, by a student who has not done it before, from a
+        panel of twelve boxes that all look equally important - and two of them
+        are (the event and Nexus), the rest are extras. This is the ordering
+        that was previously only in setup.md, moved to where the work happens
+        and driven by real state so it cannot be wrong about what is done.
+
+        Unlocking is not in here and cannot be: whether the panel is open is a
+        property of the tab it is open in, not of this hub - a hub with no admin
+        password would report every tab unlocked, including the locked one
+        asking the question.  The page prepends that step itself.
+        """
+        ek = self.event_key()
+        counts = self.store.how_many(ek) if ek else {"teams": 0, "matches": 0, "scout": 0}
+        nexus_set = bool(self.cfg("nexusKey"))
+        test = self.store.get("keyTest") or {}
+        # A test against the previous event key says nothing about this one -
+        # the Nexus check is per-event, and a key that works at one event and
+        # not at another is exactly the failure this catches.
+        fresh = test.get("eventKey") == ek and ek
+        states = test.get("states") or {} if fresh else {}
+        devices = self.store.get("devices") or {}
+        urls = discover.urls(port) if port else []
+        lan = urls[0] if urls else (f"http://localhost:{port}" if port else "the hub address")
+
+        def step(sid, title, done, say):
+            return {"id": sid, "title": title, "done": bool(done), "say": say}
+
+        def many(n, word, plural=None):
+            return f"{n} {word if n == 1 else (plural or word + 's')}"
+
+        steps = []
+        if not ek:
+            steps.append(step("event", "Name the event", False,
+                              "Type your team number into OUR TEAM and press FIND MY EVENTS: "
+                              "the hub looks up what you are registered for and fills the key "
+                              "and the level in. It needs no API key for that. Failing that, "
+                              "EVENT KEY is the code on frc.events or The Blue Alliance, like "
+                              "2026casf - a pasted event address works too."))
+        elif counts["teams"]:
+            steps.append(step("event", "Name the event", True,
+                              f"{ek} - {many(counts['teams'], 'team')} and "
+                              f"{many(counts['matches'], 'match', 'matches')} in so far."))
+        else:
+            steps.append(step("event", "Name the event", True,
+                              f"{ek} is saved, but no teams have arrived yet. That needs a key "
+                              "below and one poll - or the key is wrong, which only TEST KEYS "
+                              "can tell you."))
+
+        steps.append(step("nexus", "Paste the Nexus key", nexus_set,
+                          "Saved. TEST KEYS below is what says whether it works."
+                          if nexus_set else
+                          "Free, from frc.nexus/api. It is the one key worth stopping for: its "
+                          '"on field" is what arms the scouting screen on all six phones. '
+                          "Without it every scout taps through by hand, six times an hour."))
+
+        # Everything else on this page reports whether a string is stored. This
+        # is the only step that reports whether it works, which is the
+        # difference nothing else in the app can see.
+        names = {"tba": "The Blue Alliance", "nexus": "Nexus", "frcEvents": "FRC Events",
+                 "lovat": "Lovat", "ai": "the AI model", "mirror": "the mirror"}
+        listed = lambda want: ", ".join(names.get(k, k) for k, v in sorted(states.items())
+                                        if v == want)
+        ago = lambda: (lambda m: "just now" if m < 1 else f"{m}m ago")(
+            int((time.time() - (test.get("at") or 0)) / 60))
+        if listed("bad"):
+            # An `unset` box has nothing to answer and a `down` vendor has
+            # nothing to say yet; only `bad` is a key that is wrong, and this is
+            # the one place in the app that can tell those three apart.
+            steps.append(step("test", "Press TEST KEYS", False,
+                              f"Tested {ago()}: {listed('bad')} came back wrong. Fix that box "
+                              "and test again - a wrong key and a quiet service look identical "
+                              "everywhere else in the app, on purpose."))
+        elif listed("ok"):
+            steps.append(step("test", "Press TEST KEYS", True,
+                              f"{listed('ok')} answered, tested {ago()}."
+                              + (f" {listed('down')} had nothing to say - that is a service "
+                                 "being quiet, not a key being wrong."
+                                 if listed("down") else "")))
+        elif states:
+            steps.append(step("test", "Press TEST KEYS", False,
+                              f"Tested {ago()}, and nothing answered. Either no key is saved "
+                              "yet, or this laptop has no internet right now."))
+        else:
+            steps.append(step("test", "Press TEST KEYS", False,
+                              "SAVE & REFRESH first, then TEST KEYS asks each vendor whether "
+                              "the key actually works. Do it at home: a key that turns out to "
+                              "be wrong is not a thing you can replace on a Saturday morning."))
+
+        if devices:
+            steps.append(step("phones", "Open it on a phone", True,
+                              f"{many(len(devices), 'device')} connected in the last twelve "
+                              f"hours. Scouts: {lan}/scout"))
+        else:
+            steps.append(step("phones", "Open it on a phone", False,
+                              f"Same wifi as this laptop, then {lan}/scout - or open the JOIN QR "
+                              "page on this screen and let them scan it. Nothing has connected "
+                              "yet, which on Windows is usually the firewall prompt having been "
+                              'dismissed: allow Python on "Private networks".'))
+
+        return {"steps": steps,
+                # Where the keys are written, so the panel can say it rather
+                # than the docs having to. Local-only, like the rest of this
+                # block.
+                "envPath": self.env_path,
+                # A key that is present and unreadable: the panel would say
+                # SET, every vendor would say no, and nothing would connect the
+                # two. Named here so both places can say it.
+                "keyProblems": envfile.problems(),
+                # Nothing set at all: the panel leads with the checklist and
+                # keeps the optional keys folded away until it is worked through.
+                "firstRun": not ek or not nexus_set,
+                "later": [
+                    "The other keys are all free and all optional: The Blue Alliance for "
+                    "official results and climb, FRC Events for the same result a few minutes "
+                    "sooner, Lovat for what other teams' scouts wrote. Statbotics needs no key.",
+                    "An AI model, if you want the notes summarised and the picklist explained. "
+                    "Pick the model and paste that company's key - cents per answer, and off "
+                    "until you do.",
+                    "A password on this panel: stop the hub and run  python3 server/hub.py "
+                    "--set-admin-password  in the same window it was started from. Without one, "
+                    "UNLOCK is just the button.",
+                    "The off-site mirror, at the bottom of this page, if your team has a host "
+                    "with a domain name. setup.md Part B.",
+                ]}
 
     def ai_ceiling(self):
         try:
@@ -1907,6 +2184,89 @@ def _nested(d, *path):
     return d
 
 
+def _events_from(rows, key_names, name_names):
+    """Somebody else's event list, as `{key, name, week, start, where, level}`.
+
+    Two APIs with two shapes and neither one ours: Statbotics calls the key
+    `event` and The Blue Alliance calls it `key`, and either can add a field or
+    rename one without telling us. So this takes the names it knows, keeps only
+    rows that have a usable key, and drops anything it cannot read rather than
+    raising in front of somebody who is trying to set a hub up.
+    """
+    out = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        pick = lambda names: next((row[n] for n in names
+                                   if isinstance(row.get(n), str) and row[n].strip()), None)
+        key = (pick(key_names) or "").strip().lower()
+        if not key or not key[:4].isdigit():
+            continue
+        where = ", ".join(str(row[f]) for f in ("city", "state_prov", "state", "country")
+                          if isinstance(row.get(f), str) and row[f].strip())
+        week = row.get("week")
+        out.append({
+            "key": key,
+            "name": pick(name_names) or key,
+            "week": week if isinstance(week, int) else None,
+            # Both APIs date an event, under different names, and either may be
+            # missing - which is why the sort below falls back to the key. One
+            # of them dates it as an epoch, so everything becomes YYYY-MM-DD or
+            # the two sort against each other as strings and interleave.
+            "start": _event_date(row),
+            "where": where,
+            "level": _event_level(row),
+        })
+    out.sort(key=lambda e: (e["start"] or "", e["week"] if e["week"] is not None else 99,
+                            e["key"]))
+    # One row per event: a team-events list is already one row per event, but a
+    # source that ever changes its mind about that must not double the list.
+    seen, unique = set(), []
+    for e in out:
+        if e["key"] not in seen:
+            seen.add(e["key"])
+            unique.append(e)
+    return unique
+
+
+def _event_date(row):
+    """`YYYY-MM-DD` for an event row, or `""`.  Epochs and ISO strings both."""
+    for field in ("start_date", "start", "time"):
+        v = row.get(field)
+        if isinstance(v, str) and v.strip():
+            return v.strip()[:10]
+        if isinstance(v, (int, float)) and v > 0:
+            try:
+                return time.strftime("%Y-%m-%d", time.localtime(v))
+            except (OverflowError, ValueError, OSError):
+                return ""
+    return ""
+
+
+def _event_level(row):
+    """`regional` / `dcmp` / `champs` out of whatever the source calls the type.
+
+    It only sets the dropdown's starting position - the fuel target the solver
+    uses comes from what is saved, and that is still a box somebody can change.
+    Guessing wrong is a wrong number on one screen; not guessing at all is a
+    lead who never knew there was a choice.
+    """
+    kind = row.get("event_type") if isinstance(row.get("event_type"), int) else row.get("type")
+    text = " ".join(str(row.get(f) or "") for f in ("type", "event_type_string", "name",
+                                                    "event_name")).lower()
+    # TBA numbers its types: 3 is district championship, 4 championship division,
+    # 5 championship final, 2 district championship division.
+    if kind in (3, 2) or "district championship" in text or "district cmp" in text:
+        return "dcmp"
+    if kind in (4, 5) or "einstein" in text or "world championship" in text:
+        return "champs"
+    if isinstance(kind, str) and kind.lower() in ("district_cmp", "district_cmp_division"):
+        return "dcmp"
+    if isinstance(kind, str) and kind.lower() in ("champs", "cmp_division", "cmp_finals"):
+        return "champs"
+    return "regional"
+
+
 def _split_event_key(ek):
     """'2026casf' -> ('2026', 'casf').  FRC Events takes the two separately."""
     ek = str(ek or "")
@@ -2308,6 +2668,13 @@ class Handler(BaseHTTPRequestHandler):
                        "calls": h.ai_calls(), "limit": h.ai_ceiling(),
                        "providers": dict(ai.PROVIDERS), "models": ai.catalogue(),
                        "default": ai.DEFAULT_MODEL},
+                # The setup checklist, for the hub machine only - it is the
+                # admin panel's, and that page does not open anywhere else.
+                # Gated as much for cost as for privacy: this route is what
+                # every phone on the wifi uses as its "are you there?" probe,
+                # including 254 at once when one is hunting for the hub.
+                "setup": (h.setup_steps(self.server.server_address[1])
+                          if (self._is_local() or Handler.allow_remote_config) else None),
                 "picklistLocked": h.pin_set(),
                 # Whether the settings are behind an admin code, and whether
                 # the asking page is currently past it. The panel opens locked
@@ -2436,6 +2803,16 @@ class Handler(BaseHTTPRequestHandler):
             return self._csv(f"{ek}-{table}.csv", header, rows)
         if p == "/picklist/print":
             return self._file("picklist_print.html")
+        if p == "/api/eventsfor":
+            # The setup page's, so the same boundary as the rest of it: the hub
+            # machine, and past the lock. It reaches out to the internet, which
+            # is not something anything on the venue wifi gets to make it do.
+            if not (self._is_local() or Handler.allow_remote_config):
+                return self._json({"error": "The event picker is on the hub machine."}, 403)
+            if not self._admin_ok():
+                return self._locked_out()
+            return self._json(h.find_events((q.get("team") or [""])[0],
+                                            (q.get("year") or [None])[0]))
         if p == "/api/discover":
             return self._json({"urls": discover.urls(self.server.server_address[1])})
         return self._file(p)
@@ -2485,8 +2862,13 @@ class Handler(BaseHTTPRequestHandler):
             for k in ("eventLevel", "ourTeam", "aiProvider", "aiCallLimit"):
                 if k in body:
                     h.store.set(k, body[k])
+            # Credentials go to `.env` beside the hub, never into the database:
+            # one file to back up, one file to copy to a spare laptop, and no key
+            # riding along in a snapshot or in a `.db` sent to somebody to look
+            # at. The passcodes are hashed and saved through their own call.
+            h.save_keys({k: v for k, v in cleaned.items() if k in envfile.KEYS})
             for k, v in cleaned.items():
-                if k not in keyhygiene.CODES:   # hashed, never stored as typed
+                if k not in keyhygiene.CODES and k not in envfile.KEYS:
                     h.store.set(k, v)
             # An event key is pasted the same way and gets the same treatment:
             # a whole TBA address, a capitalised code and a stray space are all
@@ -2952,6 +3334,25 @@ def _set_admin_password():
     return True
 
 
+def _open_panel(port):
+    """Put the admin panel on screen on a hub that has nothing set up yet.
+
+    The step that got missed most often was not a hard one - it was knowing
+    that a page exists at all. The banner has always printed the address, and
+    the address was still typed wrong, or read as one of the three above it, or
+    not read. A hub with an event key set opens nothing: by then the panel is a
+    place you go deliberately, and a browser window stealing focus on a laptop
+    in the stands is the opposite of helpful.
+    """
+    import webbrowser
+    def go():
+        try:
+            webbrowser.open(f"http://localhost:{port}/")
+        except Exception:
+            pass                 # a headless box is allowed to have no browser
+    threading.Thread(target=go, daemon=True, name="open-panel").start()
+
+
 def main():
     # Before anything reads an environment variable. A real one always wins
     # over the file - a mirror host sets these through systemd, and a checkout
@@ -2968,6 +3369,10 @@ def main():
     ap.add_argument("--allow-remote-config", action="store_true",
                     help="let any device on the network change hub settings and API keys "
                          "(default: the hub machine only)")
+    ap.add_argument("--no-browser", action="store_true",
+                    help="do not open the admin panel in a browser on a hub that has no event "
+                         "set yet (it opens there by default, because that page is the next "
+                         "step and nothing else works until it is done)")
     ap.add_argument("--set-admin-password", action="store_true",
                     help="type a new admin password and write it into .env, then carry on "
                          "serving. This is the only way it is set, and the way back in when "
@@ -2988,6 +3393,13 @@ def main():
 
     hub.port = args.port
     hub.note("info", f"hub started on port {args.port}")
+    # Credentials live in `.env` beside the hub. A hub set up before they did
+    # still has them in its database, and this is the one-way trip out - done
+    # here, before anything is served, so there is never a window where a key is
+    # in both places.
+    moved = hub.adopt_keys(from_file)
+    if moved:
+        hub.note("info", "moved %d api key(s) out of the database and into .env" % len(moved))
     # Catch up on anything solved-but-not-stored before we start serving, so the
     # first dashboard load shows real numbers rather than zeros.
     try:
@@ -3026,6 +3438,52 @@ def main():
     else:
         print("  Admin password: none set - UNLOCK on the admin page is one button.\n"
               "                  `python3 server/hub.py --set-admin-password` sets one.\n")
+
+    # Where the keys are, in a line, because it is a file now and files get
+    # forgotten in backups.
+    held = [f for f in envfile.KEYS if hub.cfg(f)]
+    print("  API keys:  " + (f"{len(held)} in {hub.env_path}\n"
+                             "             back that file up, and copy it to a spare laptop - "
+                             "the keys do not expire"
+                             if held else "none set yet. They go in .env, from the admin panel, "
+                             "and last for\n             every event until you revoke them."))
+    if moved:
+        print("             (%d just tidied into it - out of the database where older builds "
+              "kept them,\n              or off a plain line typed in by hand)" % len(moved))
+    for field, why in envfile.problems().items():
+        print(f"  !! {why}")
+    print()
+
+    # What to do next, in this window, on the run where it matters. A hub with
+    # no event key is a hub where nothing else in the banner above works yet.
+    left = hub.setup_steps(port=args.port)
+    if not hub.event_key():
+        print("  NOTHING IS SET UP YET\n"
+              "  " + "-" * 52)
+        for st in left["steps"]:
+            print(f"    {st['title']}")
+        print(f"\n  All of it happens on one page: http://localhost:{args.port}/\n"
+              "  It carries that list, in that order, and ticks each line off itself.")
+        # Not from a script, a service or a CI runner: those have nobody in
+        # front of them, and a browser is the wrong thing to launch there.
+        if args.no_browser or not sys.stdout.isatty():
+            print("  Open it yourself - nothing else here works until you do.\n")
+        else:
+            print("  Opening it now.\n")
+            _open_panel(args.port)
+    else:
+        counts = store.how_many(hub.event_key())
+        print(f"  Event: {hub.event_key()} - {counts['teams']} teams, "
+              f"{counts['matches']} matches, {counts['scout']} scouting record(s).")
+        undone = [st["title"] for st in left["steps"] if not st["done"]]
+        print("  Setup: nothing left on the checklist." if not undone
+              else "  Still to do: " + "; ".join(undone)
+                   + f"\n         on  http://localhost:{args.port}/")
+        print()
+    # Windows only, and only with somebody in front of it: the one prompt that
+    # decides whether phones can reach this laptop at all. See server/firewall.py.
+    firewall.offer(store, args.port)
+
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

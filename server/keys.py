@@ -121,7 +121,14 @@ FIELDS = {
     "nexusKey": Field("Nexus", "the NEXUS box"),
     "nexusToken": Field("Nexus webhook token", "the NEXUS WEBHOOK TOKEN box"),
     "frcEventsUser": Field("FRC Events username", "the FRC EVENTS USERNAME box", secret=False),
-    "frcEventsToken": Field("FRC Events token", "the FRC EVENTS TOKEN box"),
+    # FIRST issues a UUID, and always has. Advisory like every shape here - they
+    # are allowed to change it - but it is the one that catches the commonest
+    # paste of all: the username in the token box, or half of the pair.
+    "frcEventsToken": Field(
+        "FRC Events token", "the FRC EVENTS TOKEN box",
+        re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+                   r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"),
+        "FRC Events issues a UUID - 8-4-4-4-12 hex digits with dashes"),
     "lovatKey": Field(
         "Lovat", "the LOVAT API KEY box",
         re.compile(r"^lvt-\S+$"), "Lovat keys start with `lvt-`"),

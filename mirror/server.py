@@ -484,6 +484,24 @@ class Server(socketserver.ThreadingMixIn, HTTPServer):
     allow_reuse_address = True
 
 
+def _secret(name):
+    """`NAME`, or `NAME_B64` decoded.  Either is a real way to set one.
+
+    A host sets these plainly through systemd; the hub's admin panel writes the
+    encoded form, and the two sides of a push read the same variable name on
+    purpose - so a mirror being tried out on the same laptop as the hub finds the
+    key the panel already wrote. Neither form is more secret than the other:
+    base64 is not encryption, and the reason it is here is legibility over a
+    shoulder, not secrecy.
+    """
+    plain = (os.environ.get(name) or "").strip()
+    if plain:
+        return plain
+    if envfile:
+        return envfile.decode((os.environ.get(name + envfile.B64) or "").strip()) or None
+    return None
+
+
 def main():
     # First, so every default below sees it. A real environment variable still
     # wins over the file - see server/envfile.py.
@@ -496,10 +514,10 @@ def main():
                     help="default 127.0.0.1: this is meant to sit behind a TLS proxy. "
                          "Use 0.0.0.0 only if something else is terminating TLS.")
     ap.add_argument("--db", default=os.environ.get("MIRROR_DB") or None)
-    ap.add_argument("--push-key", default=os.environ.get("MIRROR_PUSH_KEY"),
+    ap.add_argument("--push-key", default=_secret("MIRROR_PUSH_KEY"),
                     help="what the hub must send. Prefer the env var - an argument "
                          "is visible in `ps` to everyone on the host.")
-    ap.add_argument("--view-passcode", default=os.environ.get("MIRROR_VIEW_PASSCODE"),
+    ap.add_argument("--view-passcode", default=_secret("MIRROR_VIEW_PASSCODE"),
                     help="what a person types to read the site")
     ap.add_argument("--open", action="store_true",
                     help="serve the data to anyone who finds the address, with no passcode")
