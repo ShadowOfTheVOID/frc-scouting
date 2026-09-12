@@ -26,6 +26,9 @@ import envfile  # noqa: E402
 import hub  # noqa: E402
 import offsite  # noqa: E402
 import rules  # noqa: E402
+import lovat as lovat_report  # noqa: E402
+import discover  # noqa: E402
+import random  # noqa: E402
 import sources  # noqa: E402
 from store import Store  # noqa: E402
 
@@ -2567,6 +2570,112 @@ def test_junk_in_every_answer_field(L):
     return ok
 
 
+def test_the_webhook_is_shut_without_a_token(L):
+    """The one open write endpoint with the whole schedule behind it.
+
+    `/api/nexus/webhook` checked the token only when one was saved - and
+    setup.md says plainly that the token is only for teams who registered a
+    webhook, so most hubs have none. Everything else reachable on the venue
+    wifi costs at worst a junk scouting row, which last-write-wins and the
+    solver absorb. This one POST rewrites every lineup and every status, so six
+    phones watch the wrong robots and the board calls the wrong match:
+    measured on a 12-match event, 12 of 12 rewritten. A hub with no token never
+    registered a webhook, so nothing legitimate is ever delivered here.
+    """
+    ok = True
+    ek = "2026hook"
+    L.store.set("eventKey", ek)
+    L.store.put_event(ek)
+    for i in range(1, 5):
+        L.store.put_match(ek, f"{ek}_qm{i}", label=f"Qualification {i}", play_order=i,
+                          red=[9001, 9002, 9003], blue=[9004, 9005, 9006])
+    L.store.set("nexusToken", None)
+
+    def push(token=None, at=None):
+        # Above whatever an earlier test left behind: apply_nexus_event orders
+        # updates by this, and Nexus warns they can arrive out of order.
+        return L.req("/api/nexus/webhook", {
+            "eventKey": ek, "dataAsOfTime": at or (L.hub.last_nexus_at + 60000),
+            "matches": [{"label": "Qualification 1", "status": "On field",
+                         "redTeams": ["1", "2", "3"], "blueTeams": ["4", "5", "6"]}]},
+            headers={"Nexus-Token": token} if token else None)
+
+    def lineup():
+        m = L.store.match(ek, f"{ek}_qm1") or {}
+        return m.get("red"), m.get("status")
+
+    push()
+    ok &= check("with no token saved, an unauthenticated push changes nothing",
+                lineup() == ([9001, 9002, 9003], None), f"({lineup()})")
+    ok &= check("and the hub says why, rather than dropping it in silence",
+                any("webhook token" in e["msg"] for e in L.hub.log))
+
+    # A team that did register one still gets its pushes, and only its pushes.
+    L.store.set("nexusToken", "from-frc-nexus")
+    push("wrong")
+    ok &= check("a wrong token is still refused", lineup() == ([9001, 9002, 9003], None),
+                f"({lineup()})")
+    # The handler answers before it applies - Nexus disables a webhook that
+    # keeps failing, so the 200 does not wait for the work - hence the poll.
+    push("from-frc-nexus")
+    for _ in range(40):
+        if lineup() == ([1, 2, 3], "On field"):
+            break
+        time.sleep(0.05)
+    ok &= check("and the right one still lands", lineup() == ([1, 2, 3], "On field"),
+                f"({lineup()})")
+    L.store.set("nexusToken", None)
+    L.store.set("eventKey", EK)
+    return ok
+
+
+def test_nobody_elses_format_can_raise(L):
+    """Three parsers read something this app did not write.
+
+    lovat.py promises at the top that it never raises; a cell reading `1e999`
+    is a float, `int()` of it is not, and that took the whole import down
+    through `int(teamNumber)` - the poller then retries it every five minutes
+    for the rest of the event. TBA's window counts are what the solver divides
+    between three robots, and a string in that field reached `int(total)` and
+    stopped the match solving at all. And the mDNS responder parses raw UDP off
+    the wire, where anything at all can arrive.
+    """
+    ok = True
+    cols = "match,teamNumber,scouter,notes,endgameClimb"
+    for label, text in (("a team number of 1e999", cols + "\nQ1,1e999,AK,,L2"),
+                        ("a team number that is not one", cols + "\nQ1,abc,AK,,L2"),
+                        ("an empty export", cols), ("junk", "\x00\x01\x02"),
+                        ("bytes instead of text", b"Q1,9001")):
+        try:
+            out = lovat_report.parse_report_csv(text, "2026x")
+            ok &= check(f"lovat: {label} parses to an answer, not an exception",
+                        out is None or isinstance(out, dict), f"({type(out)})")
+        except Exception as e:
+            ok &= check(f"lovat: {label} parses to an answer, not an exception", False,
+                        f"({type(e).__name__}: {e})")
+
+    bd = sources.parse_breakdown_2026({"score_breakdown": {
+        "red": {"hubScore": {"autoCount": "many", "shift1Count": 1e309,
+                             "shift2Count": 30, "shift3Count": None}},
+        "blue": {"hubScore": {"autoCount": 10}}}})
+    ok &= check("tba: a window count that is not a count is dropped, the real one kept",
+                bd["red"]["windows"] == {"shift2": 30}, f"({bd['red']['windows']})")
+
+    r = discover.MDNSResponder("192.168.1.5")
+    rng = random.Random(11)
+    for _ in range(300):
+        pkt = bytes(rng.randrange(256) for _ in range(rng.randint(0, 90)))
+        try:
+            r._maybe_reply(pkt)
+        except Exception as e:
+            ok &= check("mdns: random bytes off the wire never raise", False,
+                        f"({type(e).__name__}: {e})")
+            break
+    else:
+        ok &= check("mdns: 300 random packets off the wire never raise", True)
+    return ok
+
+
 def main():
     L = Live()
     try:
@@ -2601,7 +2710,9 @@ def main():
                    test_two_saves_at_once_keep_both_keys,
                    test_a_dead_button_does_not_spend_the_budget,
                    test_a_clock_fix_keeps_what_it_can,
-                   test_junk_in_every_answer_field):
+                   test_junk_in_every_answer_field,
+                   test_the_webhook_is_shut_without_a_token,
+                   test_nobody_elses_format_can_raise):
             print(f"\n{fn.__name__.replace('test_', '').replace('_', ' ')}")
             passed &= fn(L)
         print()

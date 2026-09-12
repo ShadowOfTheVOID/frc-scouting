@@ -7,6 +7,7 @@ condition the app must survive without showing an error.
 """
 import json
 import gzip
+import math
 import io
 import ssl
 import threading
@@ -173,6 +174,13 @@ class TBA:
         return _rejection(status, "The Blue Alliance")
 
 
+def _count(v):
+    """A whole-number count out of somebody else's JSON, or None."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    return int(v) if math.isfinite(v) else None
+
+
 def parse_breakdown_2026(match):
     """Pull the per-window fuel counts and per-robot tower levels out of a TBA match.
 
@@ -206,7 +214,13 @@ def parse_breakdown_2026(match):
             "endgame": hub.get("endgameCount"),
         }
         out[alliance] = {
-            "windows": {k: v for k, v in windows.items() if v is not None},
+            # A count, or nothing. This is the number the solver divides between
+            # three robots, and it used to keep whatever TBA put in the field:
+            # a string or an infinity reached `int(total)` in solve_window and
+            # raised, which does not crash the hub - every caller of solve_match
+            # is wrapped - but it does mean that match never solves, silently,
+            # for the rest of the event.
+            "windows": {k: v for k, v in windows.items() if _count(v) is not None},
             "autoTower": [a.get(f"autoTowerRobot{i}") for i in (1, 2, 3)],
             "endgameTower": [a.get(f"endGameTowerRobot{i}") for i in (1, 2, 3)],
             "totalPoints": a.get("totalPoints"),

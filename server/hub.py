@@ -3283,6 +3283,24 @@ class Handler(BaseHTTPRequestHandler):
             if expected and token != expected:
                 sys.stderr.write("[nexus] webhook rejected: bad Nexus-Token\n")
                 return
+            if not expected:
+                # No token saved means no webhook was ever registered - the hub
+                # polls, and setup.md says so - which makes this the one write
+                # endpoint with nothing legitimate behind it and the whole
+                # schedule in front of it. Everything else open on the venue
+                # wifi costs at worst a junk scouting row, which last-write-wins
+                # and the solver absorb; this one POST rewrites every lineup and
+                # every status, so six phones watch the wrong robots and the
+                # board calls the wrong match. Measured on a 12-match event:
+                # one unauthenticated POST, 12 of 12 rewritten.
+                #
+                # Said out loud rather than dropped in silence, because the
+                # other way to arrive here is a team that registered a webhook
+                # and has not put the token in the box yet.
+                h.note("warn", "a Nexus webhook arrived but no webhook token is saved, so it "
+                               "was ignored - paste the token from frc.nexus into NEXUS "
+                               "WEBHOOK TOKEN, or ignore this if you never registered one")
+                return
             try:
                 if "match" in body and "matches" not in body:
                     m = body.get("match") or {}

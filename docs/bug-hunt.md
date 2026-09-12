@@ -12,6 +12,8 @@ against a live hub, every fix proved by removing it and watching the failure
 come back.
 Fifth pass: fuzzing every field a phone can send, and the three numbers-side
 bugs that came out of reading what the fuzz hit.
+Sixth pass: the write endpoints, and fuzzing the four parsers that read
+something this app did not write.
 
 Everything below is committed and pushed. Five test suites pass, and both CI
 gates hold (accuracy 9.4% of TBA over 253 fitted windows; the Nexus/TBA merge
@@ -222,6 +224,19 @@ Two things the stress said were fine, having looked:
 The mirror was stressed the same way and held: three hubs pushing, four
 readers, a passcode guesser, seven seconds - no failures, revisions capped at
 60, photos deduplicated across pushes.
+
+### Sixth pass — the write endpoint nobody was guarding, and four parsers
+
+| what was wrong |
+| --- |
+| **`/api/nexus/webhook` was open, and the whole schedule is behind it.** The token was checked only when one was saved - and `setup.md` says plainly that the token is only for teams who registered a webhook, so most hubs have none. Everything else reachable on the venue wifi costs at worst a junk scouting row, which last-write-wins and the solver's outlier handling absorb; this is the one that rewrites every lineup and every status, so six phones watch the wrong robots and the board calls the wrong match. Measured on a 12-match event: one unauthenticated POST, **12 of 12 rewritten**, every one marked `On field`. A hub with no token never registered a webhook, so nothing legitimate is ever delivered there - it is closed now, and says so in the log rather than dropping it in silence, because the other way to arrive here is a team that registered one and has not pasted the token in yet. A configured webhook still works and a wrong token is still refused; both are checked |
+| **`lovat.py` raised, against the promise at the top of its own file.** A cell reading `1e999` is a float and `int()` of it is not, so `int(teamNumber)` took the whole import down - and the poller then retries it every five minutes for the rest of the event, so one junk cell in somebody else's export means no Lovat data at all. Infinity reads as unknown now, for the same reason NaN already did |
+| **A TBA window count that was not a count stopped a match solving.** `parse_breakdown_2026` kept whatever was in the field as long as it was not null, and a string or an infinity reached `int(total)` in `solve_window`. It does not crash the hub - every caller of `solve_match` is wrapped - which is exactly why it is worth finding: that match simply never solves, silently, for the rest of the event. Counts are counts on the way in now, and `solve_window` treats anything that still gets past as nothing to allocate |
+| **`rules.split_by_phase` and `solve.interval_weight` raised on shapes their neighbours already tolerate.** `interval_secs` guards its input and those two did not. The store cleans these lists on the way in, so this is the second line rather than the first - but a helper that is defensive in one function and not the next is a trap for whoever calls it next |
+
+Fuzzed: 800 inputs across the mDNS responder (raw UDP off the wire), Lovat's
+CSV, TBA's match shape, the rules and the solver, the key-hygiene boxes and the
+`.env` parser. Six distinct raises before, none after.
 
 ## Checked and clean
 

@@ -60,7 +60,7 @@ def split_by_phase(intervals):
     the phone still shows one run and can still undo it in one tap.
     """
     out = []
-    for iv in intervals or []:
+    for iv in (intervals if isinstance(intervals, list) else []):
         if not isinstance(iv, dict):
             continue
         try:
