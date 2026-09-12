@@ -4,6 +4,9 @@ First pass: `claude/seat-bugs-cl68f2`, 26 commits on top of `e669eaa`.
 Second pass: `claude/bug-hunt-logic-review-7oavun`, over everything that landed
 after it — the off-site mirror, the admin panel and key checking, the battery
 and ETag work, and OpenRouter.
+Third pass: the same branch with `main` merged back in, over the setup
+checklist, the keys moving into `.env`, the Windows firewall helper and the
+after screen's second page.
 
 Everything below is committed and pushed. Five test suites pass, and both CI
 gates hold (accuracy 9.4% of TBA over 253 fitted windows; the Nexus/TBA merge
@@ -159,6 +162,21 @@ Two sources describing one thing, and the app believing the wrong one.
 | --- |
 | **A played match still read `On field`.** Nexus's status comes from a volunteer with a tablet, and `put_match` COALESCEs a missing status - so once a match drops out of the live feed it keeps whatever it was last told, for the rest of the day. TBA's breakdown comes from the field and means the match is over. Driven with Q1 scored and still marked `On field`: before, the phone opened the live HUD on it - a scout logging a match that finished an hour ago, one tap from sending the row - and the dashboard's LIVE panel headlined it as the match on the field. After, the phone sits on standby counting down to Q2 and the board leads with Q2. An official result now beats a queueing status everywhere the two are read together: `pickCurrentMatch`, the arm, the boot jump, the LIVE panel, the match preview and the crew board |
 | **A reconnecting phone took its chair back off whoever the lead had just given it to.** The station is freed on the crew board and somebody else sits down; the original phone was out of range and heard none of it; on reconnect it re-asserted the claim it still believed in and bumped the new scout - on the hub's own instruction. Driven with the hub genuinely stopped, so the stream really breaks (Playwright's offline switch leaves an established EventSource alive, which is why the first run of this drive proved nothing): before, `POST /api/seat` and AK has the chair back; after, `GET /api/seats`, AK gets the bump screen, and BK keeps the chair. A reconnection is a re-ask, not a re-assert - and the 15s rate limit on that read now lets a forced one through, or the phone would go on believing the chair was its own |
+
+### Third pass — over the setup, `.env` and after-screen work
+
+Merged `main` in first (three PRs: the Lovat key docs, the after screen's
+second page, and setting-up-as-a-checklist with the keys moved into `.env`) and
+went over what landed.
+
+| what was wrong |
+| --- |
+| **`.env` was rewritten in place, and it now holds everything.** Every API key and the admin password live in that one file, and the panel tells people it is the whole backup - so the one thing it must never become is a shorter file. `os.open(..., O_TRUNC)` then write has a window in the middle where it is empty, and a full disk lands in it: the hub comes back with no keys, no password and nothing to say why. It writes beside it, fsyncs and renames now. Proved by making `os.fsync` raise ENOSPC mid-write: before, an empty file; after, every key still there and no temporary left behind |
+| **The hub and the mirror read the same variable in opposite orders.** `MIRROR_PUSH_KEY` is deliberately one name on both sides of that push. The hub took `_B64` first and the mirror took the plain one first, so a host with both set had the two halves authenticating against different strings - reported as "bad push key", by two halves each certain they were right. One reader (`envfile.read`) decides it now, and the mirror calls it |
+| **A robot could be recorded as having climbed *and* as having fallen off.** CLIMB FELL OFF and the CLIMB button hide each other on the phone, but hiding a chip does not clear it: tap the chip, then record a level, and both stay set with no way back to the chip. The team page then read "best climb L2, 100% of matches" and "tried a climb and fell, 100%" at once. The button clears the chip now, and the aggregate resolves it for rows already logged - the recorded level is the stronger signal, because it says which level and the chip only says something went wrong |
+| **`/api/eventsfor?year=abc` killed the request thread.** `int()` on a query-string value, straight out of the handler - no response, a dropped connection - on the one page somebody is looking at while nothing else on the hub works yet. The same shape as the mirror's `?rev=` in the second pass; worth grepping for the next one |
+| **The firewall check matched the port as a substring.** `str(port) in out` over `netsh`'s output says yes for `--port 605` against a rule holding 6059 - the false "allowed" that `exists()`'s own docstring says it is there to catch. Matched as a whole number now, still without reading a label, because netsh prints in whatever language Windows was installed in |
+| **The panel was opened in a browser before the firewall question was answered.** The socket is bound by then but nothing serves it until `serve_forever()`, so on the one platform this feature exists for, the browser sat on a page that could not load while the question waited in the terminal behind it - which is the same "prompt nobody saw" the module was written to stop. The offer goes first |
 
 ## Checked and clean
 

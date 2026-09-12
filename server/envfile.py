@@ -74,14 +74,22 @@ def encoded_name(field):
     return KEYS[field] + B64
 
 
-def key(field):
-    """One credential, out of the environment.  `""` when it is not set.
+def read(name):
+    """`NAME_B64` decoded, else plain `NAME`.  `""` when neither is set.
 
-    Two lines can hold it and both are read, encoded first: `NEXUS_API_KEY_B64`
-    is what the admin panel writes, and plain `NEXUS_API_KEY` is what somebody
-    typed into the file by hand or what a systemd unit sets on a mirror host.
-    A plain one is not second-class - it works, and the hub re-writes it in the
-    encoded form the next time it starts.
+    The one place that decides which of the two lines wins, because two places
+    deciding it differently is a bug you cannot see: the hub read the encoded
+    one first and the mirror read the plain one first, over `MIRROR_PUSH_KEY` -
+    which is deliberately the same variable on both sides of that push. With
+    both lines present the two halves would authenticate against different
+    strings, and the only symptom is a mirror answering "bad push key" to a hub
+    that is certain it has the right one.
+
+    Encoded first, because that is the line the admin panel writes and pressing
+    SAVE is somebody being explicit right now. `save_keys` removes the plain
+    line in the same write, and `adopt_keys` folds a hand-typed one into the
+    encoded form at startup, so the pair only coexists on a machine where
+    something outside the file set the plain one.
 
     A `_B64` line that will not decode returns nothing rather than garbage: a
     key made of mangled bytes reads to every vendor as a wrong key, and to
@@ -92,10 +100,15 @@ def key(field):
     as often as one pasted into a box, and the symptom is identical: a vendor
     that answers 401 all weekend for no visible reason.
     """
-    raw = (os.environ.get(encoded_name(field)) or "").strip()
+    raw = (os.environ.get(name + B64) or "").strip()
     if raw:
         return decode(raw) or ""
-    return (os.environ.get(KEYS[field]) or "").strip()
+    return (os.environ.get(name) or "").strip()
+
+
+def key(field):
+    """One credential, out of the environment.  `""` when it is not set."""
+    return read(KEYS[field])
 
 
 def decode(raw):
@@ -249,12 +262,39 @@ def write_many(values, path=PATH):
     while out and not out[0].strip():
         out.pop(0)
     text = "\n".join(out).rstrip("\n") + "\n"
-    # 0600 from the moment it exists: this file is the password.
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        fh.write(text)
+    _replace(path, text)
+    return path
+
+
+def _replace(path, text):
+    """Write the file, or leave the old one exactly as it was.
+
+    This file now holds every API key and the admin password, and the panel
+    tells people it is the whole backup - so the one thing it must never do is
+    become a shorter file. Truncating in place and then writing has a window in
+    the middle where it is empty, and a disk that fills up lands in it: the hub
+    would come back with no keys, no password, and nothing to say why.
+
+    So: a new file beside it, flushed and fsynced, then renamed over the top.
+    `os.replace` is atomic on POSIX and on Windows, which is where this actually
+    runs. 0600 from the moment the temporary file exists, because for the
+    moment it exists it is the password.
+    """
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())            # the rename is only atomic over real bytes
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     try:
         os.chmod(path, 0o600)                # an existing file keeps its old mode otherwise
     except OSError:
         pass                                 # Windows, where this means little anyway
-    return path

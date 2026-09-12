@@ -498,7 +498,11 @@ class Hub:
         team = _int(team)
         if not team:
             return {"events": [], "problem": "a team number is needed"}
-        year = int(year or SEASON)
+        # Both of these come off a query string, so both are whatever was
+        # typed. `int()` on the year raised straight out of the request handler
+        # - no response at all, just a dropped connection, on the one page
+        # somebody is using while nothing else works yet.
+        year = _int(year) or SEASON
         rows = self.statbotics.events_for_team(team, year)
         out = _events_from(rows, ("event", "key"), ("event_name", "name"))
         if out:
@@ -3606,6 +3610,16 @@ def main():
         print(f"  !! {why}")
     print()
 
+    # Windows only, and only with somebody in front of it: the one prompt that
+    # decides whether phones can reach this laptop at all. See server/firewall.py.
+    #
+    # Before the panel is opened, not after. The socket is bound by now but
+    # nothing is serving it until serve_forever() below, so a browser launched
+    # first sat on a page that could not load while this question waited in the
+    # terminal behind it - which is the same "prompt nobody saw" that this
+    # whole module exists to stop happening.
+    firewall.offer(store, args.port)
+
     # What to do next, in this window, on the run where it matters. A hub with
     # no event key is a hub where nothing else in the banner above works yet.
     left = hub.setup_steps(port=args.port)
@@ -3632,9 +3646,6 @@ def main():
               else "  Still to do: " + "; ".join(undone)
                    + f"\n         on  http://localhost:{args.port}/")
         print()
-    # Windows only, and only with somebody in front of it: the one prompt that
-    # decides whether phones can reach this laptop at all. See server/firewall.py.
-    firewall.offer(store, args.port)
 
     try:
         srv.serve_forever()

@@ -571,8 +571,17 @@ def _team_summary(team, meta, entries, solved, by_match, ranking=None, epa=None,
             accuracy.append(float(p["accuracyRating"]))
         scores_moving += 1 if p.get("scoresWhileMoving") else 0
         disrupts += 1 if p.get("disrupts") else 0
-        climb_failed += 1 if p.get("climbFailed") else 0
-        auto_climb_failed += 1 if p.get("autoClimbFailed") else 0
+        # A robot cannot both climb and fall. The two are collected by a chip
+        # and a button that hide each other on the phone, but a row logged
+        # before that guard - or by any other writer - can hold both, and then
+        # one team reads "best climb L2, 100% of matches" and "tried a climb
+        # and fell, 100%" side by side. The recorded level is the stronger
+        # signal: it says which level, and the chip only says that something
+        # went wrong.
+        if p.get("climbFailed") and (p.get("endgameTower") or "None") == "None":
+            climb_failed += 1
+        if p.get("autoClimbFailed") and (p.get("autoTower") or "None") == "None":
+            auto_climb_failed += 1
         # Seconds into the match, and only where the scout's phone was actually
         # running a clock - the HUD leaves it null otherwise rather than
         # writing a zero that would read as "left at the buzzer".

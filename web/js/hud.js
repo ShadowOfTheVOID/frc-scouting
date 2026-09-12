@@ -1208,10 +1208,17 @@ async function main() {
       const on = entry.payload.autoTower !== 'Level1';
       entry.payload.autoTower = on ? 'Level1' : 'None';
       entry.payload.autoClimbStartSecs = on ? now : null;
+      // A recorded climb answers the chip beside it. The chip hides itself at
+      // that point but its value stayed true, and a scout who tapped FELL OFF
+      // first could no longer reach it to untick - so the robot went out
+      // reading "climbed L1" and "fell off" at once, and the dashboard
+      // believed both.
+      if (on) entry.payload.autoClimbFailed = false;
     } else {
       const i = CLIMBS.indexOf(entry.payload.endgameTower);
       const next = CLIMBS[(i + 1) % CLIMBS.length];
       entry.payload.endgameTower = next;
+      if (next !== 'None') entry.payload.climbFailed = false;   // see the auto case above
       // Keep the FIRST tap: cycling L1 to L2 to L3 is the scout settling on a
       // level, not the robot starting again. Back round to None clears it.
       if (next === 'None') entry.payload.climbStartSecs = null;

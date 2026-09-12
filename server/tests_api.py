@@ -2200,6 +2200,119 @@ def test_after_screen_extras_reach_the_dashboard(L):
     return ok
 
 
+def test_one_climb_cannot_also_be_a_fall(L):
+    """A robot that climbed did not fall off, whatever two chips were tapped.
+
+    CLIMB FELL OFF and the CLIMB button hide each other on the phone, but
+    hiding a chip does not clear it: a scout who tapped the chip first and then
+    recorded a level left both set, with no way back to the chip. The team read
+    "best climb L2, 100% of matches" and "tried a climb and fell, 100%" on the
+    same page.
+    """
+    ok = True
+    mk = f"{EK}_qm1"
+    latest = max([e["updatedAt"] for e in L.store.scout_entries(EK)] or [time.time()])
+
+    def logged(**extra):
+        e = entry(mk, 101, "AK", latest + 60)
+        e["payload"].update(extra)
+        L.req("/api/sync", {"scout": [e]})
+        _, a = L.req("/api/analytics")
+        t = a["teams"].get("101") or a["teams"].get(101)
+        return t["observed"]
+
+    o = logged(endgameTower="Level2", climbFailed=True,
+               autoTower="Level1", autoClimbFailed=True)
+    ok &= check("a recorded climb wins over the chip beside it",
+                o["climbFailRate"] == 0.0 and o["autoClimbFailRate"] == 0.0,
+                f"({o['climbFailRate']}, {o['autoClimbFailRate']})")
+    latest += 60
+    o = logged(endgameTower="None", climbFailed=True, autoTower="None", autoClimbFailed=True)
+    # A rate over every match this team was scouted in, so the number depends on
+    # what else the suite has logged for 101 - the claim here is that the fall
+    # counts at all, where the row above counted for nothing.
+    ok &= check("and a robot that really did fall still counts as one",
+                o["climbFailRate"] > 0 and o["autoClimbFailRate"] > 0,
+                f"({o['climbFailRate']}, {o['autoClimbFailRate']})")
+    return ok
+
+
+def test_event_picker_survives_junk(L):
+    """Both halves of the picker's query come off the address bar.
+
+    `int(year)` raised straight out of the request handler - no response at
+    all, just a dropped connection - on the one page somebody is looking at
+    while nothing else on the hub works yet.
+    """
+    ok = True
+    for q in ("team=6059&year=abc", "team=6059&year=", "team=&year=2026", "team=xyz"):
+        code, body = L.req("/api/eventsfor?" + q)
+        ok &= check(f"?{q} is answered, not dropped",
+                    code == 200 and isinstance(body, dict), f"({code})")
+    return ok
+
+
+def test_env_file_survives_a_failed_write(L):
+    """`.env` holds every key and the admin password, and the panel calls it
+    the whole backup. So the one thing it may never become is a shorter file.
+
+    Truncating in place and then writing has a window where it is empty, and a
+    full disk lands in it: the hub comes back with no keys, no password and
+    nothing to say why.
+    """
+    ok = True
+    d = tempfile.mkdtemp(prefix="frc-env-")
+    path = os.path.join(d, ".env")
+    envfile.write_many({"TBA_API_KEY_B64": "a" * 24, envfile.ADMIN: "b" * 12}, path)
+    before = open(path, encoding="utf-8").read()
+    real = os.fsync
+    os.fsync = lambda fd: (_ for _ in ()).throw(OSError(28, "No space left on device"))
+    try:
+        envfile.write_many({"TBA_API_KEY_B64": "zzz"}, path)
+        ok &= check("a failed write is reported, not swallowed", False, "(it returned)")
+    except OSError:
+        ok &= check("a failed write is reported, not swallowed", True)
+    finally:
+        os.fsync = real
+    ok &= check("and every key is still in the file",
+                open(path, encoding="utf-8").read() == before)
+    ok &= check("with nothing left beside it", os.listdir(d) == [".env"], f"({os.listdir(d)})")
+    shutil.rmtree(d, ignore_errors=True)
+    return ok
+
+
+def test_both_halves_read_a_key_the_same_way(L):
+    """MIRROR_PUSH_KEY is deliberately one variable on both sides of the push.
+
+    The hub read the `_B64` line first and the mirror read the plain one first,
+    so a host with both set had the two halves authenticating against different
+    strings - reported as "bad push key", by two halves each certain they were
+    right.
+    """
+    ok = True
+    keep = {k: os.environ.get(k) for k in ("MIRROR_PUSH_KEY", "MIRROR_PUSH_KEY_B64")}
+    try:
+        os.environ["MIRROR_PUSH_KEY"] = "from-the-machine"
+        os.environ["MIRROR_PUSH_KEY_B64"] = envfile.encode("from-the-panel")
+        sys.path.insert(0, os.path.join(_HERE, "..", "mirror"))
+        import server as mirror_server          # noqa: E402
+        ok &= check("the hub and the mirror read the same string",
+                    envfile.read("MIRROR_PUSH_KEY") == mirror_server._secret("MIRROR_PUSH_KEY"),
+                    f"({envfile.read('MIRROR_PUSH_KEY')} / "
+                    f"{mirror_server._secret('MIRROR_PUSH_KEY')})")
+        del os.environ["MIRROR_PUSH_KEY_B64"]
+        ok &= check("and a plain-only variable still works on both",
+                    envfile.read("MIRROR_PUSH_KEY") == "from-the-machine"
+                    == mirror_server._secret("MIRROR_PUSH_KEY"))
+    finally:
+        for k, v in keep.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+    return ok
+
+
 def main():
     L = Live()
     try:
@@ -2225,7 +2338,10 @@ def main():
                    test_nexus_broadcasts_only_on_change, test_scope_lists_are_complete,
                    test_vendor_backoff_is_remembered,
                    test_collection_path_is_intact,
-                   test_after_screen_extras_reach_the_dashboard):
+                   test_after_screen_extras_reach_the_dashboard,
+                   test_one_climb_cannot_also_be_a_fall, test_event_picker_survives_junk,
+                   test_env_file_survives_a_failed_write,
+                   test_both_halves_read_a_key_the_same_way):
             print(f"\n{fn.__name__.replace('test_', '').replace('_', ' ')}")
             passed &= fn(L)
         print()

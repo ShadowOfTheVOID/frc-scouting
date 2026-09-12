@@ -497,12 +497,15 @@ def _secret(name):
     base64 is not encryption, and the reason it is here is legibility over a
     shoulder, not secrecy.
     """
-    plain = (os.environ.get(name) or "").strip()
-    if plain:
-        return plain
+    # Through the hub's own reader where it is importable, so the two sides of
+    # a push cannot disagree about which line wins. They did: this read the
+    # plain name first and the hub read the encoded one first, so a host with
+    # both lines set would have the mirror checking a different string from the
+    # one the hub sends - reported as "bad push key", from two halves each
+    # certain they were right.
     if envfile:
-        return envfile.decode((os.environ.get(name + envfile.B64) or "").strip()) or None
-    return None
+        return envfile.read(name) or None
+    return (os.environ.get(name) or "").strip() or None
 
 
 def main():
