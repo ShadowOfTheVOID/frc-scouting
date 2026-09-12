@@ -10,6 +10,8 @@ after screen's second page.
 Fourth pass: stress harnesses rather than a code read - concurrent clients
 against a live hub, every fix proved by removing it and watching the failure
 come back.
+Fifth pass: fuzzing every field a phone can send, and the three numbers-side
+bugs that came out of reading what the fuzz hit.
 
 Everything below is committed and pushed. Five test suites pass, and both CI
 gates hold (accuracy 9.4% of TBA over 253 fitted windows; the Nexus/TBA merge
@@ -208,6 +210,18 @@ Two things the stress said were fine, having looked:
   board: a client that sees a revision it did not write re-reads, in whatever
   order the two arrive. It is the payload in the seat message that made
   ordering load-bearing there.
+
+### Fifth pass — fuzzing the answers, not just the lists
+
+| what was wrong |
+| --- |
+| **One phone's junk could take the dashboard out, again.** The interval lists are cleaned on the way into the store - that fix is in the first pass - but the answers beside them were not, and every one of those is read as a number, as a word, or as a lookup key. Fuzzed across every field a phone can send, 18 junk values each: **66 of 504 took `/api/analytics` and both CSV exports down outright**, with no response at all, so the dashboard falls back to its cached copy for the rest of the event. Three shapes did it: a `driverRating` of `"x"` is truthy, so it joined the list a mean is taken of (`can't convert type 'str' to numerator`); an `endgameTower` that is a list reaches `tower_points()` as a dict key (`unhashable type: 'list'`); a `note` that is a number has no `.strip()`. Coerced where the lists already are, which also repairs rows a hostile client already got in - `_payload` runs on the way out too. Fuzz is green at 504, and a real answer in the same field still counts |
+| **A dead button spent the event's AI budget.** The ceiling is charged before the call and was never given back, so a hub that could not reach the model - being offline at a venue is the normal case, which this app says out loud everywhere else - spent a slot per press while generating nothing. Thirty presses with no internet behind them used to cost thirty of the 250; they now cost none. A reply that was cut short or declined still costs one, because the vendor billed for it: all four cases are checked |
+| **A clock correction was abandoned for keeping most of what it had.** `_rephase` counted an observation lost when `phase_at(start)` said its first instant was outside the match - but a clock corrected *backwards* moves the first hold of a match to just before the buzzer, and `split_by_phase` still places nearly all of it in auto. `solve_match` reads that count to decide whether to throw the whole correction away for that robot: measured, two holds over 17 seconds with 11 of them landing in auto, and the correction dropped for "throwing away every observation" - leaving the robot on the uncorrected timeline the correction exists to replace. Lost now means "lands in no window", which is the same question the split answers |
+
+The mirror was stressed the same way and held: three hubs pushing, four
+readers, a passcode guesser, seven seconds - no failures, revisions capped at
+60, photos deduplicated across pushes.
 
 ## Checked and clean
 

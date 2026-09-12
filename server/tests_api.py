@@ -25,6 +25,8 @@ import analytics  # noqa: E402
 import envfile  # noqa: E402
 import hub  # noqa: E402
 import offsite  # noqa: E402
+import rules  # noqa: E402
+import sources  # noqa: E402
 from store import Store  # noqa: E402
 
 EK = "2026test"
@@ -2456,6 +2458,115 @@ def test_two_saves_at_once_keep_both_keys(L):
     return ok
 
 
+def test_a_dead_button_does_not_spend_the_budget(L):
+    """The ceiling is there so a stuck button cannot spend a team's credit.
+
+    It was charged before the call and never given back, so a hub that could
+    not reach the model - being offline at a venue is the normal case, which
+    this app says out loud everywhere else - spent a slot per press while
+    generating nothing. Press a dead button through one Saturday morning and
+    the feature is off for the event, having never once answered.
+    """
+    ok = True
+    keep = sources._request
+    L.store.set("aiCalls", 0)
+    # A model and a key, so the routes below actually reach the adapter. The
+    # key never leaves this process: sources._request is stubbed throughout.
+    L.req("/api/config", {"aiModel": "anthropic:claude-opus-5",
+                          "aiKey": "sk-ant-" + "t" * 20})
+    try:
+        sources._request = lambda *a, **k: (None, 0)          # no internet
+        for _ in range(12):
+            L.req("/api/ai/notes/101", {"force": True})
+        ok &= check("twelve presses with nothing behind them spend nothing",
+                    L.hub.ai_calls() == 0, f"({L.hub.ai_calls()})")
+
+        # A reply that WAS generated costs, whichever way it came back: the
+        # vendor billed for the tokens either way.
+        for label, reply in (("an answer", {"stop_reason": "end_turn",
+                                            "content": [{"type": "text", "text": "two bullets"}]}),
+                             ("one cut short", {"stop_reason": "max_tokens", "content": []}),
+                             ("one declined", {"stop_reason": "refusal", "content": []})):
+            before = L.hub.ai_calls()
+            sources._request = (lambda b: (lambda *a, **k: (b, 200)))(reply)
+            L.req("/api/ai/notes/101", {"force": True})
+            ok &= check(f"{label} costs a slot", L.hub.ai_calls() == before + 1,
+                        f"({before} -> {L.hub.ai_calls()})")
+    finally:
+        sources._request = keep
+        L.store.set("aiCalls", 0)
+        L.req("/api/config", {"aiModel": "none", "aiKey": ""})
+    return ok
+
+
+def test_a_clock_fix_keeps_what_it_can(L):
+    """`lost` has to mean "in no window at all", not "starts outside one".
+
+    A clock corrected backwards moves the first hold of a match to before the
+    buzzer, and `phase_at(start)` calls that gone - but the split places almost
+    all of it in auto. solve_match reads this count to decide whether to
+    abandon the correction for that robot, so over-counting it left the robot
+    on the uncorrected timeline the correction exists to replace.
+    """
+    ok = True
+    ivs = [{"start": 1.0, "end": 9.0, "phase": "auto", "intensity": "steady"},
+           {"start": 3.0, "end": 12.0, "phase": "auto", "intensity": "steady"}]
+    shifted, lost = L.hub._rephase(ivs, -5.0)
+    placed = sum(rules.interval_secs(c) for c in rules.split_by_phase(shifted) if c.get("phase"))
+    ok &= check("a hold dragged over the buzzer is kept, not written off",
+                lost == 0 and placed > 10, f"(lost {lost}, {placed}s placed)")
+    _, lost = L.hub._rephase([{"start": 158.0, "end": 159.0, "phase": "endgame"}], 40.0)
+    ok &= check("and one shifted clean off the end really is gone", lost == 1, f"({lost})")
+    return ok
+
+
+def test_junk_in_every_answer_field(L):
+    """One phone sending nonsense must not take the dashboard out.
+
+    The interval lists were already cleaned on the way in; the answers beside
+    them were not, and every one of those is read as a number, as a word or as
+    a lookup key. Fuzzed across every field a phone can send: 66 of 504 junk
+    values took /api/analytics and both CSV exports down outright - no response
+    at all, so the dashboard fell back to its cached copy for the rest of the
+    event, which is the exact failure the interval cleaning was added for.
+    """
+    ok = True
+    junk = [None, True, False, 0, -1, 1e309, "", "x" * 5000, "<script>", ["a"], {"a": 1}, 3.14]
+    fields = ["endgameTower", "autoTower", "startPosition", "startLane", "traversal",
+              "beached", "climbSpot", "note", "accuracyRating", "driverRating",
+              "defenseRating", "preload", "climbStartSecs", "defenseTarget"]
+    broke = []
+    at = max([e["updatedAt"] for e in L.store.scout_entries(EK)] or [time.time()])
+    for field in fields:
+        for bad in junk:
+            at += 1
+            e = entry(f"{EK}_qm1", 101, "FZ", at)
+            e["payload"][field] = bad
+            code, _ = L.req("/api/sync", {"scout": [e]})
+            if code != 200:
+                broke.append((field, repr(bad)[:18], "sync", code))
+            for path in ("/api/analytics", "/api/state", "/api/export.csv?table=teams",
+                         "/api/export.csv?table=scout"):
+                code, _ = L.req(path, raw=".csv" in path)
+                if code != 200:
+                    broke.append((field, repr(bad)[:18], path, code))
+    ok &= check(f"{len(fields) * len(junk)} junk answers, read back through four endpoints",
+                not broke, f"({broke[:3]})")
+
+    # ...and a real answer in the same field still arrives.
+    at += 1
+    e = entry(f"{EK}_qm1", 101, "FZ", at)
+    e["payload"].update(endgameTower="Level3", accuracyRating=4, traversal="bump",
+                        note="  crossed on the bump every match  ")
+    L.req("/api/sync", {"scout": [e]})
+    _, a = L.req("/api/analytics")
+    o = (a["teams"].get("101") or a["teams"].get(101))["observed"]
+    ok &= check("and a real answer beside the junk still counts",
+                o["accuracy"] is not None and "bump" in (o["traversalKinds"] or {}),
+                f"({o['accuracy']}, {o['traversalKinds']})")
+    return ok
+
+
 def main():
     L = Live()
     try:
@@ -2487,7 +2598,10 @@ def main():
                    test_both_halves_read_a_key_the_same_way,
                    test_the_room_is_told_what_the_hub_decided,
                    test_the_buzzer_solves_from_every_scout,
-                   test_two_saves_at_once_keep_both_keys):
+                   test_two_saves_at_once_keep_both_keys,
+                   test_a_dead_button_does_not_spend_the_budget,
+                   test_a_clock_fix_keeps_what_it_can,
+                   test_junk_in_every_answer_field):
             print(f"\n{fn.__name__.replace('test_', '').replace('_', ' ')}")
             passed &= fn(L)
         print()

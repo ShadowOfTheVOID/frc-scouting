@@ -680,7 +680,12 @@ class Hub:
         return int(self.store.get("aiCalls") or 0)
 
     def ai_charge(self):
-        """Count one generated answer. False once the event ceiling is reached."""
+        """Count one generated answer. False once the event ceiling is reached.
+
+        Taken before the call rather than after it, so two buttons pressed at
+        once cannot both slip past the last slot.  `ai_refund` puts it back
+        when the vendor never answered at all.
+        """
         limit = self.ai_ceiling()
 
         def apply(n):
@@ -689,6 +694,21 @@ class Hub:
                 return None, False
             return n + 1, True
         return self.store.mutate("aiCalls", apply, 0)
+
+    def ai_refund(self):
+        """Give the slot back: nothing was generated and nothing was billed.
+
+        The ceiling exists so a stuck button cannot spend a team's credit all
+        afternoon. A hub that cannot reach the model spends nothing - and being
+        offline at a venue is the normal case, which this app says out loud
+        everywhere else - so charging for it is the ceiling protecting the
+        wrong thing: press a dead button through one Saturday morning and the
+        feature is off for the event, having never once answered.
+
+        Only for an answer that never arrived. A reply that was cut short or
+        declined was generated, and the vendor billed for it.
+        """
+        self.store.mutate("aiCalls", lambda n: (max(0, int(n or 0) - 1), None), 0)
 
     def csv_text(self, ek, table):
         """One of the dashboard's CSV exports, as text.
@@ -1529,14 +1549,23 @@ class Hub:
             except (TypeError, ValueError, KeyError):
                 continue
             ph = rules.phase_at(start)
-            if ph is None:
-                # Shifted off the end of the match: this observation no longer
-                # belongs to any window and stops counting for anyone.
-                lost += 1
             j = dict(iv)
             j["start"] = start
             j["end"] = end
             j["phase"] = ph["id"] if ph else None
+            # Lost means "in no window at all", and that is `split_by_phase`'s
+            # answer, not `phase_at(start)`'s. A hold that began a second
+            # before the buzzer - which is what a clock corrected backwards
+            # does to the first hold of a match - still spends almost all of
+            # itself inside auto, and the split places it there. Counting it
+            # as thrown away mattered because the caller reads this number to
+            # decide whether to abandon the correction for this robot
+            # entirely: measured, two holds over 17 seconds with 11 of them
+            # landing in auto, and the correction dropped for "throwing away
+            # every observation" - leaving the robot on the uncorrected
+            # timeline the correction exists to replace.
+            if not any(c.get("phase") for c in rules.split_by_phase([j])):
+                lost += 1
             out.append(j)
         return out, lost
 
@@ -3435,7 +3464,11 @@ class Handler(BaseHTTPRequestHandler):
         if not text:
             # Offline at a venue is the normal case, not an error worth a dialog.
             # The reason separates that from an answer that was cut off or
-            # declined, which need different things from the person reading it.
+            # declined, which need different things from the person reading it -
+            # and it decides whether the slot is given back, because one of
+            # those three was billed for and the other was not.
+            if reason == ai.UNREACHABLE:
+                h.ai_refund()
             return self._json({"configured": True, "text": None, "reason": reason})
         out = {"text": text, "provider": client.provider, "model": client.label,
                "at": time.time(), "stamp": stamp}
