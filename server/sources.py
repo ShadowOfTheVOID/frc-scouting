@@ -141,6 +141,14 @@ class TBA:
     def event_teams(self, key):
         return self._get(f"/event/{key}/teams/simple")
 
+    def events_for_team(self, team, year=2026):
+        """Every event one team is registered for.  The authoritative list.
+
+        Second choice behind Statbotics only because that one needs no key, and
+        this runs during setup, before there is necessarily a key to use.
+        """
+        return self._get(f"/team/frc{int(team)}/events/{year}/simple", use_etag=False)
+
     def event_matches(self, key):
         return self._get(f"/event/{key}/matches")
 
@@ -293,6 +301,18 @@ class Statbotics:
 
     def team_events(self, event, year=2026):
         q = urllib.parse.urlencode({"event": event, "year": year, "limit": 200})
+        return self._get(f"/team_events?{q}")
+
+    def events_for_team(self, team, year=2026):
+        """Every event one team is registered for this season.
+
+        The only lookup in this file that needs no key at all, which is what
+        makes it worth having: it runs on a hub that has been started for the
+        first time and configured with nothing, and it is what turns "what is my
+        event key?" - the one question in setup nobody can answer from memory -
+        into a list to pick from.
+        """
+        q = urllib.parse.urlencode({"team": int(team), "year": year, "limit": 50})
         return self._get(f"/team_events?{q}")
 
 

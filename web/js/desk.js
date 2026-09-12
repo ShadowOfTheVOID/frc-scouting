@@ -1129,19 +1129,32 @@ function allianceCard(m, side) {
       ${rows || '<div class="empty">No lineup yet.</div>'}
     </div></div>`;
 }
-/** Two robots that habitually start in the same zone will meet there. */
+/** Two robots that habitually start in the same zone will meet there.
+ *
+ * Grouped by the side, not by the lane, even now that scouts can record a lane:
+ * a side is the answer every entry has, a lane is one only the after screen's
+ * second page produces, and a warning that goes quiet because half the data is
+ * finer than the other half is worse than one that fires and gets read. The
+ * lanes go in the text instead, where they say how hard the clash really is.
+ */
 function autoClashNote(teams) {
   const byZone = {};
   for (const t of teams) {
     if (!t || !t.observed.startZone) continue;
-    (byZone[t.observed.startZone] ||= []).push(t.team);
+    (byZone[t.observed.startZone] ||= []).push(t);
   }
   const clash = Object.entries(byZone).filter(([, ts]) => ts.length > 1);
   if (!clash.length) return '';
-  return clash.map(([zone, ts]) => `<div class="callout" style="margin:0">
+  return clash.map(([zone, ts]) => {
+    const lanes = ts.map((t) => t.observed.startLane);
+    const named = ts.map((t, i) => lanes[i] ? `${t.team} (${esc(lanes[i])})` : String(t.team));
+    const apart = lanes.every(Boolean) && new Set(lanes).size === lanes.length;
+    return `<div class="callout" style="margin:0">
     <div class="h">AUTO — ${esc(zone.toUpperCase())}</div>
-    <div class="b">${ts.join(' and ')} both usually start ${esc(zone)}. Worth asking before the
-      match rather than watching it happen.</div></div>`).join('');
+    <div class="b">${named.join(' and ')} both usually start ${esc(zone)}.${apart
+      ? ' Different lanes, so ask rather than assume — but they are still both going that way.'
+      : ' Worth asking before the match rather than watching it happen.'}</div></div>`;
+  }).join('');
 }
 
 /** Has anyone on the other alliance made a habit of defending these robots? */
@@ -1293,13 +1306,29 @@ function renderTeamDetail() {
         <div class="kv"><span>defends</span><b>${teamCounts(o.defenseAgainst)}</b></div>
         <div class="kv"><span>defended by</span><b>${teamCounts(o.defendedBy)}</b></div>
         <div class="kv"><span>starts</span><b>${o.startZone
-          ? `${o.startZone.toUpperCase()} · ${Math.round(o.startZonePct)}%` : '—'}</b></div>
+          ? `${o.startZone.toUpperCase()}${o.startLane ? ` · ${o.startLane.toUpperCase()}` : ''} · ${Math.round(o.startZonePct)}%`
+          : '—'}</b></div>
         <div class="kv"><span>auto did nothing</span><b>${o.autoFailRate
           ? Math.round(o.autoFailRate) + '%' : 'never seen'}</b></div>
         <div class="kv"><span>lots of fouls</span><b>${o.foulRate
           ? Math.round(o.foulRate) + '%' : 'never seen'}</b></div>
         <div class="kv"><span>driver</span><b>${o.driver ?? '—'} / 5</b></div>
         <div class="kv"><span>average preload</span><b>${o.avgPreload ?? 'not asked'}</b></div>
+        <div class="kv"><span>how much went in</span><b>${o.accuracy == null
+          ? 'not asked' : `${o.accuracy} / 5`}</b></div>
+        <div class="kv"><span>crosses the field</span><b>${o.traversalRate == null
+          ? 'not asked' : Math.round(o.traversalRate) + '%'}${kinds(o.traversalKinds, 'none')}</b></div>
+        <div class="kv"><span>gets stuck</span><b>${o.beachedRate == null
+          ? 'not asked' : Math.round(o.beachedRate) + '%'}${kinds(o.beachedKinds, 'neither')}</b></div>
+        <div class="kv"><span>scores while moving</span><b>${Math.round(o.scoresWhileMovingRate || 0)}%</b></div>
+        <div class="kv"><span>knocks shots down</span><b>${Math.round(o.disruptRate || 0)}%</b></div>
+        <div class="kv"><span>leaves to climb at</span><b>${o.climbStartSecs == null
+          ? 'nobody timed one' : `${Math.round(o.climbStartSecs)}s${o.climbsTimed
+            ? ` · ${o.climbsTimed} match${o.climbsTimed === 1 ? '' : 'es'}` : ''}`}</b></div>
+        <div class="kv"><span>climbs at</span><b>${o.climbSpot
+          ? esc(o.climbSpot.replace(/([A-Z])/g, ' $1').toLowerCase()) : 'not asked'}</b></div>
+        <div class="kv"><span>tried a climb and fell</span><b>${o.climbFailRate
+          ? Math.round(o.climbFailRate) + '%' : 'never seen'}</b></div>
       </div></div>
     ${teamCharts(t)}
     ${lvN ? `

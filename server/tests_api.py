@@ -44,6 +44,14 @@ class Live:
         self.dir = tempfile.mkdtemp(prefix="frc-api-test-")
         self.store = Store(os.path.join(self.dir, "test.db"))
         self.hub = hub.Hub(self.store)
+        # Credentials live in `.env` now, so a test that saves a key writes a
+        # file - which must be this one and never the developer's own. And
+        # whatever is exported in the shell running the tests must not read as a
+        # key this hub was given.
+        self.hub.env_path = os.path.join(self.dir, ".env")
+        for name in envfile.KEYS.values():
+            os.environ.pop(name, None)
+            os.environ.pop(name + envfile.B64, None)
         hub.Handler.hub = self.hub
         hub.Handler.allow_remote_config = True   # the test client is not localhost-ish enough
         self.srv = hub.Server(("127.0.0.1", 0), hub.Handler)
@@ -929,17 +937,17 @@ def test_key_hygiene(L):
     good = "a" * 64
     code, r = L.req("/api/config", {"tbaKey": '  "X-TBA-Auth-Key: %s"  ' % good})
     ok &= check("a key pasted with its header name and quotes is saved as the key",
-                code == 200 and L.store.get("tbaKey") == good, f"({L.store.get('tbaKey')!r})")
+                code == 200 and L.hub.cfg("tbaKey") == good, f"({L.hub.cfg('tbaKey')!r})")
     ok &= check("and the page is told what was taken off it",
                 bool(r.get("notes", {}).get("tbaKey")), f"({r.get('notes')})")
 
     code, _ = L.req("/api/config", {"nexusKey": "nx-abc\n  def"})
     ok &= check("a key split across two lines is joined back up",
-                L.store.get("nexusKey") == "nx-abcdef", f"({L.store.get('nexusKey')!r})")
+                L.hub.cfg("nexusKey") == "nx-abcdef", f"({L.hub.cfg('nexusKey')!r})")
 
     code, r = L.req("/api/config", {"lovatKey": "Bearer lvt-realkey"})
     ok &= check("a `Bearer` scheme is not part of the key",
-                L.store.get("lovatKey") == "lvt-realkey", f"({L.store.get('lovatKey')!r})")
+                L.hub.cfg("lovatKey") == "lvt-realkey", f"({L.hub.cfg('lovatKey')!r})")
 
     # The one worth refusing: eight boxes on one page, and a key in the wrong
     # one breaks two services while both still say SET.
@@ -947,7 +955,7 @@ def test_key_hygiene(L):
     ok &= check("a Lovat key in the TBA box is refused, and named",
                 code == 400 and "LOVAT" in r["problems"]["tbaKey"], f"({code} {r})")
     ok &= check("and nothing at all was saved by that request",
-                L.store.get("tbaKey") == good, f"({L.store.get('tbaKey')!r})")
+                L.hub.cfg("tbaKey") == good, f"({L.hub.cfg('tbaKey')!r})")
 
     for name, body, field in (
             ("a web address", {"tbaKey": "https://www.thebluealliance.com/account"}, "tbaKey"),
@@ -966,7 +974,7 @@ def test_key_hygiene(L):
     ok &= check("an AI key from the wrong company is refused for the model beside it",
                 code == 400 and "aiKey" in r.get("problems", {}), f"({code} {r})")
     L.req("/api/config", {"aiModel": "anthropic:claude-opus-5", "aiKey": "sk-ant-api03-notreal"})
-    ok &= check("and accepted for the right one", L.store.get("aiKey") == "sk-ant-api03-notreal")
+    ok &= check("and accepted for the right one", L.hub.cfg("aiKey") == "sk-ant-api03-notreal")
 
     # The same mistake in the direction OpenRouter makes easy: its key pasted
     # under the maker's own model, because the model name says Claude either way.
@@ -977,26 +985,26 @@ def test_key_hygiene(L):
     L.req("/api/config", {"aiModel": "openrouter:anthropic/claude-opus-5",
                           "aiKey": "sk-or-v1-notreal"})
     ok &= check("and accepted once the model beside it goes through OpenRouter",
-                L.store.get("aiKey") == "sk-or-v1-notreal")
+                L.hub.cfg("aiKey") == "sk-or-v1-notreal")
 
     # FRC Events' own documentation hands you the two halves joined together.
     L.req("/api/config", {"frcEventsToken": "someone:tok-12345678"})
     ok &= check("a `username:token` paste fills in both boxes",
-                L.store.get("frcEventsUser") == "someone"
-                and L.store.get("frcEventsToken") == "tok-12345678",
-                f"({L.store.get('frcEventsUser')!r})")
+                L.hub.cfg("frcEventsUser") == "someone"
+                and L.hub.cfg("frcEventsToken") == "tok-12345678",
+                f"({L.hub.cfg('frcEventsUser')!r})")
     L.req("/api/config", {"frcEventsUser": "", "frcEventsToken": ""})
     L.req("/api/config", {"frcEventsToken": "Basic bGVhZDp0b2stODc2NTQzMjE="})
     ok &= check("so does the base64 Basic credential from their docs",
-                L.store.get("frcEventsUser") == "lead"
-                and L.store.get("frcEventsToken") == "tok-87654321",
-                f"({L.store.get('frcEventsUser')!r})")
+                L.hub.cfg("frcEventsUser") == "lead"
+                and L.hub.cfg("frcEventsToken") == "tok-87654321",
+                f"({L.hub.cfg('frcEventsUser')!r})")
 
     # Shape is advisory: a vendor may change its key format, and a hub that
     # refuses to be configured at a competition is worse than a warning.
     code, r = L.req("/api/config", {"tbaKey": "short"})
     ok &= check("an odd-looking key is saved anyway, with a warning",
-                code == 200 and L.store.get("tbaKey") == "short"
+                code == 200 and L.hub.cfg("tbaKey") == "short"
                 and "tbaKey" in r.get("warnings", {}), f"({code} {r})")
 
     # confirmEventSwitch because the harness is seeded: pointing a hub that
@@ -1013,7 +1021,7 @@ def test_key_hygiene(L):
     # A blank box means "leave that key alone" - nobody retypes eight keys to
     # change the event - so there has to be another way to take one off.
     L.req("/api/config", {"tbaKey": ""})
-    ok &= check("an emptied box is how a key is forgotten", not L.store.get("tbaKey"))
+    ok &= check("an emptied box is how a key is forgotten", not L.hub.cfg("tbaKey"))
 
     code, c = L.req("/api/config")
     ok &= check("the page is told which boxes hold something, box by box",
@@ -1027,7 +1035,7 @@ def test_key_hygiene(L):
     ok &= check("keycheck answers with the cleaned value and the problems",
                 code == 200 and r["cleaned"]["tbaKey"] == good
                 and "lovatKey" in r["problems"], f"({r})")
-    ok &= check("and saves none of it", not L.store.get("tbaKey"))
+    ok &= check("and saves none of it", not L.hub.cfg("tbaKey"))
 
     # With nothing configured this touches no network at all, which is the
     # state CI runs in.
@@ -1040,6 +1048,258 @@ def test_key_hygiene(L):
                 f"({r.get('checked')})")
 
     L.store.set("eventKey", was)      # hand the shared harness back its event
+    return ok
+
+
+def test_keys_live_in_env(L):
+    """The API keys live in `.env` beside the hub, not in the event database.
+
+    Where a key is kept is not a filing preference.  In the database it was in
+    every snapshot under `data/snapshots/`, in any copy of the `.db` sent to a
+    mentor to look at, and gone the moment the laptop was replaced.  In one file
+    it is one thing to back up and one thing to copy to a spare laptop - which
+    is the whole of setting a second hub up, since none of these keys expire.
+    """
+    ok = True
+    path = L.hub.env_path
+
+    code, _ = L.req("/api/config", {"nexusKey": "nx-inthefile"})
+    text = open(path, encoding="utf-8").read()
+    ok &= check("a key saved from the panel lands in .env",
+                code == 200
+                and envfile.decode(envfile.parse(text).get("NEXUS_API_KEY_B64") or "")
+                == "nx-inthefile", f"({envfile.parse(text)})")
+    ok &= check("base64-encoded, so it cannot be read off the screen at a glance",
+                "nx-inthefile" not in text)
+    ok &= check("which is not encryption, and the test says so: anyone with the file decodes it",
+                base64.b64decode(envfile.parse(text)["NEXUS_API_KEY_B64"]).decode()
+                == "nx-inthefile")
+    ok &= check("and nowhere in the event database", L.store.get("nexusKey") is None)
+    ok &= check("the hub reads it back through one call, whichever home it has",
+                L.hub.cfg("nexusKey") == "nx-inthefile")
+    ok &= check("and the file it wrote is readable by nobody else",
+                (os.stat(path).st_mode & 0o077) == 0, oct(os.stat(path).st_mode & 0o777))
+
+    # A `_B64` line that will not decode must not become a key made of mangled
+    # bytes: every vendor would refuse it, and nothing would say why.
+    os.environ["NEXUS_API_KEY_B64"] = "this is not base64!"
+    ok &= check("a mangled encoded line reads as no key at all, and is named",
+                not L.hub.cfg("nexusKey") and "nexusKey" in envfile.problems(),
+                f"({envfile.problems()})")
+    os.environ.pop("NEXUS_API_KEY_B64", None)
+
+    # A key that is taken off a hub has to leave the file, not sit there as an
+    # empty line that reads like a half-finished setup.
+    L.req("/api/config", {"nexusKey": ""})
+    ok &= check("forgetting a key takes its line out of the file",
+                "NEXUS_API_KEY" not in open(path, encoding="utf-8").read()
+                and not L.hub.cfg("nexusKey"))
+
+    # Typing a plain line into the file by hand is a supported way to set a key -
+    # it just does not stay that way.
+    envfile.write("LOVAT_API_KEY", "lvt-typedbyhand", path)
+    os.environ.pop("LOVAT_API_KEY", None)
+    applied = envfile.load(path)
+    ok &= check("a plain line typed into the file by hand is read as it stands",
+                L.hub.cfg("lovatKey") == "lvt-typedbyhand")
+    ok &= check("and is rewritten in the encoded form the next time the hub starts",
+                "lovatKey" in L.hub.adopt_keys(applied)
+                and "lvt-typedbyhand" not in open(path, encoding="utf-8").read()
+                and L.hub.cfg("lovatKey") == "lvt-typedbyhand")
+
+    # A hub set up by an older build has its keys in the database. Startup moves
+    # them, once, and the row goes.
+    good = "a" * 64
+    L.store.set("tbaKey", good)
+    moved = L.hub.adopt_keys()
+    ok &= check("a key left in the database by an older build moves into the file",
+                moved == ["tbaKey"] and L.store.get("tbaKey") is None
+                and envfile.decode(envfile.parse(open(path, encoding="utf-8").read())
+                                   .get("TBA_API_KEY_B64") or "") == good, f"({moved})")
+    ok &= check("and the hub serves it as set, from its new home",
+                L.req("/api/config")[1]["keys"]["tba"] is True)
+
+    # The machine being explicit - a systemd unit, or a one-off
+    # `NEXUS_API_KEY=... python3 server/hub.py` - must never be overruled by a
+    # settings row older than the file, and must not be copied into the file
+    # either: it was deliberately kept outside it.
+    os.environ.pop("TBA_API_KEY_B64", None)
+    os.environ["TBA_API_KEY"] = "from-the-machine"
+    L.store.set("tbaKey", "a-stale-row")
+    ok &= check("a real environment variable beats a leftover settings row",
+                L.hub.cfg("tbaKey") == "from-the-machine", f"({L.hub.cfg('tbaKey')!r})")
+    ok &= check("and adopting drops that row rather than overwriting the variable",
+                L.hub.adopt_keys() == [] and L.store.get("tbaKey") is None
+                and L.hub.cfg("tbaKey") == "from-the-machine")
+    ok &= check("nor is a variable the machine set written into the file",
+                "from-the-machine" not in open(path, encoding="utf-8").read())
+
+    for name in envfile.KEYS.values():           # leave the process as we found it
+        os.environ.pop(name, None)
+        os.environ.pop(name + envfile.B64, None)
+    envfile.write_many({n: None for name in envfile.KEYS.values()
+                        for n in (name, name + envfile.B64)}, path)
+    return ok
+
+
+def test_event_picker(L):
+    """The event key, looked up instead of remembered.
+
+    `2026casf` is the one thing in setup that cannot be answered from the room -
+    it is not on the pit map and not guessable from "Bay Area Regional" - so the
+    hub fetches the list for a team number.  Two APIs with two shapes feed it and
+    neither is ours, so what is tested here is the normalising: the field names
+    each one uses, a row that is missing them, and the level guessed off the
+    event type.  No network: the parsing is the part that can be wrong.
+    """
+    ok = True
+    statbotics = [
+        {"team": 6059, "event": "2026casf", "event_name": "Bay Area Regional", "week": 3,
+         "time": 1774000000, "city": "San Francisco", "state": "CA", "country": "USA",
+         "type": "regional"},
+        {"team": 6059, "event": "2026cc", "event_name": "Chezy Champs",
+         "start_date": "2026-09-20"},
+        {"team": 6059, "event_name": "no key at all"},          # dropped
+        {"team": 6059, "event": "notakey", "event_name": "no year in it"},   # dropped
+        "junk",                                                  # dropped
+    ]
+    got = hub._events_from(statbotics, ("event", "key"), ("event_name", "name"))
+    ok &= check("statbotics rows normalise, and unusable ones are dropped rather than raising",
+                [e["key"] for e in got] == ["2026casf", "2026cc"], f"({got})")
+    ok &= check("with the name, the place and the date a person recognises",
+                got[0]["name"] == "Bay Area Regional" and "San Francisco" in got[0]["where"]
+                and got[0]["start"].startswith("2026-"), f"({got[0]})")
+
+    tba = [
+        {"key": "2026cmptx", "name": "Einstein Field", "event_type": 4,
+         "start_date": "2026-04-20"},
+        {"key": "2026necmp", "name": "New England District Championship", "event_type": 3,
+         "start_date": "2026-04-10"},
+        {"key": "2026casj", "name": "Silicon Valley Regional", "event_type": 0,
+         "start_date": "2026-03-12", "city": "San Jose", "state_prov": "CA"},
+    ]
+    got = hub._events_from(tba, ("key",), ("name",))
+    ok &= check("tba rows normalise under their own field names, in date order",
+                [e["key"] for e in got] == ["2026casj", "2026necmp", "2026cmptx"], f"({got})")
+    ok &= check("and the fuel target is guessed from the kind of event it is",
+                [e["level"] for e in got] == ["regional", "dcmp", "champs"],
+                f"({[e['level'] for e in got]})")
+
+    # One row per event even if a source ever repeats itself: the picker is a
+    # list somebody scans, and the same regional twice is a list they mistrust.
+    twice = hub._events_from(tba + tba, ("key",), ("name",))
+    ok &= check("a repeated event appears once", len(twice) == 3, f"({len(twice)})")
+
+    code, r = L.req("/api/eventsfor?team=", method="GET")
+    ok &= check("asking with no team number is answered, not crashed on",
+                code == 200 and not r["events"] and "team number" in r["problem"], f"({r})")
+    code, r = L.req("/api/eventsfor?team=six%20thousand", method="GET")
+    ok &= check("and neither is a team number that is not one",
+                code == 200 and not r["events"], f"({code} {r})")
+    return ok
+
+
+def test_firewall_offer_is_windows_only(L):
+    """The one prompt that blocks startup, and the two guards that stop it.
+
+    It waits on `input()`, so anywhere without a person in front of it - a
+    service, a CI runner, a hub started from a script - it must not run at all.
+    Getting this wrong does not fail a test somewhere; it hangs the hub.
+    """
+    ok = True
+    import firewall
+    ok &= check("it is Windows-only, so nothing here can ask on this machine",
+                firewall.relevant() is False)
+
+    asked = []
+
+    class Loud:
+        def get(self, k, d=None):
+            asked.append(k)
+            return None
+
+        def set(self, k, v):
+            asked.append(("set", k))
+
+    ok &= check("offering does nothing at all off Windows, and reads no settings",
+                firewall.offer(Loud(), 6059) is None and not asked, f"({asked})")
+    ok &= check("and the command it would print is the narrow rule, not a blanket one",
+                all(bit in firewall.manual(6059) for bit in
+                    ("dir=in", "protocol=TCP", "localport=6059", "profile=private")),
+                f"({firewall.manual(6059)})")
+    return ok
+
+
+def test_setup_checklist(L):
+    """The list the admin panel opens with, and what ticks each line off.
+
+    Every step is read from what the hub holds rather than from a box having
+    been typed into, which is what makes the same list the answer to "did that
+    work?" on the Saturday as well as "what now?" on the Friday.  It is served
+    to the hub machine only: it is the admin panel's, and that page does not
+    open anywhere else.
+    """
+    ok = True
+    was = L.store.get("eventKey")
+    setup = lambda: L.req("/api/config")[1]["setup"]
+    step = lambda sid: next(st for st in setup()["steps"] if st["id"] == sid)
+
+    s = setup()
+    ok &= check("the checklist arrives in the order the work is done",
+                [st["id"] for st in s["steps"]] == list(hub.Hub.SETUP_STEPS),
+                f"({[st['id'] for st in s['steps']]})")
+    ok &= check("and says where the keys are written, so the panel need not guess",
+                s["envPath"] == L.hub.env_path)
+    ok &= check("the event is ticked off, with what actually arrived under it",
+                step("event")["done"] is True and "teams" in step("event")["say"],
+                f"({step('event')['say']!r})")
+
+    L.req("/api/config", {"nexusKey": ""})
+    ok &= check("no Nexus key is an unticked line, and a first run",
+                step("nexus")["done"] is False and setup()["firstRun"] is True)
+    L.req("/api/config", {"nexusKey": "nx-checklist"})
+    ok &= check("pasting one ticks it, and the panel stops leading with the list",
+                step("nexus")["done"] is True and setup()["firstRun"] is False)
+
+    # TEST KEYS is the only thing in the app that knows a wrong key from a quiet
+    # service, so the step reports the verdicts rather than "a string is stored".
+    L.store.set("keyTest", {"at": time.time(), "eventKey": L.store.get("eventKey"),
+                            "states": {"nexus": "bad", "tba": "unset"}})
+    ok &= check("a key that came back wrong leaves the test step unticked, and names it",
+                step("test")["done"] is False and "Nexus" in step("test")["say"],
+                f"({step('test')['say']!r})")
+    L.store.set("keyTest", {"at": time.time(), "eventKey": L.store.get("eventKey"),
+                            "states": {"nexus": "ok", "tba": "down"}})
+    t = step("test")
+    ok &= check("one that answered ticks it, and a quiet service is not called a failure",
+                t["done"] is True and "Nexus" in t["say"] and "not a key being wrong" in t["say"],
+                f"({t['say']!r})")
+    L.store.set("keyTest", {"at": time.time(), "eventKey": "2026somewhereelse",
+                            "states": {"nexus": "ok"}})
+    ok &= check("a test run against a different event does not count for this one",
+                step("test")["done"] is False)
+
+    # Phones this hub has already heard from, put aside: by this point in the run
+    # several tests have claimed chairs, and the state under test is a hub that
+    # nothing has ever connected to.
+    devices = L.store.get("devices")
+    L.store.set("devices", {})
+    ok &= check("nothing has connected, so the phone step says so and how to",
+                step("phones")["done"] is False and "/scout" in step("phones")["say"],
+                f"({step('phones')['say']!r})")
+    L.hub.touch({"deviceId": "checklist-probe", "scoutId": "ZZ"}, "connected")
+    ok &= check("and one phone reaching the hub ticks it",
+                step("phones")["done"] is True)
+    L.store.set("devices", devices or {})
+
+    ok &= check("the optional half is listed as optional, not as steps",
+                len(setup()["later"]) >= 3
+                and all(isinstance(x, str) for x in setup()["later"]))
+
+    L.store.forget("keyTest")
+    L.req("/api/config", {"nexusKey": ""})
+    if was:
+        L.req("/api/config", {"eventKey": was, "confirmEventSwitch": True})
     return ok
 
 
@@ -1540,6 +1800,15 @@ def test_collection_path_is_intact(L):
         "note": "crossed a window edge mid-hold",
         "startPosition": "left", "autoFailed": False, "defenseTarget": 201,
         "clockShared": True, "clockBy": "AK",
+        # The after screen's second page. Optional to a scout, but once
+        # answered they are observations like any other and have to survive
+        # the same round trip - a lane that arrives as None is a robot the
+        # dashboard says nobody watched.
+        "startLane": "bump", "traversal": "trench", "beached": "fuel",
+        "climbSpot": "backMiddle", "accuracyRating": 4,
+        "scoresWhileMoving": True, "disrupts": False,
+        "climbFailed": False, "autoClimbFailed": False,
+        "climbStartSecs": 131.5, "autoClimbStartSecs": 12.5,
     }
     rec = {"eventKey": EK, "matchKey": mk, "team": 101, "scoutId": "PATH",
            "deviceId": "path-test", "alliance": "red", "station": 1,
@@ -1850,6 +2119,87 @@ def test_vendor_backoff_is_remembered(L):
     return ok
 
 
+def test_after_screen_extras_reach_the_dashboard(L):
+    """The optional questions have to survive as observations, not as zeros.
+
+    Everything on the after screen's second page is skippable, and most of it
+    will be skipped. That makes the unanswered case the important one: a robot
+    nobody was asked about must read "not asked" everywhere, never 0% - the
+    same rule the lovat block has always followed for a robot nobody uploaded.
+    """
+    ok = True
+    now = time.time()
+    mk = f"{EK}_qm1"
+
+    def send(scout, extra, when=None):
+        rec = entry(mk, 103, scout, when or now)
+        rec["payload"].update(extra)
+        return L.req("/api/sync", {"scout": [rec]})
+
+    # Two scouts, two matches' worth of answers, one of them left blank.
+    send("EX1", {"startLane": "bump", "traversal": "bump", "beached": "bump",
+                 "accuracyRating": 4, "scoresWhileMoving": True, "disrupts": False,
+                 "climbSpot": "frontSide", "climbStartSecs": 128.0})
+    send("EX2", {"startLane": "bump", "traversal": "none", "beached": "neither",
+                 "accuracyRating": 2, "scoresWhileMoving": True, "disrupts": True,
+                 "climbSpot": "frontSide", "climbStartSecs": 134.0})
+    send("EX3", {})
+
+    o = analytics.event_summary(L.store, EK)["teams"][103]["observed"]
+    ok &= check("the lane is tallied and named", o["startLane"] == "bump"
+                and o["startLanes"] == {"bump": 2}, f"({o['startLane']} {o['startLanes']})")
+    ok &= check("accuracy averages only the matches that answered",
+                o["accuracy"] == 3.0 and o["accuracyMatches"] == 2, f"({o['accuracy']})")
+    # One crossed, one stayed home, one was never asked: 50% of the answers,
+    # not 33% of the matches.
+    ok &= check("crossing is a rate over the answers, not over the matches",
+                o["traversalRate"] == 50.0, f"({o['traversalRate']})")
+    ok &= check("the kinds are kept beside the rate",
+                o["traversalKinds"] == {"bump": 1, "none": 1}
+                and o["beachedKinds"] == {"bump": 1, "neither": 1},
+                f"({o['traversalKinds']} {o['beachedKinds']})")
+    # The two chips are not tri-state: not ticked is a no, so their denominator
+    # is every match scouted rather than the ones that answered.
+    n = analytics.event_summary(L.store, EK)["teams"][103]["matchesScouted"]
+    ok &= check("a chip nobody ticked is a no, and one two scouts ticked is a rate",
+                o["disruptRate"] == round(1 / n * 100.0, 1)
+                and o["scoresWhileMovingRate"] == round(2 / n * 100.0, 1),
+                f"({o['disruptRate']} {o['scoresWhileMovingRate']} over {n})")
+    ok &= check("climb timing averages the taps that had a clock behind them",
+                o["climbStartSecs"] == 131.0 and o["climbsTimed"] == 2,
+                f"({o['climbStartSecs']} {o['climbsTimed']})")
+    ok &= check("and where on the tower is the one they used",
+                o["climbSpot"] == "frontSide", f"({o['climbSpot']})")
+
+    # A robot that was scouted with the second page left alone. This is the
+    # case that matters: most entries at a real event will look like this.
+    plain = entry(mk, 202, "EX4", now)
+    plain["alliance"] = "blue"
+    L.req("/api/sync", {"scout": [plain]})
+    blank = analytics.event_summary(L.store, EK)["teams"][202]["observed"]
+    ok &= check("a team nobody answered for reads unknown, not zero",
+                blank["accuracy"] is None and blank["traversalRate"] is None
+                and blank["beachedRate"] is None and blank["startLane"] is None
+                and blank["climbStartSecs"] is None,
+                f"({blank['accuracy']} {blank['traversalRate']} {blank['climbStartSecs']})")
+
+    # And out through the two files a lead actually opens.
+    code, body = L.req("/api/export.csv?table=scout", raw=True)
+    head = body.splitlines()[0]
+    ok &= check("every new field has a column in the per-entry csv",
+                code == 200 and all(c in head for c in
+                                    ("startLane", "climbStartSecs", "climbSpot", "traversal",
+                                     "beached", "accuracyRating", "scoresWhileMoving",
+                                     "disrupts", "climbFailed")), f"({head})")
+    code, body = L.req("/api/export.csv?table=teams", raw=True)
+    head = body.splitlines()[0]
+    ok &= check("and the team summary carries the aggregates",
+                code == 200 and all(c in head for c in
+                                    ("startLane", "shotAccuracy", "traversalPct", "beachedKinds",
+                                     "climbStartSecs", "climbFailPct")), f"({head})")
+    return ok
+
+
 def main():
     L = Live()
     try:
@@ -1863,7 +2213,9 @@ def main():
                    test_junk_payload_cannot_blank_the_dashboard,
                    test_clock_correction_never_invents_numbers,
                    test_seats, test_seat_lifetime, test_match_clock, test_reconcile,
-                   test_config_scope, test_key_hygiene, test_env_file, test_admin_panel,
+                   test_config_scope, test_key_hygiene, test_keys_live_in_env,
+                   test_setup_checklist, test_event_picker,
+                   test_firewall_offer_is_windows_only, test_env_file, test_admin_panel,
                    test_trend_series, test_defence_counts_both_ways,
                    test_ai_is_gated_and_grounded,
                    test_nexus_tba_one_row, test_legacy_keys_migrate,
@@ -1872,7 +2224,8 @@ def main():
                    test_cheap_polling, test_write_counters, test_static_revalidates,
                    test_nexus_broadcasts_only_on_change, test_scope_lists_are_complete,
                    test_vendor_backoff_is_remembered,
-                   test_collection_path_is_intact):
+                   test_collection_path_is_intact,
+                   test_after_screen_extras_reach_the_dashboard):
             print(f"\n{fn.__name__.replace('test_', '').replace('_', ' ')}")
             passed &= fn(L)
         print()

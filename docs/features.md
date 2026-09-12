@@ -122,23 +122,55 @@ Two smaller pads:
 - **UNDO** takes back the most recently finished run of any kind — shooting, feeding or
   defending.
 - **CLIMB** cycles `None → L1 → L2 → L3`. During auto it is a single toggle, because the auto
-  tower is Level 1 only.
+  tower is Level 1 only. The tap is also **timed**: the first press of a climb records the
+  second of the match it happened on, which is the one number an alliance captain always asks
+  for — how long before the buzzer does this robot have to leave? Cycling `L1 → L2` keeps the
+  first time (the scout settling on a level, not the robot starting again); going back round to
+  `None` clears it. A tap before the clock is running or after the buzzer records **no** time
+  rather than a wrong one.
 
 ### AFTER THE BUZZER
 
-Reached automatically when the match clock runs out. Everything here is a tap.
+Reached automatically when the match clock runs out. Everything here is a tap. It is two
+pages: the first is the one every scout fills in on the way to the next match, the second is
+optional and holds the questions that are worth asking but never worth delaying a match for.
 
 - **HOW WAS THEIR DRIVING** — rough / okay / solid / great / best.
 - **DID THEY GET IN THE WAY** — not at all / a little / some / a lot.
+- **HOW MUCH OF IT WENT IN** — sprayed it / half in / mostly in / nearly all / never missed.
+  The rate ladder says how hard a robot was shooting; this says how much of it counted, and it
+  is the one thing the hold pad cannot see.
 - **ANYTHING GO WRONG** — `STOPPED MOVING`, `TIPPED`, `NO-SHOW`, `LOTS OF FOULS`,
-  `AUTO DID NOTHING`. The last one is deliberately distinct from the first two: the robot
-  turned up and moved, but auto did nothing.
-- **WHO WERE THEY BLOCKING** — three chips, one per opposing robot. **Only appears if this
-  scout actually logged defence**, so a scout who logged none never sees the question.
-- **WHERE DID THEY START** — the same picker as standby, mirrored here for a scout who was
-  thrown straight into the HUD by a match already on the field.
+  `AUTO DID NOTHING`, and `CLIMB FELL OFF` / `AUTO CLIMB FELL OFF`. `AUTO DID NOTHING` is
+  deliberately distinct from the first two: the robot turned up and moved, but auto did
+  nothing. The two climb chips are how a robot that *tried* stops reading the same as one that
+  never left the floor, and each disappears the moment a climb is actually recorded — a robot
+  cannot both climb and fall.
 - **A note** — one line of free text.
 - **SEND IT IN** — saves, sends if the hub is reachable, and loads the next match.
+
+**A FEW MORE THINGS** opens the second page and says how many of its questions this entry has
+answered. Nothing on it is required, and an unanswered question stays *unknown* everywhere
+downstream — never a no, and never a zero:
+
+- **WHERE DID THEY START** — the same picker as standby, mirrored here for a scout who was
+  thrown straight into the HUD by a match already on the field.
+- **WHICH LANE** — `TRENCH` / `BUMP`. The side is visible from the stands as they roll out; the
+  lane usually is not until they move, which is why it is asked here rather than on standby.
+- **WHO WERE THEY BLOCKING** — three chips, one per opposing robot. **Only appears if this
+  scout actually logged defence**, so a scout who logged none never sees the question.
+- **WHERE ON THE TOWER** — `FRONT`/`BACK` × `SIDE`/`MIDDLE`, and only when they climbed. Two
+  robots that both want the middle of the same face cannot climb together, and nothing else we
+  record can say so.
+- **HOW DID THEY GET ACROSS** — `TRENCH` / `BUMP` / `BOTH` / `STAYED THEIR SIDE`.
+- **DID THEY GET STUCK** — `ON THE FUEL` / `ON THE BUMP` / `BOTH` / `NO`. Which kind, not just
+  how often: stuck on the bump is a route you can send a robot around.
+- **ANYTHING ELSE** — `SHOOTS ON THE MOVE` and `KNOCKS SHOTS DOWN`. These two are chips rather
+  than questions, so an unticked chip reads as a no, the same as `TIPPED` beside it.
+
+Every question on the second page is one other teams' scouts have always answered on
+[Lovat](#what-lovat-actually-gives-us) and ours never could, which is why a robot could read
+`beached 40% · on the bump` in the LOVAT panel and have nothing at all to say in ours.
 
 ### OFFLINE
 
@@ -366,10 +398,18 @@ it doing arithmetic, and an alliance total it worked out itself is a number nobo
 Reached by clicking a team. Fuel — with its band and, where we could time it, fuel per second —
 climb, tower points, reliability, EPA and OPR as tiles; then
 what scouts saw — stockpiling, wasted fuel, feeding, defence in **both** directions (who this
-robot defends, and who defends it), usual start zone, auto failures, fouls, driver rating,
-average preload — then two charts, then **FROM LOVAT** if other teams scouted them, then **WHAT
-THE NOTES ADD UP TO** (generated, see [AI](#ai)), then every note anyone typed about them, and
-their pit scouting with photos.
+robot defends, and who defends it), usual start zone and lane, auto failures, fouls, driver
+rating, average preload, and then the answers off the after screen's second page: how much
+went in, how it crosses the field and how often it gets stuck doing it, whether it shoots on
+the move or knocks shots down, the second it leaves to climb and where on the tower it goes,
+and how often a climb was tried and lost — then two charts, then **FROM LOVAT** if other teams
+scouted them, then **WHAT THE NOTES ADD UP TO** (generated, see [AI](#ai)), then every note
+anyone typed about them, and their pit scouting with photos.
+
+The second-page rows are deliberately worded to match the LOVAT panel below them — *crosses the
+field*, *gets stuck*, *scores while moving*, *leaves to climb at* — so the same question about
+the same robot can be read from our scouts and from theirs without translating anything. A row
+that says **not asked** is a question nobody answered, which is not the same as a no.
 
 The two charts are this robot alone, match by match:
 
@@ -417,12 +457,36 @@ pits about.
 | fuel, throughput, fuel per second, accuracy, volleys | their scouts' count of the same robot, next to ours |
 | feeding — seconds, rate, feeds per match, balls fed | |
 | defence — total, contact, camping, effectiveness | |
-| **climb start time**, per level, and auto climb start | the second the robot left to go and climb. Our scouting cannot produce this: a scout with two thumbs cannot time a climb |
+| **climb start time**, per level, and auto climb start | the second the robot left to go and climb. Theirs is a timer and ours is the CLIMB button's own timestamp, so the two sit in different blocks — but ours is no longer blank |
 | climbs and climb rate per level, best climb | `L2`, `Level 2` and `2` all normalise onto our vocabulary; a label we cannot read is unknown, never a failed climb |
 | points — total, auto, teleop — and driver ability | |
 | beached, scores-while-moving, disrupts, field traversal | booleans, counted as a rate over the rows that answered |
 | outpost intakes, robot roles, feeder types, intake type | |
 | scouter names and free-text notes | notes are shown beside ours, tagged `· lovat` |
+
+#### What we ask now because they did
+
+Their export was for a long time the only place several of these questions had an answer at
+all, which made a robot other teams had scouted look better understood than one ours had
+watched all day. The after screen's second page closes most of that gap, in their vocabulary
+where the field has its own names for things:
+
+| Lovat column | Ours | Where it is asked |
+|---|---|---|
+| `l1/l2/l3StartTime`, `autoClimbStartTime` | `climbStartSecs`, `autoClimbStartSecs` | the CLIMB button, timed |
+| `endgameClimb` = `FAILED`, `autoClimb` = `FAILED` | `climbFailed`, `autoClimbFailed` | `ANYTHING GO WRONG` |
+| `fieldTraversal` | `traversal` | `HOW DID THEY GET ACROSS` |
+| `beached` | `beached` | `DID THEY GET STUCK` |
+| `scoresWhileMoving`, `disrupts` | same names | `ANYTHING ELSE` |
+| `accuracy` | `accuracyRating`, 1–5 | `HOW MUCH OF IT WENT IN` |
+| `climbPosition`, `climbSide` | `climbSpot` | `WHERE ON THE TOWER` |
+| the lane half of their start position | `startLane` | `WHICH LANE` |
+
+Three of their columns are still theirs alone, and on purpose. `robotRoles` we already infer
+from the intervals a scout holds; `intakeType` is a pit question we ask once per robot rather
+than once per match; and their per-event counts (`outpostIntakes`, `volleysPerMatch`,
+`totalBallThroughput`) come from a tap-per-action collection model that our two-thumb hold pad
+deliberately is not.
 
 Two things their exporter does that cannot be undone on our side: commas inside free text were
 replaced with semicolons before export, and playoff rows carry a label (`SF2-1`) that does not
@@ -550,7 +614,7 @@ only.
 ### And on the mirror
 
 The off-site copy has its own two levels, and they are separate strings on purpose. The **push
-key** is the write key: the hub proves it is the hub, and it lives in one settings field on one
+key** is the write key: the hub proves it is the hub, and it lives in one line of `.env` on one
 laptop. The **view passcode** is what a person types to read the site, and it gets shared around
 a team over a weekend. If one string did both jobs, anyone it reached could overwrite the event.
 
@@ -590,8 +654,36 @@ it is in the phone's database, not the page. Tell scouts not to reload.
 
 ### Keys and settings
 
-Entered at `/` on the hub laptop. All keys are free. **Nexus is required** in practice — without
-it nothing arms the match screen and every scout opens each match by hand. The rest are optional.
+Entered at `/` on the hub laptop. All keys are free except the AI one. **Nexus is required** in
+practice — without it nothing arms the match screen and every scout opens each match by hand. The
+rest are optional and folded away on the page until they are wanted.
+
+**Where the keys live.** In `.env` beside the hub (`NEXUS_API_KEY`, `TBA_API_KEY`,
+`FRC_EVENTS_USER`, `FRC_EVENTS_TOKEN`, `NEXUS_WEBHOOK_TOKEN`, `LOVAT_API_KEY`, `AI_API_KEY`,
+`MIRROR_PUSH_KEY`), written there by the panel and never in the event database. That matters
+beyond tidiness: the database is snapshotted to `data/snapshots/` and handed around as a file,
+and a credential should not travel with an event. It also makes the file the whole of a hub's
+setup — copy `.env` to a spare laptop, set the event key, and that laptop is a hub.
+
+**And in what form.** Base64, on a `_B64` line (`NEXUS_API_KEY_B64=…`), the same shape the admin
+password has always had — and, as there, **not encryption**: one command decodes it, and the
+docs say so rather than implying otherwise. It buys legibility, not secrecy: a key is not
+readable over a shoulder, on a projector, or in a screenshot of the file, and the file can be
+shown to somebody helping without eight secrets coming with it. `0600` and the file being yours
+are the actual protection.
+
+Both names are read, encoded first, because there are three real ways a key arrives: pasted into
+the panel (encoded), typed into the file by hand (plain), or set by the machine through a systemd
+unit or a one-off `NEXUS_API_KEY=… python3 server/hub.py` (plain). `Hub.adopt_keys()` runs once at
+startup and tidies the first two into the encoded form — a settings row from an older build, or a
+plain line that came out of the file — and deliberately leaves the third alone: copying a variable
+the machine kept outside the checkout *into* the checkout is not the hub's call. A `_B64` line
+that will not decode is reported by name, on the panel and in the hub's window, rather than being
+sent to a vendor as mangled bytes: present-but-unreadable is the one state where the box says
+SAVED and every vendor says no.
+
+**None of them expire.** No key here is per-event or per-season: the event key and the event level
+are the only settings a new competition needs.
 
 | Setting | What it does |
 |---|---|
@@ -603,14 +695,81 @@ it nothing arms the match screen and every scout opens each match by hand. The r
 | **The Blue Alliance** | Official results, per-robot climb, rankings, OPR. The fuel solver's only source. |
 | **Nexus** — required | Live queueing and match status, pit map, pit addresses, inspection, alliance selection. Its `On field` is what arms the match screen on the phones; without it every scout has to tap **THEY'RE ON THE FIELD** by hand, six times an hour. |
 | **Nexus webhook token** | Only if you registered a push webhook. |
-| **FRC Events** | The official result a few minutes before TBA posts it. Does not feed the solver. A username and a token, and pasting the joined `username:token` — or the base64 `Basic` blob out of their documentation — into the token box fills in both. |
-| **Lovat API key** | Other teams' scouting for this event. Your scouting lead makes one in the Lovat Dashboard under Settings → API keys; it starts `lvt-`, and your team has to be verified on Lovat first. Polled once every five minutes — Lovat allows one request every three seconds per key, so the hub stays well inside it. The export is scoped to what your Lovat account is allowed to see, so a short list is a setting on their side, not a failure on ours. |
+| **FRC Events** | The official result a few minutes before TBA posts it. Does not feed the solver. A username and a token: the token is a UUID (`8-4-4-4-12` hex digits) and does not expire, and the box warns — never refuses — when what was pasted is not that shape. Pasting the joined `username:token`, or the base64 `Basic` blob out of their documentation, fills in both boxes: that blob is only `base64("username:token")`, which is what the API actually sends. |
+| **Lovat API key** | Other teams' scouting for this event. It starts `lvt-`, and there is no screen anywhere in Lovat that makes one — the endpoints are on their server and nothing in their own apps calls them, so it is a `POST /v1/manager/apikey` carrying the `Authorization` header off a signed-in dashboard request (setup.md has the steps). Your team email has to be verified on Lovat first, which is what their 403 means. Polled once every five minutes — Lovat allows one request every three seconds per key, so the hub stays well inside it. The export is scoped to what your Lovat account is allowed to see, so a short list is a setting on their side, not a failure on ours. |
 | **AI model** | One list, grouped Claude / Gemini / OpenAI / OpenRouter, each option priced per million tokens. Picking a model picks who it is sent to, so there is no provider field to get wrong. Starts on **Claude Opus 5**, so pasting a key is enough — you never have to touch the list. *none* turns the three panels below off entirely, and stays off even with a key in the box. **other** takes a typed model id for anything released after this list was written; the name decides where it is sent. |
 | **OpenRouter** | The fourth group, and not a model-maker: one key and one bill in front of everybody else's models, including the open-weight ones nobody else sells. Its ids name the maker first — `anthropic/claude-opus-5` — and a slash in the id is the whole routing rule, so the same model bought direct and bought through OpenRouter stay two different choices with two different keys. The list shows three; **other** takes any of the hundreds it carries. Prices are the makers' own; OpenRouter takes its cut when the credit is bought. |
 | **AI key** | The key for whoever the model above goes to. A key from any of the others is refused here rather than saved: that mismatch has no symptom anywhere except every AI answer reading *the model could not be reached*. The pair worth naming is an `sk-or-` key under `claude-opus-5` rather than `anthropic/claude-opus-5` — the two read the same and only one of them takes it. |
 | **Mirror address** | Optional. The root of an off-site mirror, e.g. `https://systemoverload.org`. A trailing slash or a pasted `/api/push` is trimmed, and a bare hostname gets `https://`. Blank sends nothing anywhere. |
-| **Mirror push key** | Whatever `MIRROR_PUSH_KEY` is on that host. The write key, and not the passcode people type to read the site. |
+| **Mirror push key** | Whatever `MIRROR_PUSH_KEY` is on that host. The write key, and not the passcode people type to read the site. It is kept under that same name in the hub's `.env`, which is also the name the mirror itself reads — so a mirror tried out on one laptop needs the string in one place, not two. |
 | Statbotics | EPA. No key needed. |
+
+### Finding the event key
+
+The event key is the only thing in setup that cannot be answered from the room: `2026casf` is not
+on the pit map and is not guessable from "Bay Area Regional". So **FIND MY EVENTS**, beside the
+team number, fetches the events that team is registered for and fills in the key — and the fuel
+level, guessed from the kind of event it is.
+
+It asks **Statbotics** first, which needs no key at all; that is the whole point, because this
+runs on a hub that has just been unzipped and has nothing configured. **The Blue Alliance** is
+the fallback for a hub that already has that key, and is authoritative when it answers. Two APIs
+with two shapes and neither one ours, so `_events_from()` takes the field names each uses, keeps
+only rows with a usable key and drops the rest rather than raising in front of somebody who is
+trying to set a hub up. Neither answering is an ordinary outcome — no internet at home is common
+— and the box below stays a plain text box throughout: this is a shortcut past a lookup, not a
+new way of doing it, and it must not become the only way when an event is too new to be listed.
+
+### The setup checklist
+
+The panel opens with **START HERE**: five steps in the order they are done — unlock, name the
+event, paste the Nexus key, press TEST KEYS, open it on a phone — and a short list of what can
+wait (the other keys, an AI model, an admin password, the mirror).
+
+Each line is ticked off from what the hub **holds**, not from a box having been typed into. The
+event line reads done when the teams and the schedule have actually arrived and says how many;
+the Nexus line when a key is stored; the TEST KEYS line from the verdicts of the last run against
+*this* event key, naming anything that came back wrong and refusing to count a test run against a
+different event; the phone line when a device has really connected, and while none has, it names
+the dismissed Windows firewall prompt, which is what it usually is.
+
+That is what makes one list serve two questions: "what now?" on the Friday night, and "did that
+actually work?" on the Saturday morning. The steps come from `Hub.setup_steps()` and are served
+inside `/api/config`, to the hub machine only — that route is also what every phone on the wifi
+uses as its "are you there?" probe, so the extra work is not done for them.
+
+Unlocking is the one step the page adds for itself, and it has to be that way round: whether the
+panel is open is a property of the browser tab, and a hub with no admin password would otherwise
+report every tab unlocked, including the locked one asking the question.
+
+The hub prints the same list in its own window on a first run, and opens the panel in a browser
+when no event key is set at all (`--no-browser` turns that off). Nothing is opened once the hub is
+configured: by then the panel is somewhere you go on purpose.
+
+Two steps take themselves. **The panel unlocks itself** on a hub with no event key and no admin
+password — the lock is there to stop an accident on a *configured* hub, and there is nothing yet
+to have an accident with; every run after that opens read-only as before. And **saving tests**,
+while no key test has ever passed on this hub: the step that gets skipped is the one that catches
+a wrong key, and the morning it is discovered is the one morning it cannot be replaced. Once a
+test has passed, saving stops testing — five vendors over the network is not something to do on
+every save.
+
+### Windows, and the firewall
+
+Windows blocks inbound connections to a new program, asks about it in a popup that opens behind
+the black window, and treats a dismissal as a no. That answer is silent in the worst way: the hub
+runs, the admin panel works, the laptop's own browser works, and every phone in the building
+times out with nothing on any screen to say why. It has been this app's most common setup
+failure.
+
+So on Windows, with somebody actually in front of it, the hub asks in the window they are already
+looking at, and adds one rule through an elevation prompt: inbound, TCP, this port, **private
+networks only** — a venue network is private to Windows, a coffee shop is not. A "no" is
+remembered so it is not asked again; the rule existing is itself the memory of a "yes"; and every
+path through `server/firewall.py`, including a UAC prompt that gets refused and a laptop where
+the account cannot elevate at all, ends with the hub starting and the one-line `netsh` command
+printed. It never runs on macOS or Linux, and never when stdin is not a terminal — a service or a
+CI runner has nobody to answer it.
 
 ### The admin panel
 
@@ -711,10 +870,13 @@ Two more things on that page:
 
 ```
 python3 server/hub.py [--port 6059] [--db data/scouting.db] [--no-mdns] [--no-poll]
-                      [--allow-remote-config] [--set-admin-password]
+                      [--allow-remote-config] [--no-browser] [--set-admin-password]
 ```
 
-`--no-mdns` skips answering to `scout.local`. `--allow-remote-config` lets any device on the
+`--no-mdns` skips answering to `scout.local`. `--no-browser` stops a hub with no event key from
+opening the admin panel in a browser, which is otherwise the first thing a fresh one does — as
+does starting it with its output redirected, since a service or a CI runner has nobody in front
+of it. `--allow-remote-config` lets any device on the
 network change hub settings — off by default, and rarely what you want. `--set-admin-password`
 asks for a password twice, writes it into `.env`, and then carries on serving; it is how the
 password is set, changed, and — with a blank answer — removed.

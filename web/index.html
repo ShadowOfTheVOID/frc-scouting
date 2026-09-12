@@ -47,6 +47,39 @@
   #switchAsk{border:1px solid var(--red-ring);border-radius:8px;padding:10px 12px;
     margin-top:8px;color:var(--red-soft)}
   #switchAsk button{margin-top:8px}
+  /* The checklist. Every line is ticked off by the hub having the thing, not by
+     somebody having typed it in - so this is also what the panel looks like the
+     morning after, when the question is "did that work?" rather than "what now?".
+     See Hub.setup_steps in server/hub.py; none of these rules live twice. */
+  #setupPane{border:1px solid var(--red-ring)}
+  #setupPane>*{max-width:760px}
+  .steps{display:flex;flex-direction:column;gap:2px}
+  .step{display:grid;grid-template-columns:24px 1fr;gap:10px;padding:8px 10px;border-radius:8px}
+  .step.now{background:var(--raised)}
+  .step .mark{font:800 12px Barlow,sans-serif;color:var(--t5);text-align:center}
+  .step.did .mark{color:var(--green-soft)}
+  .step.now .mark{color:var(--red-soft)}
+  .step .ttl{font:800 12px Barlow,sans-serif;letter-spacing:.07em;color:var(--t3)}
+  .step.did .ttl{color:var(--t5)}
+  .step.now .ttl{color:var(--t0)}
+  .step .ln{font:500 12px/1.55 Barlow,sans-serif;color:var(--t4);margin-top:3px}
+  .step.now .ln{color:var(--t1)}
+  .later{font:500 11.5px/1.6 Barlow,sans-serif;color:var(--t6);margin:0;padding-left:18px}
+  .later li{margin-bottom:4px}
+  /* The eight optional boxes, out of the way until they are wanted. Nexus and
+     the event are the two that decide whether this app works at all, and they
+     used to sit in a column of twelve that all looked equally important. */
+  details.more{border-top:1px solid var(--line);padding-top:12px}
+  details.more>summary{cursor:pointer;list-style:none;font:800 11px Barlow,sans-serif;
+    letter-spacing:.14em;color:var(--t4)}
+  details.more>summary::-webkit-details-marker{display:none}
+  details.more>summary::before{content:"▸ ";color:var(--t5)}
+  details.more[open]>summary::before{content:"▾ "}
+  details.more>summary:hover{color:var(--t1)}
+  details.more .form{margin-top:14px}
+  /* A box and the button that acts on it, on one line. */
+  .pair{display:flex;gap:8px}
+  .pair input{flex:1;min-width:0}
 </style>
 </head>
 <body>
@@ -61,6 +94,17 @@
         <a class="lk" href="/dashboard">DASHBOARD</a>
         <a class="lk" href="/join">JOIN QR</a>
       </div>
+    </div>
+  </div>
+
+  <div class="cols hide" style="grid-template-columns:1fr" id="setupRow">
+    <div class="pane mid" id="setupPane">
+      <div class="eyebrow red" id="setupHead">START HERE</div>
+      <div class="steps" id="steps"></div>
+      <div class="hint" id="setupDone"></div>
+      <div class="hint" style="margin-top:4px">Later, and none of it in the way of a first
+        event:</div>
+      <ul class="later" id="setupLater"></ul>
     </div>
   </div>
 
@@ -87,6 +131,19 @@
     <div class="pane mid">
       <div class="eyebrow">EVENT</div>
       <div class="form">
+        <div class="f"><label>OUR TEAM</label>
+          <div class="pair">
+            <input id="ourTeam" inputmode="numeric" placeholder="6059">
+            <button class="go" id="findEvents" style="background:var(--btn);white-space:nowrap">FIND MY EVENTS</button>
+          </div>
+          <div class="h">Highlights us in every table — and finds the event key below, so
+            there is nothing to look up. Needs no API key: the list comes from Statbotics, and
+            from The Blue Alliance if you have set that key.</div>
+          <div class="say" id="findSay"></div></div>
+        <div class="f hide" id="eventPickRow"><label>PICK THE EVENT</label>
+          <select id="eventPick"></select>
+          <div class="h">Fills in the key and the level below. Everything after this is one
+            press of SAVE.</div></div>
         <div class="f" data-key="eventKey"><label>EVENT KEY</label>
           <input id="eventKey" placeholder="2026casf" autocapitalize="off" autocorrect="off" spellcheck="false">
           <div class="h">As shown on frc.events or The Blue Alliance. Nexus uses the same key.
@@ -99,83 +156,93 @@
             <option value="dcmp">District Championship — 240</option>
             <option value="champs">FIRST Championship — 360</option>
           </select></div>
-        <div class="f"><label>OUR TEAM</label>
-          <input id="ourTeam" inputmode="numeric" placeholder="6059">
-          <div class="h">Optional. Highlights us in every table.</div></div>
         <div class="hide" id="switchAsk"></div>
       </div>
     </div>
 
     <div class="pane mid">
       <div class="eyebrow">API KEYS</div>
-      <div class="hint">Stored on this machine only. Scout phones never receive them.
-        Nexus is required in practice — it is what arms the match screen on the phones, and
-        without it every scout opens each match by hand. The rest are optional; the app runs
-        without them, just with less live data.</div>
+      <div class="hint">One of them matters and the rest are extras, so only that one is open:
+        Nexus is what arms the match screen on the phones, and without it every scout opens each
+        match by hand. The app runs without any of the others, just with less live data.</div>
+      <div class="hint" id="keysWhere"></div>
       <div class="hint">Paste the key and nothing else — but if the header name, the quotes
         or a line break come with it, they get taken off and the box shows what will be
         saved. A key that belongs in another box is refused rather than stored.</div>
       <div class="form">
-        <div class="f" data-key="tbaKey"><label>THE BLUE ALLIANCE<span class="tag"></span></label>
-          <input id="tbaKey" placeholder="X-TBA-Auth-Key" autocomplete="off">
-          <div class="h">Official results and per-robot climb. thebluealliance.com/account</div>
-          <div class="say"></div></div>
         <div class="f" data-key="nexusKey"><label>NEXUS<span class="tag"></span></label>
           <input id="nexusKey" placeholder="Nexus-Api-Key" autocomplete="off">
           <div class="h">Required. Its "on field" is what arms the match screen on every
             phone — without it, every scout taps through by hand six times an hour. Also pit
             map and alliance selection. frc.nexus/api</div>
           <div class="say"></div></div>
-        <div class="f" data-key="nexusToken"><label>NEXUS WEBHOOK TOKEN<span class="tag"></span></label>
-          <input id="nexusToken" placeholder="Nexus-Token" autocomplete="off">
-          <div class="h">Only if you registered a push webhook.</div>
-          <div class="say"></div></div>
-        <div class="f" data-key="frcEventsUser"><label>FRC EVENTS USERNAME<span class="tag"></span></label>
-          <input id="frcEventsUser" placeholder="your frc-events username" autocomplete="off">
-          <div class="h">Posts the official result a few minutes before TBA does. It does not
-            feed the fuel solver — TBA stays the only source for that.
-            frc-events.firstinspires.org</div>
-          <div class="say"></div></div>
-        <div class="f" data-key="frcEventsToken"><label>FRC EVENTS TOKEN<span class="tag"></span></label>
-          <input id="frcEventsToken" placeholder="authorization token" autocomplete="off">
-          <div class="h">The token on its own. If what you have is the whole
-            <code>username:token</code> pair, or the base64 one out of their documentation,
-            paste that — both halves get filled in.</div>
-          <div class="say"></div></div>
-        <div class="f" data-key="lovatKey"><label>LOVAT API KEY<span class="tag"></span></label>
-          <input id="lovatKey" placeholder="lvt-…" autocomplete="off">
-          <div class="h">Other teams' scouting for this event. Your scouting lead makes a key
-            in the Lovat Dashboard (Settings → API keys); your team must be verified there
-            first. It is shown next to our own numbers, never mixed into them. lovat.app</div>
-          <div class="say"></div></div>
-        <div class="f"><label>AI MODEL</label>
-          <select id="aiModel"></select>
-          <div class="h">Summarises scout notes, explains the picklist and answers questions
-            about the event. It only ever reads the numbers already on this hub — it never
-            adds any, and nothing it writes is stored as data. Prices are per million tokens;
-            one answer is a few thousand. The OpenRouter group is the same models through one
-            key and one bill instead of three.</div></div>
-        <div class="f hide" id="aiOtherRow"><label>MODEL ID</label>
-          <input id="aiOther" placeholder="e.g. claude-opus-5" autocomplete="off"
-            autocapitalize="off" autocorrect="off" spellcheck="false">
-          <div class="h">For a model released after this list was written, or any of the
-            hundreds OpenRouter carries. The name decides where it is sent: a name with a
-            slash in it — <code>anthropic/claude-opus-5</code> — goes to OpenRouter, a bare
-            one goes to the company that made it.</div></div>
-        <div class="f" data-key="aiKey"><label>AI KEY<span class="tag"></span></label>
-          <input id="aiKey" placeholder="api key for whoever makes the model above"
-            autocomplete="off">
-          <div class="h">From whichever company makes the model picked above, or from
-            OpenRouter if that is where it is being sent. A key from any of the others is
-            refused here rather than saved — that mismatch has no other symptom than every AI
-            answer saying the model could not be reached.</div>
-          <div class="say"></div></div>
-        <div class="f" data-key="strategyPin"><label>STRATEGY PASSCODE<span class="tag"></span></label>
-          <input id="strategyPin" placeholder="leave blank for no lock" autocomplete="off">
-          <div class="h">Gates the picklist and every AI answer. Shared, not personal — the hub stores only a hash
-            of the code, never who used it. Changing it signs everyone out. Spaces on the ends
-            are trimmed — an invisible one is a lockout nobody ever finds.</div>
-          <div class="say"></div></div>
+      </div>
+
+      <details class="more" id="moreKeys">
+        <summary>THE OPTIONAL ONES — ALL FREE EXCEPT THE AI</summary>
+        <div class="hint" style="margin-top:12px">Every one of these can wait, and a first event
+          is fine without any of them. None is needed for scouting itself — they add official
+          results, other teams' scouting, and the AI answers.</div>
+        <div class="form">
+          <div class="f" data-key="tbaKey"><label>THE BLUE ALLIANCE<span class="tag"></span></label>
+            <input id="tbaKey" placeholder="X-TBA-Auth-Key" autocomplete="off">
+            <div class="h">Official results and per-robot climb. thebluealliance.com/account</div>
+            <div class="say"></div></div>
+          <div class="f" data-key="nexusToken"><label>NEXUS WEBHOOK TOKEN<span class="tag"></span></label>
+            <input id="nexusToken" placeholder="Nexus-Token" autocomplete="off">
+            <div class="h">Only if you registered a push webhook.</div>
+            <div class="say"></div></div>
+          <div class="f" data-key="frcEventsUser"><label>FRC EVENTS USERNAME<span class="tag"></span></label>
+            <input id="frcEventsUser" placeholder="your frc-events username" autocomplete="off">
+            <div class="h">Posts the official result a few minutes before TBA does. It does not
+              feed the fuel solver — TBA stays the only source for that.
+              frc-events.firstinspires.org</div>
+            <div class="say"></div></div>
+          <div class="f" data-key="frcEventsToken"><label>FRC EVENTS TOKEN<span class="tag"></span></label>
+            <input id="frcEventsToken" placeholder="authorization token" autocomplete="off">
+            <div class="h">The token on its own. If what you have is the whole
+              <code>username:token</code> pair, or the base64 one out of their documentation,
+              paste that — both halves get filled in.</div>
+            <div class="say"></div></div>
+          <div class="f" data-key="lovatKey"><label>LOVAT API KEY<span class="tag"></span></label>
+            <input id="lovatKey" placeholder="lvt-…" autocomplete="off">
+            <div class="h">Other teams' scouting for this event. Lovat has no page that makes
+              one — it is a curl, and setup.md walks through it for Windows and Mac. Your team
+              email must be verified on Lovat first, which is what their 403 means. It is shown
+              next to our own numbers, never mixed into them. lovat.app</div>
+            <div class="say"></div></div>
+          <div class="f"><label>AI MODEL</label>
+            <select id="aiModel"></select>
+            <div class="h">Summarises scout notes, explains the picklist and answers questions
+              about the event. It only ever reads the numbers already on this hub — it never
+              adds any, and nothing it writes is stored as data. Prices are per million tokens;
+              one answer is a few thousand. The OpenRouter group is the same models through one
+              key and one bill instead of three.</div></div>
+          <div class="f hide" id="aiOtherRow"><label>MODEL ID</label>
+            <input id="aiOther" placeholder="e.g. claude-opus-5" autocomplete="off"
+              autocapitalize="off" autocorrect="off" spellcheck="false">
+            <div class="h">For a model released after this list was written, or any of the
+              hundreds OpenRouter carries. The name decides where it is sent: a name with a
+              slash in it — <code>anthropic/claude-opus-5</code> — goes to OpenRouter, a bare
+              one goes to the company that made it.</div></div>
+          <div class="f" data-key="aiKey"><label>AI KEY<span class="tag"></span></label>
+            <input id="aiKey" placeholder="api key for whoever makes the model above"
+              autocomplete="off">
+            <div class="h">From whichever company makes the model picked above, or from
+              OpenRouter if that is where it is being sent. A key from any of the others is
+              refused here rather than saved — that mismatch has no other symptom than every AI
+              answer saying the model could not be reached.</div>
+            <div class="say"></div></div>
+          <div class="f" data-key="strategyPin"><label>STRATEGY PASSCODE<span class="tag"></span></label>
+            <input id="strategyPin" placeholder="leave blank for no lock" autocomplete="off">
+            <div class="h">Gates the picklist and every AI answer. Shared, not personal — the hub stores only a hash
+              of the code, never who used it. Changing it signs everyone out. Spaces on the ends
+              are trimmed — an invisible one is a lockout nobody ever finds.</div>
+            <div class="say"></div></div>
+        </div>
+      </details>
+
+      <div class="form">
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <button class="go" id="save">SAVE &amp; REFRESH</button>
           <button class="go" id="test" style="background:var(--btn)">TEST KEYS</button>
@@ -247,6 +314,107 @@ await net.start();
 let adminToken = null;
 let adminSet = false;
 let idleTimer = null;
+// The last /api/config. Kept so the checklist can re-render on a lock change
+// without a round trip - locking is the one step this page knows about and the
+// hub does not.
+let config = null;
+
+/**
+ * The checklist: what is left to do, in the order to do it.
+ *
+ * The steps come from the hub (`Hub.setup_steps`), read off what it actually
+ * holds rather than off a box having been typed into - so a line reads done
+ * because the teams arrived, not because somebody pressed save. Which makes the
+ * same list the answer to "did that work?" on the Saturday morning as well as
+ * "what now?" on the Friday night.
+ *
+ * Unlocking is the one step this page adds, and it has to be this side: whether
+ * the panel is open is a property of this tab, and a hub with no admin password
+ * would report every tab unlocked - including the locked one asking.
+ *
+ * Built as text, never markup: the lines quote the event key, which is whatever
+ * somebody typed into the box above.
+ */
+function showSetup(c) {
+  const row = $('#setupRow');
+  const from = c && c.setup;
+  // No `setup` block at all means this is not the hub machine, and the panel
+  // there is read-only anyway.
+  if (!from || !from.steps) { row.classList.add('hide'); return; }
+  row.classList.remove('hide');
+
+  const steps = [{
+    title: 'Unlock this panel',
+    done: !!adminToken,
+    say: adminToken
+      ? 'Unlocked. It locks itself again after ten minutes, and on every reload — that is'
+        + ' deliberate, not a fault.'
+      : (adminSet ? 'Type the admin password into the box below and press UNLOCK. Nothing'
+                  + ' further down the page can be changed until you do.'
+                  : 'Press UNLOCK below. No admin password is set on this hub, so it is just'
+                  + ' the button.'),
+  }, ...from.steps];
+
+  const left = steps.findIndex((st) => !st.done);
+  const done = steps.filter((st) => st.done).length;
+  $('#setupHead').textContent = left === -1
+    ? `SETUP · ALL ${steps.length} DONE`
+    : `START HERE · ${done} OF ${steps.length} DONE`;
+
+  const box = $('#steps');
+  box.textContent = '';
+  steps.forEach((st, i) => {
+    const el = document.createElement('div');
+    // Exactly one step is `now`: the first undone one. A checklist that
+    // highlights four things at once is a checklist nobody starts.
+    el.className = 'step' + (st.done ? ' did' : '') + (i === left ? ' now' : '');
+    const mark = document.createElement('div');
+    mark.className = 'mark';
+    mark.textContent = st.done ? '\u2713' : String(i + 1);
+    const ttl = document.createElement('div');
+    ttl.className = 'ttl';
+    ttl.textContent = st.title.toUpperCase();
+    const ln = document.createElement('div');
+    ln.className = 'ln';
+    ln.textContent = st.say;
+    const body = document.createElement('div');
+    body.append(ttl, ln);
+    el.append(mark, body);
+    box.append(el);
+  });
+
+  // Where the keys are written. The page says it because the file is the thing
+  // to back up, and because "stored on this machine" was true and useless.
+  const where = $('#keysWhere');
+  where.textContent = from.envPath
+    ? `Saved in ${from.envPath} on this laptop — base64-encoded, never in the event database, `
+      + 'and never sent to a phone. Encoding is not encryption: it keeps a key off the screen '
+      + 'at a glance, and the file being yours is what protects it. That one file is the whole '
+      + 'backup — copy it to a spare laptop and this hub is set up. None of these keys expire, '
+      + 'so it is a once-ever job; only the event key changes from one competition to the next.'
+    : '';
+  // A line in that file that cannot be read. The box above would say SAVED, the
+  // vendor would say no, and nothing else on this page joins those two up.
+  for (const why of Object.values(from.keyProblems || {})) {
+    const p = document.createElement('div');
+    p.className = 'say bad';
+    p.textContent = why;
+    where.append(p);
+  }
+
+  $('#setupDone').textContent = left === -1
+    ? 'Nothing left. Open the JOIN QR page on this screen for the scouts, and leave the black '
+      + 'window running — closing it stops the hub.'
+    : '';
+
+  const later = $('#setupLater');
+  later.textContent = '';
+  for (const line of from.later || []) {
+    const li = document.createElement('li');
+    li.textContent = line;
+    later.append(li);
+  }
+}
 
 /** net.api, carrying whatever this tab is currently allowed to do. */
 function admin(path, opts = {}) {
@@ -262,10 +430,13 @@ function applyLock() {
   $('#unlock').classList.toggle('hide', on);
   $('#lock').classList.toggle('hide', !on);
   $('#adminEntry').classList.toggle('hide', on || !adminSet);
-  for (const el of document.querySelectorAll('.pane:not(#lockPane)')) {
+  // The checklist is exempt: it is the one thing on a locked page that has
+  // something to say, and the first line of it is "press UNLOCK".
+  for (const el of document.querySelectorAll('.pane:not(#lockPane):not(#setupPane)')) {
     el.classList.toggle('dim', !on);
     for (const c of el.querySelectorAll('input,select,button')) c.disabled = !on;
   }
+  if (config) showSetup(config);
 }
 
 /**
@@ -370,8 +541,25 @@ async function reload() {
   // The hub is the authority on whether this tab is still past the lock: an
   // expired token has to close the panel here too, not just be refused there.
   if (adminToken && !(c.admin || {}).unlocked) adminToken = null;
-  applyLock();
+  config = c;
+  foldMore(c);
+  applyLock();          // which renders the checklist, step one included
   return c;
+}
+
+// The eight optional boxes stay folded on a hub that has never used one, and
+// open on a hub that has - a lead who set a Lovat key last week must not have to
+// go hunting for the box it is in. A hand on the fold wins over both.
+const OPTIONAL = ['tbaKey', 'nexusToken', 'frcEventsUser', 'frcEventsToken', 'lovatKey',
+                  'aiKey', 'strategyPin'];
+let foldTouched = false;
+$('#moreKeys').querySelector('summary').addEventListener('click', () => { foldTouched = true; });
+
+function foldMore(c) {
+  if (foldTouched) return;
+  // `saved`, not `keys.ai`: the hub reports the model it *would* use, which on
+  // a hub that has never been configured is the default rather than nothing.
+  $('#moreKeys').open = OPTIONAL.some((k) => (c.saved || {})[k]);
 }
 
 // -------------------------------------------------------------- key boxes
@@ -629,9 +817,21 @@ async function save(extra = {}) {
     }
     const fixed = Object.keys(res.notes || {}).length + Object.keys(res.warnings || {}).length;
     $('#status').textContent = 'Saved. Fetching event data…'
-      + (fixed ? ' Read the notes under the boxes.' : ' Now press TEST KEYS.');
+      + (fixed ? ' Read the notes under the boxes.' : '');
     for (const k of SECRETS) $('#'+k).value = '';
-    try { await reload(); } catch { /* offline */ }
+    let c = null;
+    try { c = await reload(); } catch { /* offline */ }
+    // Test the keys without being asked, while the hub has never had a passing
+    // test. It is a step that used to be skipped, and skipping it is how a
+    // wrong key survives until the Saturday - which is the one morning it
+    // cannot be replaced. Once a test has passed, the button is enough: it is
+    // five vendors over the network, and not every save is about a key.
+    const step = ((c && c.setup && c.setup.steps) || []).find((x) => x.id === 'test');
+    if (step && !step.done && Object.values((c && c.saved) || {}).some(Boolean)) {
+      $('#status').textContent = 'Saved. Asking each vendor whether its key works…';
+      await testKeys();
+      $('#status').textContent = 'Saved and tested — the lines below are what each one said.';
+    }
   } catch (e) {
     // Nothing was saved, and the boxes still hold what was typed - so this is
     // a re-press, not a re-type, once the named box is fixed.
@@ -658,6 +858,70 @@ async function save(extra = {}) {
 $('#save').onclick = () => save();
 
 /**
+ * Find the event key instead of asking somebody to know it.
+ *
+ * The one field in setup that cannot be answered from the room: `2026casf` is
+ * not written on the pit map and is not guessable from "Bay Area Regional".
+ * Given a team number the hub goes and gets the list - from Statbotics, which
+ * needs no key, so this works on a hub that has just been unzipped.
+ *
+ * The box below stays a text box the whole time. This is a shortcut past a
+ * lookup, not a new way of doing it, and it must not become the only way when
+ * an event is too new to be listed anywhere.
+ */
+async function findEvents() {
+  const team = $('#ourTeam').value.trim();
+  const say = $('#findSay');
+  const row = $('#eventPickRow');
+  say.className = 'say note';
+  if (!team) { say.textContent = 'Put your team number in first.'; return; }
+  say.textContent = `Looking up what team ${team} is registered for…`;
+  row.classList.add('hide');
+  let res;
+  try {
+    res = await admin(`/api/eventsfor?team=${encodeURIComponent(team)}`);
+  } catch (e) {
+    say.className = 'say bad';
+    say.textContent = 'Could not ask: ' + e.message;
+    return;
+  }
+  if (!res.events.length) {
+    say.className = 'say warn';
+    say.textContent = res.problem || 'Nothing came back. Type the key in below.';
+    return;
+  }
+  const sel = $('#eventPick');
+  sel.textContent = '';
+  for (const e of res.events) {
+    const o = document.createElement('option');
+    o.value = e.key;
+    o.dataset.level = e.level;
+    // Text, not markup: every word of this came off somebody else's API.
+    o.textContent = [e.name, e.where, e.start, `(${e.key})`].filter(Boolean).join(' · ');
+    sel.append(o);
+  }
+  const apply = () => {
+    const picked = sel.options[sel.selectedIndex];
+    if (!picked) return;
+    $('#eventKey').value = picked.value;
+    $('#eventLevel').value = picked.dataset.level || 'regional';
+    tell(rowFor('eventKey'), 'ok', 'Filled in from the list. Press SAVE & REFRESH.');
+  };
+  sel.onchange = apply;
+  row.classList.remove('hide');
+  apply();
+  say.className = 'say ok';
+  say.textContent = `${res.events.length} event(s) for team ${team}`
+    + (res.source === 'tba' ? ', from The Blue Alliance.' : ', from Statbotics.')
+    + ' Check the level it picked — it is a guess from the event type.';
+}
+
+$('#findEvents').onclick = findEvents;
+// Enter in the team box is what a person types next, and it is the only button
+// on this page that is not about saving.
+$('#ourTeam').addEventListener('keydown', (e) => { if (e.key === 'Enter') findEvents(); });
+
+/**
  * Ask every vendor whether the key stored here works.
  *
  * The one thing on this page that is not a guess. SET beside a box means a
@@ -666,7 +930,7 @@ $('#save').onclick = () => save();
  * everywhere else in the app - by design, because at a competition a source
  * that is down must read as "we do not know" rather than as an error.
  */
-$('#test').onclick = async () => {
+async function testKeys() {
   $('#test').disabled = true;
   $('#testOut').innerHTML = 'asking the vendors…';
   const WORD = { ok: ['✓', 'var(--green-soft)'], bad: ['✕', 'var(--red-alert)'],
@@ -690,15 +954,33 @@ $('#test').onclick = async () => {
     }
   } catch (e) {
     $('#testOut').textContent = 'Could not test: ' + e.message;
-  } finally { $('#test').disabled = false; }
-};
+  } finally {
+    $('#test').disabled = false;
+    // The checklist's test line is read from the verdicts this just stored.
+    try { await reload(); } catch { /* offline */ }
+  }
+}
+
+$('#test').onclick = testKeys;
 
 // Everything above is definitions; this is the page filling itself in, and it
 // goes last on purpose. `reload` renders through `rows`, and a `const` is not
 // hoisted - called from up where it is defined it threw before it could put a
 // single SAVED beside a box, into the same catch that says the hub cannot be
 // reached, which was a lie about a hub that was answering fine.
-try { await reload(); } catch { $('#sub').textContent = 'HUB NOT REACHABLE'; }
+try {
+  const c = await reload();
+  // A hub with nothing set up and no admin password has nothing to protect, and
+  // the lock exists to stop an *accident* on a configured hub - a stray
+  // keystroke in the event key box on the Saturday. On the very first run it is
+  // one more button between somebody and a working hub, so it opens itself and
+  // says so. Everything after that opens locked, as before.
+  if (!adminToken && !adminSet && c.setup && c.setup.firstRun) {
+    await doUnlock();
+    $('#lockSay').textContent = 'Unlocked itself: this hub is not set up yet and no admin '
+      + 'password is set. Once it has an event it opens locked every time.';
+  }
+} catch { $('#sub').textContent = 'HUB NOT REACHABLE'; }
 </script>
 </body>
 </html>

@@ -53,6 +53,39 @@ LOVAT_COLUMNS = [
 LOVAT_SCOUTERS = ["8033-ana", "8033-ben", "1114-cy", "254-dee"]
 
 
+def _extras(rng, endgame_tower):
+    """The optional after-the-buzzer answers, filled in the way a crew does it.
+
+    Not every question every match: a lead who sees 100% coverage in the demo
+    builds a dashboard that has never been shown a blank, and a blank is the
+    normal case for a page a scout can skip.
+    """
+    out = {}
+    if rng.random() < 0.55:
+        out["startLane"] = rng.choice(["trench", "bump"])
+    if rng.random() < 0.5:
+        out["traversal"] = rng.choices(["trench", "bump", "both", "none"],
+                                       weights=[4, 3, 1, 2])[0]
+    if rng.random() < 0.5:
+        out["beached"] = rng.choices(["neither", "fuel", "bump", "both"],
+                                     weights=[8, 1, 2, 1])[0]
+    if rng.random() < 0.45:
+        out["accuracyRating"] = rng.randint(2, 5)
+    out["scoresWhileMoving"] = rng.random() < 0.35
+    out["disrupts"] = rng.random() < 0.12
+    if endgame_tower and endgame_tower != "None":
+        if rng.random() < 0.5:
+            out["climbSpot"] = rng.choice(["frontSide", "frontMiddle", "backSide", "backMiddle"])
+        if rng.random() < 0.7:
+            # Seconds into a 160s match. Higher levels take longer to set up,
+            # so a robot going for L3 leaves earlier.
+            base = {"Level1": 143.0, "Level2": 134.0, "Level3": 126.0}[endgame_tower]
+            out["climbStartSecs"] = round(rng.uniform(base - 6, base + 6), 1)
+    else:
+        out["climbFailed"] = rng.random() < 0.12
+    return out
+
+
 def _lovat_row(rng, team, match_no, profile, fuel, defends, breakdown, alliance, idx):
     """One row of somebody else's scouting for one robot in one match.
 
@@ -307,6 +340,12 @@ def main():
                         "tipped": rng.random() < 0.03,
                         "noShow": False,
                         "note": rng.choice(NOTES) if rng.random() < 0.18 else "",
+                        # The after screen's second page. Answered about half
+                        # the time on purpose: it is optional, a real event
+                        # leaves plenty of it blank, and every panel that reads
+                        # it has to say "not asked" rather than draw a zero.
+                        **_extras(rng, breakdown[alliance]["endgameTower"][idx]
+                                  if breakdown else "None"),
                     },
                 })
 

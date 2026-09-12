@@ -4,6 +4,7 @@ Typing an IP into six phones is the worst part of setup, so the server
 enumerates its own addresses, prints them, offers a QR page, and answers mDNS
 queries for a friendly hostname.
 """
+import platform
 import socket
 import struct
 import subprocess
@@ -125,9 +126,14 @@ def banner(port):
     lines.append(f"  Admin:     open  http://localhost:{port}/       on this screen "
                  f"(event, API keys, mirror - press UNLOCK)")
     lines.append("")
-    lines.append("  Windows: if phones cannot connect, allow Python through")
-    lines.append("  Windows Firewall on PRIVATE networks (it prompts on first run).")
-    lines.append("")
+    # Only where it is true. On Windows the hub offers to add the rule itself a
+    # few lines further down the same window (see server/firewall.py), so this
+    # is the sentence that explains what that question is about.
+    if platform.system() == "Windows":
+        lines.append("  Windows blocks phones from reaching this laptop until it is allowed")
+        lines.append("  through the firewall. That is the question below, and the Windows")
+        lines.append("  popup that may also appear: allow it on PRIVATE networks.")
+        lines.append("")
     return "\n".join(lines)
 
 

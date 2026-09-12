@@ -98,7 +98,11 @@ class LiveHub:
         self.store.set("eventKey", EK)
         self.store.set("ourTeam", "6059")
         self.store.set("mirrorUrl", mirror_url)
-        self.store.set("mirrorKey", PUSH_KEY)
+        # The push key is a credential, so it lives in `.env` and is read from
+        # the environment - written into a temp file here rather than the real
+        # one beside the checkout.
+        self.hub.env_path = os.path.join(tmp, ".env")
+        self.hub.save_keys({"mirrorKey": PUSH_KEY})
 
 
 # ------------------------------------------------------------------- tests

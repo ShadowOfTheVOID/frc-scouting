@@ -329,6 +329,10 @@ def _team_trend(team, matches, entries, solved, lovat, faced_secs):
             "feedSecs": round(_interval_secs(p.get("feedIntervals")), 1) if e else None,
             "defenseFacedSecs": round(faced_secs[mk], 1) if mk in faced_secs else None,
             "died": bool(p.get("died")) if e else None,
+            # The second our scout said this robot left to climb, beside the
+            # second Lovat's scout timed it two rows down. Null where nobody
+            # said - a climb with no time is not a climb at 0s.
+            "climbStartSecs": p.get("climbStartSecs") if e else None,
             # lovat
             "lovatFuel": lv.get("fuel") if lv else None,
             "lovatDefenseSecs": lv.get("defenseSecs") if lv else None,
@@ -493,6 +497,19 @@ def _team_summary(team, meta, entries, solved, by_match, ranking=None, epa=None,
     defense_secs = []
     preloads = []
     notes = []
+    # The after-screen's second page.  Every one of these is a question other
+    # teams' scouts have always answered and ours never asked, which is why the
+    # LOVAT panel could say a robot crosses on the bump while ours had nothing
+    # to say at all.  Tallies rather than rates where the KIND matters: "stuck
+    # on the bump" is a route you can send a robot around, "stuck 40%" is not.
+    accuracy = []
+    start_lanes = {}
+    traversals = {}
+    beached = {}
+    climb_spots = {}
+    scores_moving = disrupts = climb_failed = auto_climb_failed = 0
+    climb_start = []
+    auto_climb_start = []
 
     for e in entries:
         p = e.get("payload") or {}
@@ -542,6 +559,28 @@ def _team_summary(team, meta, entries, solved, by_match, ranking=None, epa=None,
         if p.get("startPosition"):
             z = str(p["startPosition"])
             start_zones[z] = start_zones.get(z, 0) + 1
+        if p.get("startLane"):
+            ln = str(p["startLane"])
+            start_lanes[ln] = start_lanes.get(ln, 0) + 1
+        for key, tally in (("traversal", traversals), ("beached", beached),
+                           ("climbSpot", climb_spots)):
+            if p.get(key):
+                v = str(p[key])
+                tally[v] = tally.get(v, 0) + 1
+        if isinstance(p.get("accuracyRating"), (int, float)) and p["accuracyRating"]:
+            accuracy.append(float(p["accuracyRating"]))
+        scores_moving += 1 if p.get("scoresWhileMoving") else 0
+        disrupts += 1 if p.get("disrupts") else 0
+        climb_failed += 1 if p.get("climbFailed") else 0
+        auto_climb_failed += 1 if p.get("autoClimbFailed") else 0
+        # Seconds into the match, and only where the scout's phone was actually
+        # running a clock - the HUD leaves it null otherwise rather than
+        # writing a zero that would read as "left at the buzzer".
+        for key, into in (("climbStartSecs", climb_start),
+                          ("autoClimbStartSecs", auto_climb_start)):
+            v = p.get(key)
+            if isinstance(v, (int, float)):
+                into.append(float(v))
         tgt = p.get("defenseTarget")
         if tgt is not None:
             try:
@@ -610,6 +649,46 @@ def _team_summary(team, meta, entries, solved, by_match, ranking=None, epa=None,
             "startZone": (max(start_zones, key=start_zones.get) if start_zones else None),
             "startZonePct": (round(max(start_zones.values()) / sum(start_zones.values()) * 100.0, 1)
                              if start_zones else None),
+            # The lane inside that side, asked after the buzzer. A side with no
+            # lane is a robot nobody watched closely enough to say, not a robot
+            # that started in neither.
+            "startLanes": start_lanes,
+            "startLane": (max(start_lanes, key=start_lanes.get) if start_lanes else None),
+            # How well the shots went in, 1-5, as the scout saw it. Deliberately
+            # not folded into the fuel estimate: the solver reconciles against
+            # TBA's own totals, and letting an opinion move a reconciled number
+            # is how an estimate stops being one.
+            "accuracy": round(_mean(accuracy), 1) if accuracy else None,
+            "accuracyMatches": len(accuracy),
+            # Rates over the matches that ANSWERED, with the kinds kept beside
+            # them - the same shape the lovat block uses for the same questions,
+            # so the two can be read side by side without converting anything.
+            "traversalKinds": traversals,
+            "traversalRate": (round(sum(v for k, v in traversals.items() if k != "none")
+                                    / sum(traversals.values()) * 100.0, 1)
+                              if traversals else None),
+            "beachedKinds": beached,
+            "beachedRate": (round(sum(v for k, v in beached.items() if k != "neither")
+                                  / sum(beached.values()) * 100.0, 1)
+                            if beached else None),
+            # These two are chips, not questions: not ticked reads as no, the
+            # same as died and tipped beside them, so the rate is over every
+            # match scouted rather than over the ones that answered.
+            "scoresWhileMovingRate": round(scores_moving / n * 100.0, 1),
+            "disruptRate": round(disrupts / n * 100.0, 1),
+            # Tried and fell is not the same robot as never left the floor, and
+            # until the after screen asked, both read as "no climb".
+            "climbFailRate": round(climb_failed / n * 100.0, 1),
+            "autoClimbFailRate": round(auto_climb_failed / n * 100.0, 1),
+            "climbSpots": climb_spots,
+            "climbSpot": (max(climb_spots, key=climb_spots.get) if climb_spots else None),
+            # The second the scout said the climb began. Ours is a tap and
+            # Lovat's is a timer, so they sit in different blocks - but they
+            # answer the same question, and until now only Lovat could.
+            "climbStartSecs": round(_mean(climb_start), 1) if climb_start else None,
+            "climbsTimed": len(climb_start),
+            "autoClimbStartSecs": (round(_mean(auto_climb_start), 1)
+                                   if auto_climb_start else None),
             # {team: matches} in both directions.
             "defenseAgainst": defense_against,
             "defendedBy": defended_by,

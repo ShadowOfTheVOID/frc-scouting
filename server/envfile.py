@@ -1,8 +1,9 @@
-"""The `.env` file, and the admin password that lives in it.
+"""The `.env` file: the admin password and every API key live in it.
 
 Stdlib only, like everything else here: the hub runs on a competition laptop
 with a stock Python and no packages, so `python-dotenv` is not available to us
-and would not be worth a dependency if it were.  This is forty lines.
+and would not be worth a dependency if it were.  This is a hundred lines of
+parser, reader and writer, and nothing else.
 
 Two rules that are worth stating because both are somebody's Saturday:
 
@@ -37,6 +38,90 @@ ADMIN = "ADMIN_PASSWORD_B64"
 #: What people type instead, out of habit, roughly half the time.  Never read
 #: as a password - only used to say what to do about it.
 ADMIN_PLAIN = "ADMIN_PASSWORD"
+
+#: Every credential the hub holds, and the `.env` line it lives on.  Field name
+#: on the admin panel -> variable name in the file.
+#:
+#: These used to be settings rows in the sqlite database, which meant a key was
+#: in every snapshot under `data/snapshots/`, in any copy of the `.db` somebody
+#: sent a mentor to look at, and gone the moment a laptop was replaced.  A file
+#: is the better home: one thing to back up, one thing to copy to a spare
+#: laptop, nothing to retype, and a key that never travels with the event data.
+#:
+#: `MIRROR_PUSH_KEY` is deliberately the same name the mirror itself reads (see
+#: mirror/server.py).  Both sides of that push want the same string, and on a
+#: laptop trying the mirror out, the two halves now agree by construction.
+KEYS = {
+    "tbaKey": "TBA_API_KEY",
+    "nexusKey": "NEXUS_API_KEY",
+    "nexusToken": "NEXUS_WEBHOOK_TOKEN",
+    "frcEventsUser": "FRC_EVENTS_USER",
+    "frcEventsToken": "FRC_EVENTS_TOKEN",
+    "lovatKey": "LOVAT_API_KEY",
+    "aiKey": "AI_API_KEY",
+    "mirrorKey": "MIRROR_PUSH_KEY",
+}
+
+
+#: What the hub writes: `NEXUS_API_KEY_B64`, holding base64 of the key, the same
+#: shape and the same suffix as the admin password above.  The plain name is
+#: still read - see `key()` - because a hand-typed line and a systemd
+#: `Environment=` are both real ways a key arrives.
+B64 = "_B64"
+
+
+def encoded_name(field):
+    return KEYS[field] + B64
+
+
+def key(field):
+    """One credential, out of the environment.  `""` when it is not set.
+
+    Two lines can hold it and both are read, encoded first: `NEXUS_API_KEY_B64`
+    is what the admin panel writes, and plain `NEXUS_API_KEY` is what somebody
+    typed into the file by hand or what a systemd unit sets on a mirror host.
+    A plain one is not second-class - it works, and the hub re-writes it in the
+    encoded form the next time it starts.
+
+    A `_B64` line that will not decode returns nothing rather than garbage: a
+    key made of mangled bytes reads to every vendor as a wrong key, and to
+    everybody here as a wrong key that was typed correctly.  `problems()` is
+    what says so out loud.
+
+    Trimmed, because a key in a hand-edited file picks up a trailing space about
+    as often as one pasted into a box, and the symptom is identical: a vendor
+    that answers 401 all weekend for no visible reason.
+    """
+    raw = (os.environ.get(encoded_name(field)) or "").strip()
+    if raw:
+        return decode(raw) or ""
+    return (os.environ.get(KEYS[field]) or "").strip()
+
+
+def decode(raw):
+    """base64 back to text, or None if it is not base64 of text."""
+    try:
+        return base64.b64decode(raw, validate=True).decode("utf-8").strip() or None
+    except (binascii.Error, UnicodeDecodeError, ValueError):
+        return None
+
+
+def problems():
+    """`{field: what is wrong}` for every credential line that cannot be read.
+
+    A key that is present and unreadable is the worst of the three states: the
+    panel would say SET, every vendor would say no, and nothing anywhere would
+    connect the two.  So it is named, on the panel and in the hub's window.
+    """
+    out = {}
+    for field in KEYS:
+        raw = (os.environ.get(encoded_name(field)) or "").strip()
+        if raw and decode(raw) is None:
+            out[field] = (f"{encoded_name(field)} in .env is not valid base64, so this key "
+                          "cannot be read at all. Paste the key into the box again, or write it "
+                          f"as a plain {KEYS[field]}= line and the hub will encode it.")
+    return out
+
 
 _LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$")
 
@@ -115,32 +200,54 @@ def admin_password():
     return password, None
 
 
-def write(key, value, path=PATH):
-    """Set one key in `.env`, keeping every other line exactly as it was.
+def write(name, value, path=PATH):
+    """Set one variable in `.env`, keeping every other line exactly as it was.
+
+    `None` removes the line altogether, which is what forgetting a key means -
+    an empty `NEXUS_API_KEY=` would be an honest enough "no key", but it reads
+    as a half-finished setup to the next person to open the file.
+    """
+    return write_many({name: value}, path)
+
+
+def write_many(values, path=PATH):
+    """Set several variables in one pass, keeping every other line as it was.
 
     Rewritten rather than appended to, because a second `ADMIN_PASSWORD_B64=`
     further down the file is a password that changes depending on which line
-    the reader happens to win with.
+    the reader happens to win with.  One pass rather than one call per key
+    because a save from the admin panel can carry eight of them, and eight
+    rewrites of the same file is eight chances to be interrupted halfway.
     """
     try:
         with open(path, encoding="utf-8") as fh:
             lines = fh.read().splitlines()
     except OSError:
         lines = []
-    out, done = [], False
+    out, done = [], set()
     for line in lines:
         m = _LINE.match(line)
-        if m and m.group(1) == key:
-            if done:
+        name = m.group(1) if m else None
+        if name in values:
+            if name in done:
                 continue                     # a duplicate of the one we just wrote
-            out.append(f"{key}={value}")
-            done = True
-        else:
-            out.append(line)
-    if not done:
-        if out and out[-1].strip():
-            out.append("")
-        out.append(f"{key}={value}")
+            done.add(name)
+            if values[name] is not None:
+                out.append(f"{name}={values[name]}")
+            continue
+        out.append(line)
+    added = False
+    for name, value in values.items():
+        if name in done or value is None:
+            continue
+        if not added and out and out[-1].strip():
+            out.append("")                   # one blank line before the new block, not eight
+        added = True
+        out.append(f"{name}={value}")
+    # Leading blanks are what a removed line leaves behind, and they accumulate:
+    # a file that starts with two empty lines reads as a file somebody gave up on.
+    while out and not out[0].strip():
+        out.pop(0)
     text = "\n".join(out).rstrip("\n") + "\n"
     # 0600 from the moment it exists: this file is the password.
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
