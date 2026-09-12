@@ -427,6 +427,7 @@ class Hub:
         q = queue.Queue(maxsize=64)
         q.who = who or {}
         q.since = time.time()
+        q.overflowed = False
         with self.subs_lock:
             self.subs.append(q)
             self.subs_gen += 1
@@ -507,7 +508,15 @@ class Hub:
             try:
                 q.put_nowait(msg)
             except queue.Full:
-                pass  # a wedged client must not stall the others
+                # A wedged client must not stall the others - but dropping the
+                # message and leaving the client connected is worse than
+                # dropping the client. It stays on the crew board as LIVE and
+                # simply stops hearing seat claims, match starts and the shared
+                # clock, with nothing on either end saying so, and it never
+                # recovers: nothing re-sends what it missed. Marked instead, so
+                # its own thread closes the stream; EventSource reconnects on
+                # its own and the phone re-reads the event on the way back in.
+                q.overflowed = True
 
     # --------------------------------------------------------- ingest
     def apply_nexus_event(self, payload):
@@ -2999,6 +3008,11 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
             last_touch = time.time()
             while True:
+                # Fell behind far enough that the hub gave up queueing for it.
+                # Closing is the honest end: this stream has a hole in it, and
+                # the client's reconnection is what repairs it.
+                if q.overflowed:
+                    break
                 try:
                     msg = q.get(timeout=SSE_KEEPALIVE_SECONDS)
                     self.wfile.write(f"data: {msg}\n\n".encode("utf-8"))
