@@ -171,8 +171,13 @@ function paintChips() {
 }
 
 function renderShots() {
+  // The id goes into an attribute, so it is escaped like anything else that
+  // came off the network. A pit record is synced by whatever is on the venue
+  // wifi, and the hub used to keep any string in `photos` as "already an id" -
+  // one shaped like `x" onerror="...` ran script on this page's origin. The
+  // hub now refuses those on the way in; this is the other half of it.
   $('#pShots').innerHTML = (draft.photos || []).map((p) =>
-    `<img src="${p.startsWith('data:') ? p : '/api/photo/' + p}" alt="">`).join('')
+    `<img src="${p.startsWith('data:') ? esc(p) : '/api/photo/' + esc(encodeURIComponent(p))}" alt="">`).join('')
     + '<div class="addshot" id="addShot">+ PHOTO</div>';
   const add = $('#addShot');
   if (add) add.onclick = () => $('#pPhoto').click();
@@ -275,12 +280,13 @@ async function main() {
   ourTeam = Number((cfg && cfg.ourTeam) || 0) || null;
   await refresh();
   net.onChange(() => { $('#pdot').className = 'dot' + (net.state.online ? '' : ' amber'); });
-  // Pit data, the pit map and inspection status all arrive from Nexus under one
-  // broadcast name. These used to listen for 'pits', 'pitMap' and 'inspection',
-  // which the hub has never sent, so the map only ever caught up on the 30s
-  // poll below.
+  // The pit list, the pit map and inspection status each arrive under their own
+  // broadcast name - hub.py's `_nexus_side` sends them that way, from the slow
+  // Nexus poll, and none of them is inside the 'nexus' message. Listening only
+  // for 'nexus' meant a pit map that turned up, or an inspection that passed,
+  // reached this tablet only when the thirty-second poll came round.
   const nudge = coalesce(refresh, 750);
-  net.on('nexus', nudge); net.on('scout', nudge);
+  for (const t of ['nexus', 'pits', 'pitMap', 'inspection', 'scout']) net.on(t, nudge);
   // Stops while the tablet is asleep or on another tab, and catches up once on
   // the way back.
   every(30000, refresh, { leading: false });

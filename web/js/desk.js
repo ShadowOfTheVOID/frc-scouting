@@ -4,6 +4,7 @@
 import * as db from './db.js';
 import * as net from './net.js';
 import * as chart from './chart.js';
+import * as pick from './picklist.js';
 import { loadRules, rpThresholds, rules as gameRules } from './game2026.js';
 import { every, coalesce } from './timers.js';
 
@@ -66,22 +67,43 @@ function tile(k, v, c, alert) {
     <div class="v">${v}</div><div class="c${alert === 'warn' ? ' warn' : ''}">${c}</div></div>`;
 }
 const shortCode = (label) => {
-  const m = String(label || '').match(/(\w)\w*\s*(\d+)/);
-  return m ? `${m[1].toUpperCase()}${m[2]}` : (label || '—');
+  const s = String(label || '');
+  // A match KEY rather than a label. `2026demo_qm26` used to come out of the
+  // rule below as "26" - the first character of the event key, then the last
+  // run of digits - so the crew board's LAST MATCH column and the flag list on
+  // HEALTH named no match anybody could find. Both of those are read to decide
+  // where to walk.
+  const key = s.match(/_([a-z]+)(\d[\w]*)$/i);
+  if (key) return (key[1] + key[2]).toUpperCase();
+  const m = s.match(/(\w)\w*\s*(\d+)/);
+  return m ? `${m[1].toUpperCase()}${m[2]}` : (s || '—');
 };
 
-/** Robots that took the field in a played match with no scout entry for them. */
+// How far back the heads-up looks. This is the LIVE tab and it is about a
+// station that has gone quiet now, not about the whole morning: a hub that
+// imported a part-scouted event would otherwise open with every robot in it
+// named.
+const UNWATCHED_LOOKBACK = 3;
+
+/**
+ * Robots that took the field in one of the last few played matches with no
+ * scout entry for them.
+ *
+ * It used to ask whether the team had EVER been scouted, which is a different
+ * question and almost always yes: a station that went quiet after Q4 named
+ * nobody, and that is the failure this panel exists for. `scouted` on each
+ * trend row is per match, which is what the question actually needs.
+ */
 function unwatchedRobots() {
-  if (!ANALYTICS || !STATE) return [];
+  if (!ANALYTICS) return [];
+  const played = [];
+  for (const m of (STATE && STATE.matches) || []) if (m.breakdown) played.push(m.matchKey);
+  const recent = new Set(played.slice(-UNWATCHED_LOOKBACK));
+  if (!recent.size) return [];
   const out = new Set();
-  const scoutedFor = new Map();
   for (const t of Object.values(ANALYTICS.teams)) {
-    if (t.matchesScouted) scoutedFor.set(t.team, t.matchesScouted);
-  }
-  for (const m of STATE.matches || []) {
-    if (!m.breakdown) continue;
-    for (const t of [...(m.red || []), ...(m.blue || [])]) {
-      if (!scoutedFor.has(t)) out.add(t);
+    for (const r of t.trend || []) {
+      if (r.played && r.scouted === false && recent.has(r.matchKey)) out.add(t.team);
     }
   }
   return [...out];
@@ -108,8 +130,13 @@ function matchLabel(matchKey) {
 function renderLive() {
   const matches = (STATE && STATE.matches) || [];
   const live = (STATE && STATE.live) || {};
-  const onField = matches.find((m) => m.status === 'On field');
-  const queuing = matches.find((m) => m.status === 'Now queuing' || m.status === 'On deck');
+  // A played match is never "on field", whatever Nexus last said about it: the
+  // status comes from a volunteer with a tablet and goes stale, the breakdown
+  // comes from the field and does not. Without this the board can spend the
+  // afternoon showing a match that finished at lunchtime as the live one.
+  const onField = matches.find((m) => m.status === 'On field' && !m.breakdown);
+  const queuing = matches.find((m) => !m.breakdown
+    && (m.status === 'Now queuing' || m.status === 'On deck'));
   const played = matches.filter((m) => m.breakdown).length;
   const upcoming = matches.filter((m) => !m.breakdown && m !== onField && m !== queuing).slice(0, 1);
 
@@ -135,7 +162,8 @@ function renderLive() {
     $('#headsup').classList.remove('hide');
     $('#headsupBody').textContent =
       `${unwatched.slice(0, 6).join(', ')} ${unwatched.length === 1 ? 'has' : 'have'} `
-      + `gone unscouted in a played match — check the stations on the CREW tab.`;
+      + `gone unscouted in the last ${UNWATCHED_LOOKBACK} played matches — check the `
+      + `stations on the CREW tab.`;
   } else $('#headsup').classList.add('hide');
 
   const cov = ANALYTICS ? ANALYTICS.coverage : { robotsScouted: 0, pct: 0 };
@@ -299,6 +327,7 @@ function renderTeams() {
       <span class="num">${Math.round(t.observed.stockpileRate)}%</span>
       <span class="num">${t.observed.wastedFuelPct == null ? '—' : Math.round(t.observed.wastedFuelPct) + '%'}</span>
       <span class="num">${Math.round(t.observed.diedRate)}%</span>
+      <span class="num">${t.observed.driver ?? '—'}</span>
       <span class="num">${lovatCell(t)}</span>
       <span class="num">${t.matchesScouted}</span>
     </div>`).join('') || '<div class="empty">No scouted teams yet.</div>';
@@ -321,17 +350,12 @@ function renderTeams() {
 }
 
 // ═════════════════════════════════════════════════════════════ PICKLIST
+// The formula itself is in web/js/picklist.js, because the sheet the lead
+// prints and carries into alliance selection ranks with the same one - and
+// when it lived in both files, correcting one of them made the paper and the
+// screen disagree about the same robots.
 function score(t) {
-  const W = activeWeights();
-  const e = t.exact, o = t.observed, s = t.estimated;
-  const climb = ({ Level3: 1, Level2: 0.65, Level1: 0.3, None: 0 })[e.bestClimb] || 0;
-  const l3 = (e.climbRate.Level3 || 0) / 100;
-  const rel = 1 - Math.min(1, (o.diedRate + o.noShowRate) / 100);
-  const stock = (o.stockpileRate || 0) / 100;
-  const def = (o.defense || 0) / 5;
-  const maxFuel = maxFuelAcross(ANALYTICS);
-  return W.climb * (climb * .6 + l3 * .4) + W.reliability * rel +
-         W.stockpile * stock + W.fuel * (s.avgFuel / maxFuel) + W.defense * def;
+  return pick.score(t, activeWeights(), maxFuelAcross(ANALYTICS));
 }
 /**
  * The best average fuel at the event, for normalising one team against it.
@@ -363,6 +387,12 @@ function takenTeams() {
 // the lead's hand-ordering; it wins outright, and `was` carries the computed
 // rank alongside so the board shows what has drifted since they moved things.
 let ORDER = [], ORDER2 = [];
+// Which version of the board this tab has seen. The hub bumps it on every
+// write and names it in the broadcast, so a tab can tell the echo of its own
+// edit from somebody else's.
+let PICK_REV = 0;
+const saveWeightsSoon = coalesce(
+  () => savePicklist(PICK_MODE === 'first' ? { weights: WEIGHTS } : { weights2: WEIGHTS2 }), 400);
 const activeOrder = () => (PICK_MODE === 'first' ? ORDER : ORDER2);
 function setActiveOrder(v) { if (PICK_MODE === 'first') ORDER = v; else ORDER2 = v; }
 
@@ -408,7 +438,7 @@ function moveInOrder(team, before) {
   const at = before == null ? order.length : order.indexOf(before);
   order.splice(at < 0 ? order.length : at, 0, team);
   setActiveOrder(order);
-  savePicklist();
+  savePicklist(PICK_MODE === 'first' ? { order } : { order2: order });
 }
 // ------------------------------------------------------------- filters
 //
@@ -593,6 +623,7 @@ async function loadPicklistState() {
     for (const n of pl.dnp || []) DNP.add(Number(n));
     ORDER = (pl.order || []).map(Number);
     ORDER2 = (pl.order2 || []).map(Number);
+    PICK_REV = pl.rev || 0;
     CAN_EDIT = pl.canEdit !== false;
     PIN_SET = !!pl.locked;
     renderWeights();
@@ -600,14 +631,36 @@ async function loadPicklistState() {
   renderEditBar();
 }
 
-/** Picklist state lives on the hub so every authorised screen agrees. */
-async function savePicklist() {
+/**
+ * Picklist state lives on the hub so every authorised screen agrees.
+ *
+ * One field at a time, never the whole board. Two leads work this during
+ * alliance selection - that is what the second dashboard is for - and sending
+ * the whole document meant whichever of them clicked second silently undid the
+ * other: measured, one lead marking 254 do-not-pick while the other dragged
+ * 1678 to the top left the hub with one of the two edits, three runs out of
+ * three. The flags go as add/remove for the same reason: two leads flagging
+ * two different robots is not a conflict and must not be resolved as one.
+ */
+async function savePicklist(patch) {
   if (!CAN_EDIT) return;
   try {
-    await net.api('/api/picklist', { method: 'POST',
-      body: JSON.stringify({ weights: WEIGHTS, weights2: WEIGHTS2, dnp: [...DNP],
-                             order: ORDER, order2: ORDER2 }) });
-  } catch { /* stays local until the hub is back */ }
+    const r = await net.api('/api/picklist', { method: 'POST', body: JSON.stringify(patch) });
+    if (r && r.picklist) PICK_REV = r.picklist.rev || 0;
+  } catch (e) {
+    // A refused write is the one thing that must not be swallowed. The
+    // passcode is rotated during an event and a token lasts sixteen hours, so
+    // a board can sit there saying EDITING UNLOCKED while every drag is thrown
+    // away by the hub and nothing on screen says so.
+    if (e.locked) {
+      localStorage.removeItem('strategyToken');
+      CAN_EDIT = false;
+      renderEditBar();
+      const msg = $('#pinMsg');
+      if (msg) msg.textContent = 'That passcode session has expired — unlock again.';
+    }
+    /* offline: stays local until the hub is back */
+  }
 }
 
 // Both of these are filterable, so both have to be readable on the row - a
@@ -699,9 +752,10 @@ function renderPicklist() {
   if (CAN_EDIT) wireDrag();
   for (const b of $$('[data-dnp]')) b.onclick = () => {
     const n = Number(b.dataset.dnp);
-    DNP.has(n) ? DNP.delete(n) : DNP.add(n);
+    const on = !DNP.has(n);
+    on ? DNP.add(n) : DNP.delete(n);
     localStorage.setItem('dnp', JSON.stringify([...DNP]));
-    savePicklist();
+    savePicklist(on ? { dnpAdd: [n] } : { dnpRemove: [n] });
     renderPicklist(); renderPickMini();
   };
   $('#dnpList').innerHTML = [...DNP].length
@@ -718,7 +772,7 @@ function renderPicklist() {
     reset.classList.toggle('hide', !(CAN_EDIT && activeOrder().length));
     reset.onclick = () => {
       setActiveOrder([]);
-      savePicklist();
+      savePicklist(PICK_MODE === 'first' ? { order: [] } : { order2: [] });
       renderPicklist(); renderPickMini();
     };
   }
@@ -732,7 +786,11 @@ function renderWeights() {
   for (const el of $$('[data-w]')) el.oninput = () => {
     activeWeights()[el.dataset.w] = Number(el.value);
     $(`#w-${el.dataset.w}`).textContent = el.value;
-    savePicklist();
+    // Every pixel of a slider drag used to be its own POST of the whole board.
+    // The board still re-ranks per pixel - that is the point of the slider -
+    // but only the weights this pane owns are sent, and only once the hand
+    // stops moving.
+    saveWeightsSoon();
     renderPicklist(); renderPickMini();
   };
 }
@@ -756,7 +814,7 @@ function renderHealth() {
   renderScoutPanel();
 
   $('#flags').innerHTML = flags.length ? flags.map((f) => `
-    <div class="callout"><div class="h">${esc(shortCode(f.match_key))} · ${esc(f.kind)}</div>
+    <div class="callout"><div class="h">${esc(shortCode(matchLabel(f.match_key)))} · ${esc(f.kind)}</div>
       <div class="b">${esc(f.detail || '')}</div></div>`).join('')
     : '<div class="hint">nothing flagged</div>';
 
@@ -867,6 +925,7 @@ const ago = (s) => s == null ? '—' : s < 60 ? `${Math.round(s)}s ago` : s < 36
 // and the endpoint could never answer "nothing has changed" - and the board
 // froze between polls instead of counting up.
 const secsSince = (at) => (at == null ? null : Math.max(0, net.serverNow() - at));
+const playedCount = () => ((STATE && STATE.matches) || []).filter((m) => m.breakdown).length;
 
 function renderCrew() {
   const seated = CREW.filter((c) => c.scoutId);
@@ -888,7 +947,13 @@ function renderCrew() {
     // hub records "last heard" off that at most once a minute, so the quietest
     // a perfectly healthy phone can look is about a minute and a half.
     else if (secsSince(c.lastSeenAt) > 240) problems.push(`${who} — gone quiet ${ago(secsSince(c.lastSeenAt))}, check their wifi`);
-    else if (secsSince(c.lastMatchAt) > 25 * 60) problems.push(`${who} — nothing logged in ${ago(secsSince(c.lastMatchAt))}`);
+    else if (c.lastMatchAt == null) {
+      // Never logged anything at all. The rule below reads an age, and an age
+      // nobody has is null, so the scout who has not sent one row all day -
+      // the one who has not understood the app - was the only one it could
+      // not see.
+      if (playedCount() > 0) problems.push(`${who} — nothing logged yet`);
+    } else if (secsSince(c.lastMatchAt) > 25 * 60) problems.push(`${who} — nothing logged in ${ago(secsSince(c.lastMatchAt))}`);
   }
   $('#crewAlert').innerHTML = problems.length
     ? `<div class="callout" style="margin:0 0 4px"><div class="h">GO TALK TO SOMEONE</div>
@@ -910,7 +975,7 @@ function renderCrew() {
       <span class="num" style="color:${ok ? 'var(--green-soft)' : 'var(--red-alert)'};font:800 10.5px Barlow,sans-serif;letter-spacing:.1em">
         ${c.scoutId ? (ok ? 'LIVE' : 'NOT SEEN') : '—'}</span>
       <span class="num">${ago(secsSince(c.lastSeenAt))}</span>
-      <span class="num">${c.lastMatch ? esc(shortCode(c.lastMatch)) + ' · ' + ago(secsSince(c.lastMatchAt)) : '—'}</span>
+      <span class="num">${c.lastMatch ? esc(shortCode(matchLabel(c.lastMatch))) + ' · ' + ago(secsSince(c.lastMatchAt)) : '—'}</span>
     </div>`;
   }).join('');
 
@@ -926,7 +991,8 @@ function renderCrew() {
 
   // which robot in the current match has nobody on it
   const ms = (STATE && STATE.matches) || [];
-  const m = ms.find((x) => x.status === 'On field') || ms.find((x) => !x.breakdown);
+  const m = ms.find((x) => x.status === 'On field' && !x.breakdown)
+    || ms.find((x) => !x.breakdown);
   $('#crewMatch').innerHTML = m ? ['red', 'blue'].map((side) =>
     `<div class="r" style="grid-template-columns:70px repeat(3,1fr)">
       <span style="color:${side === 'red' ? 'var(--red-label)' : 'var(--blue-label)'};font:800 11px Barlow,sans-serif;letter-spacing:.12em">${side.toUpperCase()}</span>
@@ -1034,7 +1100,15 @@ function allianceCard(m, side) {
     ${autoClashNote(teams)}
     ${defenseNote(m, side, teams)}
     <div class="tiles" style="grid-template-columns:repeat(3,1fr)">
-      ${tile('PROJECTED FUEL', Math.round(fuel), `±${band} · Energized at ${th.energized}`,
+      ${tile('PROJECTED FUEL', Math.round(fuel),
+             // A robot nobody has scouted contributes nothing to this sum, so
+             // an alliance with one unknown robot reads as a weak alliance
+             // rather than an unknown one. The table below names them; the
+             // tile has to say it too, because the tile is the thing that gets
+             // read out loud.
+             pr.scouted < lineup.length
+               ? `${pr.scouted} of ${lineup.length} robots scouted — incomplete`
+               : `±${band} · Energized at ${th.energized}`,
              fuel >= th.energized ? '' : 'warn')}
       ${tile('TOWER POINTS', Math.round(tower), `Traversal at ${th.traversal}`,
              tower >= th.traversal ? '' : 'warn')}
@@ -1096,9 +1170,10 @@ let openMatch = null;
 
 function nextMatch() {
   const ms = (STATE && STATE.matches) || [];
-  return ms.find((x) => x.status === 'On field')
-      || ms.find((x) => x.status === 'Now queuing' || x.status === 'On deck')
-      || ms.find((x) => !x.breakdown)
+  const live = ms.filter((x) => !x.breakdown);      // results beat a queueing status
+  return live.find((x) => x.status === 'On field')
+      || live.find((x) => x.status === 'Now queuing' || x.status === 'On deck')
+      || live[0]
       || ms[ms.length - 1];
 }
 
@@ -1318,7 +1393,7 @@ function renderTeamDetail() {
     <div style="margin-top:8px" class="hint">${esc(p.autos || '')}</div>
     <div style="margin-top:6px" class="hint">${esc(p.notes || '')}</div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">
-      ${(p.photos || []).map((id) => `<img src="/api/photo/${id}" style="width:88px;height:88px;object-fit:cover;border-radius:8px;border:1px solid var(--btn)">`).join('')}
+      ${(p.photos || []).map((id) => `<img src="/api/photo/${esc(encodeURIComponent(id))}" style="width:88px;height:88px;object-fit:cover;border-radius:8px;border:1px solid var(--btn)">`).join('')}
     </div>`
     : '<div class="hint">Not pit scouted yet.</div>');
 }
@@ -1839,16 +1914,24 @@ async function main() {
   };
   await loadPicklistState();
   await refresh();
-  // These are the names the hub actually broadcasts. 'alliances' was not one of
-  // them - alliance selection arrives inside 'nexus' - so that listener had
-  // never fired, and the four below it were only ever picked up by the 30s
-  // poll below.
+  // 'alliances' was dropped from this list on the grounds that alliance
+  // selection arrives inside 'nexus'. It does not: poll_nexus sends it as its
+  // own message (hub.py `_nexus_side`), and the 'nexus' message carries only
+  // the queueing status, the schedule and the announcements. So during
+  // selection this board learned that a team had been picked when the
+  // ten-second poll came round and not before - on the one screen, in the one
+  // twenty minutes of the event, where being ten seconds behind the room is
+  // the whole complaint the push exists to answer.
+  //
+  // The other three names the hub sends - 'pits', 'pitMap' and 'inspection' -
+  // are deliberately not here: nothing on this dashboard draws them, and the
+  // pit tablet is the screen that does.
   // Coalesced. The hub fires several of these together - a TBA poll that lands
   // new results broadcasts `results`, `solved` and `scout` within milliseconds
   // of each other - and each one used to be its own full refresh.
   const nudge = coalesce(refresh, 750);
-  for (const t of ['nexus', 'results', 'scout', 'calibration', 'matchStatus', 'seats',
-                   'matchStart', 'lovat', 'solved', 'rankings', 'epa', 'earlyScores'])
+  for (const t of ['nexus', 'alliances', 'results', 'scout', 'calibration', 'matchStatus',
+                   'seats', 'matchStart', 'lovat', 'solved', 'rankings', 'epa', 'earlyScores'])
     net.on(t, nudge);
   // Settings are not in refresh() any more: /api/config carries serverTime, so
   // it can never answer 304, and nothing on it changes without one of these.
@@ -1859,8 +1942,12 @@ async function main() {
   // during alliance selection; the second one kept its boot-time copy all
   // afternoon, and the next edit made on it wrote that stale copy back over
   // everyone else's DNP flags and ordering. Nothing said a thing.
-  net.on('picklist', async () => {
+  net.on('picklist', async (msg) => {
     if (dragTeam) return;              // mid-drag: the drop re-renders anyway
+    // Not our own edit coming back. renderWeights() rebuilds the sliders, so
+    // the echo of a save landed on the pane the lead still had a finger on and
+    // snapped the handle back to the value the hub had a moment ago.
+    if (msg && msg.rev && msg.rev === PICK_REV) return;
     await loadPicklistState();
     renderPicklist(); renderPickMini(); renderWeights();
   });

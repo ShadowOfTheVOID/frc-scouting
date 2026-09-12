@@ -114,11 +114,22 @@ class Store:
         return rev, len(raw)
 
     def revision(self, event_key, rev=None):
-        """One stored bundle, newest by default. None when there is none."""
-        if rev:
+        """One stored bundle, newest by default. None when there is none.
+
+        `rev` arrives off a query string, so it is whatever somebody typed.
+        `int()` on that used to raise straight out of the request handler -
+        no response at all, just a dropped connection - and on an --open
+        mirror that is anybody who can reach the address. A revision that is
+        not a number is a revision this mirror does not have.
+        """
+        if rev is not None and str(rev).strip() != "":
+            try:
+                rev = int(str(rev).strip())
+            except (TypeError, ValueError):
+                return None
             r = self.conn().execute(
                 "SELECT body FROM revisions WHERE event_key=? AND id=?",
-                (event_key, int(rev))).fetchone()
+                (event_key, rev)).fetchone()
         else:
             r = self.conn().execute(
                 "SELECT body FROM revisions WHERE event_key=? ORDER BY id DESC LIMIT 1",

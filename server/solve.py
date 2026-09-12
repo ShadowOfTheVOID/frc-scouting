@@ -41,19 +41,34 @@ def largest_remainder(total, weights):
 
 
 def interval_weight(intervals, mult):
-    """Sum of duration * bucket-multiplier over one robot's intervals."""
+    """Sum of duration * bucket-multiplier over one robot's intervals.
+
+    Defended the same way `interval_secs` beside it is: a member that is not an
+    object contributes nothing rather than raising. The store cleans these
+    lists on the way in, so this is the second line rather than the first.
+    """
     w = 0.0
-    for iv in intervals or []:
-        dur = interval_secs(iv)
-        w += dur * mult.get(iv.get("intensity"), mult.get("steady", 1.0))
+    for iv in intervals if isinstance(intervals, list) else []:
+        if not isinstance(iv, dict):
+            continue
+        w += interval_secs(iv) * mult.get(iv.get("intensity"), mult.get("steady", 1.0))
     return w
 
 
 def solve_window(total, per_robot_intervals, mult=None):
-    """Allocate one window's official fuel count across three robots."""
+    """Allocate one window's official fuel count across three robots.
+
+    `total` comes from TBA by way of `parse_breakdown_2026`, which now keeps
+    only real counts - this is what happens if one ever gets past it: nothing
+    to allocate, rather than an exception that stops the match solving at all.
+    """
     mult = mult or dict(BUCKET_PRIORS)
     weights = [interval_weight(ivs, mult) for ivs in per_robot_intervals]
-    return largest_remainder(int(total), weights), weights
+    try:
+        total = int(total)
+    except (TypeError, ValueError, OverflowError):
+        total = 0
+    return largest_remainder(total, weights), weights
 
 
 def _intervals_for_phase(intervals, phase_id):

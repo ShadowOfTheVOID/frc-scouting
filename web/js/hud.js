@@ -112,6 +112,11 @@ function markReconciled(matchKey) {
 }
 let SEATS = {};
 let MATCH_CLOCKS = {};
+// The ids of the rows still sitting in the outbound queue, so the standby list
+// can say QUEUED rather than SENT. It read a `_queued` flag on the row that
+// nothing ever set, so every match said SENT - including on a phone that had
+// never once reached the hub, which is the exact moment a scout looks.
+let QUEUED_IDS = new Set();
 
 // Practice mode: the real HUD against a fake match, saving nothing. This is how
 // a lead trains someone in two minutes without touching the event's data.
@@ -360,10 +365,24 @@ function syncSeat(force = false) {
   }).catch(() => { lastSeatSync = 0; });   // offline: the next tick tries again
 }
 
-/** Ask the hub who is actually in our chair before we act as though it is ours. */
-async function verifySeat() {
-  if (PRACTICE || seatVerified || screen === 'bumped') return;
-  if (Date.now() - lastVerify < 15000) return;
+/**
+ * Ask the hub who is actually in our chair before we act as though it is ours.
+ *
+ * `force` re-asks for a chair this phone already believes is its own, and is
+ * what a reconnection uses. A phone that was out of range while the lead freed
+ * its station and sat somebody else there came back and simply re-asserted the
+ * claim - bumping the scout who had just been put in the chair, on the hub's
+ * own instruction. Two signals about one chair; the hub's is the one that
+ * counts, and asking is the only way to hear it.
+ */
+async function verifySeat({ force = false } = {}) {
+  if (PRACTICE || screen === 'bumped') return;
+  if (!force && seatVerified) return;
+  // The plain call is reached from every connection change, so it is rate
+  // limited. A reconnection is an event rather than a poll and has to get
+  // through - it is the one moment this phone can have missed the news about
+  // its own chair - but a radio flapping in and out must still not spin.
+  if (Date.now() - lastVerify < (force ? 2000 : 15000)) return;
   lastVerify = Date.now();
   let s;
   try { s = await net.api('/api/seats'); } catch { return; }   // retried when we reconnect
@@ -806,6 +825,15 @@ $('#btnSend').onclick = async () => {
 // ═══════════════════════════════════════════════════════════ STANDBY/OFFLINE
 async function refreshHistory() {
   const rows = await db.all('scout');
+  // Which of them the hub has not taken yet. Kept beside the rows rather than
+  // stamped onto them: `history[0]` is handed straight to FIX THE LAST MATCH
+  // as the live entry, and a display flag welded into a record ends up saved
+  // and synced with it.
+  try {
+    QUEUED_IDS = new Set((await db.queued())
+      .filter((q) => q.kind === 'scout' && q.record)
+      .map((q) => q.record.id));
+  } catch (e) { console.error(e); }
   history = rows
     .filter((r) => r.scoutId === seat.scout)
     .sort((a, b) => b.updatedAt - a.updatedAt)
@@ -871,7 +899,7 @@ function renderStandby() {
     <div class="lrow"><span class="code">${shortCode(h.matchLabel)}</span>
       <span class="team">${h.team}</span>
       <span class="desc">${Math.round((h.payload.intervals || []).reduce((s, i) => s + (i.end - i.start) * rateOf(i.intensity), 0))} balls · ${h.payload.endgameTower === 'None' ? 'none' : h.payload.endgameTower.replace('Level', 'L')}${RECONCILED.has(h.matchKey) ? ' · reconciled' : ''}</span>
-      <span class="tag ${h._queued ? 'queued' : 'sent'}">${h._queued ? 'QUEUED' : 'SENT'}</span></div>`).join('')
+      <span class="tag ${QUEUED_IDS.has(h.id) ? 'queued' : 'sent'}">${QUEUED_IDS.has(h.id) ? 'QUEUED' : 'SENT'}</span></div>`).join('')
     : '<div class="lrow"><span class="desc">nothing logged yet</span></div>';
 }
 
@@ -1021,10 +1049,21 @@ function nextScoutableMatch() {
   return (i >= 0 && matches[i + 1]) || m;
 }
 
+/**
+ * The match this seat is watching now.
+ *
+ * A queueing status and an official result are two signals about one match,
+ * and when they disagree the result wins: TBA does not post a breakdown for a
+ * match that is still being played. Nexus's status comes from a volunteer with
+ * a tablet and it goes stale in exactly the way you would expect - a match
+ * that has been played and scored can still read `On field` for the rest of
+ * the day, because put_match COALESCEs a missing status and keeps the last one
+ * it was told. Every phone in the building then sits on a finished match.
+ */
 function pickCurrentMatch() {
   if (PRACTICE) return practiceMatch();
   for (const st of ['On field', 'On deck', 'Now queuing']) {
-    const m = matches.find((x) => x.status === st);
+    const m = matches.find((x) => x.status === st && !x.breakdown);
     if (m) return m;
   }
   return matches.find((m) => !m.breakdown) || matches[0] || null;
@@ -1050,9 +1089,52 @@ function loadMatch(m) {
   // joined late? pick up the clock already running for this match
   if (shared && net.serverNow() - shared.startedAt < matchSeconds() + 30) clock.adopt(shared);
 }
+// The match this phone has already opened the HUD for. Arming is a one-way
+// door per match: a scout who has finished a match and pressed DONE is back on
+// standby while the field is still reading `On field`, and re-arming there
+// would hand them a second, empty entry for a match they have already sent.
+let armedMatch = null;
+
+/**
+ * Open the HUD because this seat's robot is on the field.
+ *
+ * Called from both places a status can reach us: the `matchStatus` push, and
+ * the schedule that arrives with every /api/state. Only the push used to do
+ * it, and a webhook has to reach the hub from the internet - which it cannot,
+ * because the hub sits behind the venue's NAT (see server/offsite.py). So at
+ * an actual event nothing armed at all: the countdown ran out, the match was
+ * played, and the scout sat on standby watching it.
+ */
+function armIfOnField(m) {
+  if (screen !== 'standby' || !m || m.status !== 'On field') return false;
+  // Official results exist, so it is over whatever the queueing status says.
+  if (m.breakdown) return false;
+  if (armedMatch === m.matchKey) return false;
+  const team = teamForSeat(m);
+  if (!team) return false;
+  // Already logged by this scout - the buzzer has gone and the row is sent.
+  if (history.some((h) => h.matchKey === m.matchKey && h.team === team)) return false;
+  armedMatch = m.matchKey;
+  if (!entry || entry.matchKey !== m.matchKey || entry.team !== team) loadMatch(m);
+  else {
+    // The preload and the start position are entered on standby, before the
+    // robot moves, against this same match. Reloading it would hand the scout
+    // a blank entry at the buzzer and throw both away.
+    currentMatch = m;
+    autoWinner = (m.breakdown && m.breakdown.autoWinner) || autoWinner;
+    const shared = MATCH_CLOCKS[m.matchKey];
+    if (shared && net.serverNow() - shared.startedAt < matchSeconds() + 30) clock.adopt(shared);
+  }
+  show('live'); renderLive();
+  return true;
+}
+
 function goStandbyOrLive() {
-  // If our match is already on the field, the scout needs the HUD now, not a countdown.
-  if (currentMatch && currentMatch.status === 'On field' && entry && entry.team) {
+  // If our match is already on the field, the scout needs the HUD now, not a
+  // countdown - unless it has an official result, in which case the status is
+  // stale and the match is over. See pickCurrentMatch.
+  if (currentMatch && currentMatch.status === 'On field' && !currentMatch.breakdown
+      && entry && entry.team) {
     show('live'); renderLive(); return;
   }
   if (!net.state.online) { renderOffline(); show('offline'); return; }
@@ -1126,10 +1208,17 @@ async function main() {
       const on = entry.payload.autoTower !== 'Level1';
       entry.payload.autoTower = on ? 'Level1' : 'None';
       entry.payload.autoClimbStartSecs = on ? now : null;
+      // A recorded climb answers the chip beside it. The chip hides itself at
+      // that point but its value stayed true, and a scout who tapped FELL OFF
+      // first could no longer reach it to untick - so the robot went out
+      // reading "climbed L1" and "fell off" at once, and the dashboard
+      // believed both.
+      if (on) entry.payload.autoClimbFailed = false;
     } else {
       const i = CLIMBS.indexOf(entry.payload.endgameTower);
       const next = CLIMBS[(i + 1) % CLIMBS.length];
       entry.payload.endgameTower = next;
+      if (next !== 'None') entry.payload.climbFailed = false;   // see the auto case above
       // Keep the FIRST tap: cycling L1 to L2 to L3 is the scout settling on a
       // level, not the robot starting again. Back round to None clears it.
       if (next === 'None') entry.payload.climbStartSecs = null;
@@ -1139,7 +1228,14 @@ async function main() {
   };
 
   let wasOnline = net.state.online;
+  let wasQueued = net.state.queued;
   net.onChange(() => {
+    // The queue draining is what turns a row from QUEUED to SENT, and only
+    // re-reading it can say which rows went.
+    if (net.state.queued !== wasQueued) {
+      wasQueued = net.state.queued;
+      refreshHistory().then(() => { if (screen === 'standby') renderStandby(); });
+    }
     if (screen === 'live') { $('#lvLink').textContent = net.state.online ? 'STATION LINKED' : 'SAVING LOCALLY'; $('#lvDot').className = 'dot' + (net.state.online ? '' : ' amber'); }
     if (screen === 'standby') renderStandby();
     if (screen === 'seat') renderSeat();
@@ -1148,8 +1244,17 @@ async function main() {
     // it, then re-assert ours. Both are no-ops once they have succeeded.
     const cameBack = net.state.online && !wasOnline;
     wasOnline = net.state.online;
+    // ...and the moment to come off the offline screen. Nothing else ever took
+    // a phone off it: it is only ever entered, so a phone that lost the hub
+    // once sat there for the rest of the day - still queueing, still syncing,
+    // but off the one screen the auto-arm fires from. The scout saw a working
+    // phone that never opened for a match again.
+    if (cameBack && screen === 'offline') goStandbyOrLive();
     if (booted && net.state.online) {
-      if (!seatVerified) verifySeat(); else syncSeat(cameBack);
+      // Coming back from a gap is a re-ask, not a re-assert: while this phone
+      // was away the chair may have been freed and given to somebody else.
+      if (!seatVerified || cameBack) verifySeat({ force: cameBack });
+      else syncSeat(false);
     }
   });
 
@@ -1177,6 +1282,15 @@ async function main() {
     window.__teams = s.teams || [];
     db.cacheSet('state', s);
     if (!currentMatch) loadMatch(nextScoutableMatch());
+    // Re-point at the row that has just arrived. `matches` is replaced whole,
+    // so the old object is now a copy nothing else will ever write to again -
+    // and its `status` is what standby prints and what arms the HUD below.
+    else currentMatch = matches.find((m) => m.matchKey === currentMatch.matchKey) || currentMatch;
+    // The status that arrives by poll has to arm the phone, exactly as the
+    // pushed one does. This is the ordinary case at a venue: the hub is behind
+    // the venue's NAT, so Nexus cannot reach it to push, and every `On field`
+    // in the building arrives through poll_nexus and this payload instead.
+    armIfOnField(pickCurrentMatch());
     // The schedule and the match statuses live on this screen, and the timer
     // no longer redraws it on the off-chance.
     if (screen === 'standby') renderStandby();
@@ -1224,9 +1338,7 @@ async function main() {
     if (!m) return;
     m.status = match.status;
     // Nexus arms the screen: when our match takes the field, go straight to the HUD.
-    if (match.status === 'On field' && screen === 'standby' && teamForSeat(m)) {
-      loadMatch(m); show('live'); renderLive();
-    }
+    if (!armIfOnField(m) && screen === 'standby') renderStandby();
   });
 
   if (PRACTICE) {

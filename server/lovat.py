@@ -26,6 +26,7 @@ not know" every source in sources.py returns.
 """
 import csv
 import io
+import math
 import statistics as st
 
 #: Column -> the name it takes in the per-team record.  Lovat's own names are
@@ -108,11 +109,20 @@ PER_MATCH = {
 
 
 def _num(v):
+    """One number out of a CSV cell, or None for anything that is not one.
+
+    Infinity is unknown for the same reason NaN is, and for one more: a cell
+    reading `1e999` is a float here, and `int()` of it raises - which took the
+    whole import down through `int(teamNumber)`, against the promise at the top
+    of this file that the module never raises. The poller catches it and tries
+    again in five minutes, forever, so one junk cell in somebody else's export
+    means no Lovat data at all for the event.
+    """
     try:
         f = float(v)
     except (TypeError, ValueError):
         return None
-    return f if f == f else None          # NaN reads as unknown
+    return f if math.isfinite(f) else None
 
 
 def _bool(v):
@@ -230,7 +240,7 @@ def parse_report_csv(text, event_key):
         team = _num(row.get("teamNumber"))
         if team is None:
             continue
-        by_team.setdefault(int(team), []).append(row)
+        by_team.setdefault(int(team), []).append(row)   # _num has ruled out inf and nan
     return {team: _team_record(team, rs, event_key) for team, rs in by_team.items()}
 
 

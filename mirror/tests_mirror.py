@@ -310,6 +310,13 @@ def test_history(M, tok):
     code, old, _ = M.req(f"/api/export?t={tok}&rev={revs[-1]['revision']}")
     ok &= check("and an older one can still be downloaded",
                 code == 200 and old.get("kind") == "frc-rebuilt-scouting-export")
+    # A revision id off a query string is whatever somebody typed. int() on it
+    # used to raise straight out of the handler: no response at all, the socket
+    # dropped, and on an --open mirror that is anybody who can reach the site.
+    for junk in ("abc", "1;drop", "", "9e9999"):
+        code, body, _ = M.req(f"/api/snapshot?t={tok}&rev={junk}")
+        ok &= check(f"a revision of '{junk or '(blank)'}' is answered, not dropped",
+                    code in (200, 404), f"({code})")
     return ok
 
 

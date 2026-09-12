@@ -22,6 +22,7 @@ networks only.  A venue network is a private network to Windows; a coffee shop
 is a public one, and the hub has no business being reachable there.
 """
 import platform
+import re
 import subprocess
 import sys
 
@@ -46,15 +47,27 @@ def _netsh(*args):
         return False, str(e)
 
 
+#: The port as its own number, not as a run of digits inside another one.
+#: `str(port) in out` said yes for `--port 605` against a rule holding 6059,
+#: which is the false "allowed" this check exists to catch - and netsh prints
+#: several numbers per rule, so there is plenty to collide with.
+def _port_in(out, port):
+    return re.search(r"(?<!\d)%d(?!\d)" % int(port), out or "") is not None
+
+
 def exists(port):
     """Whether our rule is already in place for this port.
 
     Checked by name and then by port, because a rule left over from a run on a
     different port would otherwise read as "allowed" while phones still cannot
     connect - which is the exact failure this module exists to remove.
+
+    Matched on the number rather than on a label: `netsh` prints its output in
+    the language Windows is installed in, and "LocalPort" is not one of the
+    words that survives that.
     """
     ok, out = _netsh("show", "rule", "name=" + RULE)
-    return ok and str(port) in out
+    return ok and _port_in(out, port)
 
 
 def add(port):

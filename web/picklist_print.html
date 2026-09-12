@@ -64,25 +64,18 @@
 
 <script type="module">
 import * as net from '/js/net.js';
+import { score } from '/js/picklist.js';
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
 
-// Same score as the dashboard's draft board, from the same saved weights, so
-// the sheet and the screen cannot disagree.
+// The same score as the dashboard's draft board, out of the same file, from
+// the same saved weights - so the sheet in somebody's hand and the screen
+// behind them cannot rank the same robots differently. It used to be a second
+// copy of the formula here, and a correction to one of them did exactly that.
 const DEFAULT_W = { climb: 30, reliability: 25, stockpile: 15, fuel: 20, defense: 10 };
 const DEFAULT_W2 = { climb: 15, reliability: 30, stockpile: 20, fuel: 15, defense: 35 };
 // ?list=second prints the complement board instead of the best-robot one.
 const SECOND = new URLSearchParams(location.search).get('list') === 'second';
-
-function score(t, weights, maxFuel) {
-  const e = t.exact, o = t.observed, s = t.estimated;
-  const climb = ({ Level3: 1, Level2: 0.65, Level1: 0.3, None: 0 })[e.bestClimb] || 0;
-  const l3 = (e.climbRate.Level3 || 0) / 100;
-  const rel = 1 - Math.min(1, (o.diedRate + o.noShowRate) / 100);
-  return weights.climb * (climb * .6 + l3 * .4) + weights.reliability * rel +
-         weights.stockpile * ((o.stockpileRate || 0) / 100) +
-         weights.fuel * (s.avgFuel / maxFuel) + weights.defense * ((o.defense || 0) / 5);
-}
 
 await net.start();
 const [cfg, state, an, pl] = await Promise.all([

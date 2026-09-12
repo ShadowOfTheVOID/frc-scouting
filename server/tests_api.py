@@ -9,6 +9,7 @@ zero.  All stdlib, no fixtures on disk beyond a temp database.
 import base64
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -24,6 +25,11 @@ import analytics  # noqa: E402
 import envfile  # noqa: E402
 import hub  # noqa: E402
 import offsite  # noqa: E402
+import rules  # noqa: E402
+import lovat as lovat_report  # noqa: E402
+import discover  # noqa: E402
+import random  # noqa: E402
+import sources  # noqa: E402
 from store import Store  # noqa: E402
 
 EK = "2026test"
@@ -238,6 +244,25 @@ def test_trend_series(L):
     t = a["teams"].get("101") or a["teams"].get(101)
     ok &= check("a scheduled match nobody has played yet adds no point",
                 len(t["trend"]) == 1, f"({len(t['trend'])})")
+    ok &= check("and the row says whether a scout was on this robot in this match",
+                t["trend"][0].get("scouted") is True, f"({t['trend'][0].get('scouted')})")
+
+    # COVERAGE is read as "are we watching the robots", beside MEDIAN ERROR and
+    # CALIBRATED under "how much to trust the numbers". Counting matches nobody
+    # has played yet made it a number a perfect crew could never move: on the
+    # seeded demo, 26 of 40 played and every robot watched read 65%.
+    cov = a["coverage"]
+    # qm1 is played and one robot on it was scouted; qm2 is scheduled and has
+    # not happened. Only qm1's six robots may be in the denominator.
+    ok &= check("coverage counts the robots that have taken the field, not the schedule",
+                cov["robotsExpected"] == 6 and cov["robotsScouted"] == 1, f"({cov})")
+    L.store.put_match(EK, f"{EK}_qm3", label="Qualification 3", comp_level="qm", match_number=3,
+                      red=[101, 102, 103], blue=[201, 202, 203],
+                      breakdown={"red": {"windows": {"auto": 10}}, "blue": {"windows": {}}})
+    _, a = L.req("/api/analytics")
+    ok &= check("a match that WAS played and nobody watched still counts against it",
+                a["coverage"]["robotsExpected"] == 12 and a["coverage"]["robotsScouted"] == 1,
+                f"({a['coverage']})")
     return ok
 
 
@@ -304,6 +329,72 @@ def test_picklist_lock(L):
     code, _ = L.req("/api/picklist", {"order": [101]}, headers={"X-Strategy-Token": token})
     ok &= check("changing the passcode invalidates old tokens", code == 403)
     L.req("/api/config", {"strategyPin": ""})
+    return ok
+
+
+def test_two_leads_on_one_board(L):
+    """Two dashboards, alliance selection, edits in the same second.
+
+    A second dashboard is the point of alliance selection - one lead reads, one
+    lead drives - and both used to send the WHOLE picklist on every edit, so
+    whichever clicked second silently undid the other. Measured before this,
+    three runs out of three: one lead marks 254 do-not-pick while the other
+    drags 1678 to the top, and the hub ends up holding one of the two edits.
+    The write was always atomic; it was the payload that collided.
+    """
+    ok = True
+    L.req("/api/picklist", {"order": [], "order2": [], "dnp": [],
+                            "weights": {}, "weights2": {}})
+
+    # The two edits, sent as the two pages send them - only what changed.
+    def edit(payload, out):
+        out.append(L.req("/api/picklist", payload)[0])
+    ready = threading.Barrier(2)
+
+    def run(payload, out):
+        ready.wait()
+        edit(payload, out)
+    outs = []
+    ts = [threading.Thread(target=run, args=(pl, outs)) for pl in
+          ({"dnpAdd": [254]}, {"order": [1678, 118, 254]})]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    _, pl = L.req("/api/picklist")
+    ok &= check("one lead's flag and the other's drag both survive",
+                pl["dnp"] == [254] and pl["order"] == [1678, 118, 254], f"({pl})")
+
+    # Six leads flagging six different robots is not a conflict at all.
+    teams = [971, 195, 2056, 1114, 118, 33]
+    bar = threading.Barrier(len(teams))
+
+    def flag(t):
+        bar.wait()
+        L.req("/api/picklist", {"dnpAdd": [t]})
+    ts = [threading.Thread(target=flag, args=(t,)) for t in teams]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    _, pl = L.req("/api/picklist")
+    ok &= check("six flags in the same instant are six flags, not one",
+                sorted(pl["dnp"]) == sorted(teams + [254]), f"({sorted(pl['dnp'])})")
+
+    _, pl = L.req("/api/picklist", {"dnpRemove": [254]})
+    ok &= check("and un-flagging one leaves the rest alone",
+                254 not in pl["picklist"]["dnp"] and len(pl["picklist"]["dnp"]) == len(teams),
+                f"({pl['picklist']['dnp']})")
+
+    # The revision is what lets a second dashboard tell somebody else's edit
+    # from the echo of its own.
+    before = pl["picklist"]["rev"]
+    _, pl2 = L.req("/api/picklist", {"weights": {"climb": 31}})
+    ok &= check("every write moves the revision", pl2["picklist"]["rev"] == before + 1,
+                f"({before} -> {pl2['picklist']['rev']})")
+    ok &= check("and a field nobody sent is not touched",
+                pl2["picklist"]["order"] == [1678, 118, 254], f"({pl2['picklist']})")
+    L.req("/api/picklist", {"order": [], "order2": [], "dnp": [], "weights": {}})
     return ok
 
 
@@ -466,6 +557,28 @@ def test_hostile_input(L):
         code, _ = L.req("/api/matchstart", body)
         ok &= check(f"a matchKey that is {name} is a 400, not a dropped thread", code == 400,
                     f"({code})")
+
+    # A pit photo is stored by id and the id is pasted into an `<img src>` on
+    # the dashboard and the pit tablet. A "photo" that is not an id is a string
+    # of somebody's choosing inside an HTML attribute on the hub's own origin,
+    # where the strategy token lives. Driven in Chromium before this: a pit
+    # record synced with the id below ran script on the dashboard.
+    png = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"x" * 40).decode()
+    hostile = 'x" onerror="document.title=`XSS`" data-x="'
+    code, _ = L.req("/api/sync", {"pit": [{
+        "eventKey": EK, "team": 9991, "scoutId": "XX", "deviceId": "d-x",
+        "updatedAt": time.time(),
+        "payload": {"photos": [hostile, "../../etc/passwd", "",
+                               "data:image/png;base64," + png]},
+    }]})
+    kept = [e for e in L.store.pit_entries(EK) if e["team"] == 9991]
+    photos = (kept[0]["payload"].get("photos") if kept else None) or []
+    ok &= check("a pit photo that is not a photo id is dropped, not stored",
+                code == 200 and hostile not in photos and "../../etc/passwd" not in photos,
+                f"({photos})")
+    ok &= check("and the real one alongside it still lands",
+                len(photos) == 1 and bool(re.match(r"^[0-9a-f]{16}$", photos[0] or "")),
+                f"({photos})")
 
     # And the hub is still answering afterwards.
     code, _ = L.req("/api/state")
@@ -1329,8 +1442,19 @@ def test_admin_panel(L):
     ok &= check("and nothing unlocks it - the answer says what to fix",
                 code == 403 and "base64" in r.get("error", ""), f"({code} {r})")
 
+    # Trimmed on both sides or neither. It used to be stripped off what was
+    # typed in and not off what was stored, so a password chosen with a space
+    # on the end could never be entered again by anybody.
+    os.environ[envfile.ADMIN] = envfile.encode("  hub 6059  ")
+    code, r = L.req("/api/admin/unlock", {"code": "hub 6059"})
+    ok &= check("a password stored with spaces around it still unlocks",
+                code == 200 and bool(r.get("token")), f"({code} {r})")
+    code, r = L.req("/api/admin/unlock", {"code": "hub"})
+    ok &= check("and a wrong one still does not", code == 403, f"({code})")
+
     # The name people type out of habit is not read as a password, and is not
     # silently ignored either.
+    os.environ.pop(envfile.ADMIN, None)
     os.environ.pop(envfile.ADMIN, None)
     os.environ[envfile.ADMIN_PLAIN] = "hub-6059"
     code, c = L.req("/api/config")
@@ -1957,6 +2081,49 @@ def test_nexus_broadcasts_only_on_change(L):
     return ok
 
 
+def test_vendor_backoff_is_remembered(L):
+    """A vendor that says stop has to still be saying it on the next call.
+
+    `Lovat.down_until` and `ai.Client.down_until` are the whole of this hub's
+    politeness to two rate-limited services - Lovat allows one request every
+    three seconds, and an AI key that was just rejected will be rejected
+    again. Both clients used to be rebuilt from the settings row on every
+    single call, so the field was written onto an object thrown away on the
+    next line: nothing ever backed off, and the diagnostics panel could never
+    show that anything had.
+    """
+    ok = True
+    L.store.set("lovatKey", "lvt-" + "a" * 20)
+    first = L.hub.lovat()
+    ok &= check("the same lovat client answers twice", L.hub.lovat() is first)
+    first.down_until = time.time() + 300
+    ok &= check("so a rate-limit backoff is still there on the next call",
+                L.hub.lovat().down_until > time.time())
+    ok &= check("and the diagnostics panel can see it",
+                any(s["name"] == "lovat" and "backing off" in s["detail"]
+                    for s in L.hub.diag()["services"]))
+
+    L.store.set("aiProvider", "anthropic")
+    L.store.set("aiKey", "sk-ant-" + "b" * 20)
+    L.store.set("aiModel", "claude-opus-5")
+    client = L.hub.ai()
+    ok &= check("the same ai client answers twice", L.hub.ai() is client and client.ok)
+    client.down_until = time.time() + 60
+    ok &= check("so a refused key sits its minute out", L.hub.ai().down_until > time.time())
+
+    # ...and editing the key is what clears it, because that is what somebody
+    # fixing a wrong key means by fixing it.
+    L.store.set("lovatKey", "lvt-" + "c" * 20)
+    L.store.set("aiKey", "sk-ant-" + "d" * 20)
+    ok &= check("a corrected key is a new client, with no backoff on it",
+                L.hub.lovat().down_until == 0.0 and L.hub.ai().down_until == 0.0)
+    L.store.set("lovatKey", None)
+    L.store.set("aiKey", None)
+    L.store.set("aiProvider", None)
+    L.store.set("aiModel", None)
+    return ok
+
+
 def test_after_screen_extras_reach_the_dashboard(L):
     """The optional questions have to survive as observations, not as zeros.
 
@@ -2038,13 +2205,485 @@ def test_after_screen_extras_reach_the_dashboard(L):
     return ok
 
 
+def test_one_climb_cannot_also_be_a_fall(L):
+    """A robot that climbed did not fall off, whatever two chips were tapped.
+
+    CLIMB FELL OFF and the CLIMB button hide each other on the phone, but
+    hiding a chip does not clear it: a scout who tapped the chip first and then
+    recorded a level left both set, with no way back to the chip. The team read
+    "best climb L2, 100% of matches" and "tried a climb and fell, 100%" on the
+    same page.
+    """
+    ok = True
+    mk = f"{EK}_qm1"
+    latest = max([e["updatedAt"] for e in L.store.scout_entries(EK)] or [time.time()])
+
+    def logged(**extra):
+        e = entry(mk, 101, "AK", latest + 60)
+        e["payload"].update(extra)
+        L.req("/api/sync", {"scout": [e]})
+        _, a = L.req("/api/analytics")
+        t = a["teams"].get("101") or a["teams"].get(101)
+        return t["observed"]
+
+    o = logged(endgameTower="Level2", climbFailed=True,
+               autoTower="Level1", autoClimbFailed=True)
+    ok &= check("a recorded climb wins over the chip beside it",
+                o["climbFailRate"] == 0.0 and o["autoClimbFailRate"] == 0.0,
+                f"({o['climbFailRate']}, {o['autoClimbFailRate']})")
+    latest += 60
+    o = logged(endgameTower="None", climbFailed=True, autoTower="None", autoClimbFailed=True)
+    # A rate over every match this team was scouted in, so the number depends on
+    # what else the suite has logged for 101 - the claim here is that the fall
+    # counts at all, where the row above counted for nothing.
+    ok &= check("and a robot that really did fall still counts as one",
+                o["climbFailRate"] > 0 and o["autoClimbFailRate"] > 0,
+                f"({o['climbFailRate']}, {o['autoClimbFailRate']})")
+    return ok
+
+
+def test_event_picker_survives_junk(L):
+    """Both halves of the picker's query come off the address bar.
+
+    `int(year)` raised straight out of the request handler - no response at
+    all, just a dropped connection - on the one page somebody is looking at
+    while nothing else on the hub works yet.
+    """
+    ok = True
+    for q in ("team=6059&year=abc", "team=6059&year=", "team=&year=2026", "team=xyz"):
+        code, body = L.req("/api/eventsfor?" + q)
+        ok &= check(f"?{q} is answered, not dropped",
+                    code == 200 and isinstance(body, dict), f"({code})")
+    return ok
+
+
+def test_env_file_survives_a_failed_write(L):
+    """`.env` holds every key and the admin password, and the panel calls it
+    the whole backup. So the one thing it may never become is a shorter file.
+
+    Truncating in place and then writing has a window where it is empty, and a
+    full disk lands in it: the hub comes back with no keys, no password and
+    nothing to say why.
+    """
+    ok = True
+    d = tempfile.mkdtemp(prefix="frc-env-")
+    path = os.path.join(d, ".env")
+    envfile.write_many({"TBA_API_KEY_B64": "a" * 24, envfile.ADMIN: "b" * 12}, path)
+    before = open(path, encoding="utf-8").read()
+    real = os.fsync
+    os.fsync = lambda fd: (_ for _ in ()).throw(OSError(28, "No space left on device"))
+    try:
+        envfile.write_many({"TBA_API_KEY_B64": "zzz"}, path)
+        ok &= check("a failed write is reported, not swallowed", False, "(it returned)")
+    except OSError:
+        ok &= check("a failed write is reported, not swallowed", True)
+    finally:
+        os.fsync = real
+    ok &= check("and every key is still in the file",
+                open(path, encoding="utf-8").read() == before)
+    ok &= check("with nothing left beside it", os.listdir(d) == [".env"], f"({os.listdir(d)})")
+    shutil.rmtree(d, ignore_errors=True)
+    return ok
+
+
+def test_both_halves_read_a_key_the_same_way(L):
+    """MIRROR_PUSH_KEY is deliberately one variable on both sides of the push.
+
+    The hub read the `_B64` line first and the mirror read the plain one first,
+    so a host with both set had the two halves authenticating against different
+    strings - reported as "bad push key", by two halves each certain they were
+    right.
+    """
+    ok = True
+    keep = {k: os.environ.get(k) for k in ("MIRROR_PUSH_KEY", "MIRROR_PUSH_KEY_B64")}
+    try:
+        os.environ["MIRROR_PUSH_KEY"] = "from-the-machine"
+        os.environ["MIRROR_PUSH_KEY_B64"] = envfile.encode("from-the-panel")
+        sys.path.insert(0, os.path.join(_HERE, "..", "mirror"))
+        import server as mirror_server          # noqa: E402
+        ok &= check("the hub and the mirror read the same string",
+                    envfile.read("MIRROR_PUSH_KEY") == mirror_server._secret("MIRROR_PUSH_KEY"),
+                    f"({envfile.read('MIRROR_PUSH_KEY')} / "
+                    f"{mirror_server._secret('MIRROR_PUSH_KEY')})")
+        del os.environ["MIRROR_PUSH_KEY_B64"]
+        ok &= check("and a plain-only variable still works on both",
+                    envfile.read("MIRROR_PUSH_KEY") == "from-the-machine"
+                    == mirror_server._secret("MIRROR_PUSH_KEY"))
+    finally:
+        for k, v in keep.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+    return ok
+
+
+def test_the_room_is_told_what_the_hub_decided(L):
+    """Two scouts take one chair. Every other screen has to end up on the winner.
+
+    The write was always atomic - one of them wins - but the broadcast that
+    tells the room was a separate statement, so the two messages could be
+    scheduled in the opposite order to the two writes. Measured before this, 3
+    races in 25: the hub holds the winner and every screen in the building shows
+    the loser, until the next seat event or the next full poll. The crew board's
+    FREE button, its unwatched-robot alert and the phones' own "you have been
+    bumped" check all read that map.
+    """
+    ok = True
+    ek = "2026told"
+    L.store.set("eventKey", ek)
+    L.store.put_event(ek)
+    real, sent = L.hub.broadcast, []
+
+    def spy(kind, payload):
+        if kind == "seats":
+            sent.append(payload)
+        real(kind, payload)
+    L.hub.broadcast = spy
+    try:
+        wrong = 0
+        for run in range(12):
+            sent.clear()
+            bar = threading.Barrier(2)
+
+            def claim(who, dev):
+                bar.wait()
+                L.req("/api/seat", {"alliance": "red", "station": 1,
+                                    "scoutId": who, "deviceId": dev})
+            ts = [threading.Thread(target=claim, args=(f"A{run}", f"da{run}")),
+                  threading.Thread(target=claim, args=(f"B{run}", f"db{run}"))]
+            for t in ts:
+                t.start()
+            for t in ts:
+                t.join()
+            held = (L.hub.seats().get("red1") or {}).get("scoutId")
+            told = ((sent[-1].get("seats") if sent else {}) or {}).get("red1", {}).get("scoutId")
+            if held != told:
+                wrong += 1
+        ok &= check("12 races for one chair leave every screen on the winner",
+                    wrong == 0, f"({wrong} left the room on the loser)")
+    finally:
+        L.hub.broadcast = real
+    for k in list(L.hub.seats()):
+        L.req("/api/unseat", {"seat": k})
+    return ok
+
+
+def test_the_buzzer_solves_from_every_scout(L):
+    """Three scouts on one alliance flush at the same instant.
+
+    Each sync solves the match it touched, so three threads were inside
+    read-entries / divide / write-rows for one match at once, each from a
+    different read. The last to WRITE won, not the last to read: measured, 1
+    match in 8 came out with a robot watched for five seconds holding more fuel
+    than one watched for ten.
+    """
+    ok = True
+    ek = "2026buzzer"
+    L.store.set("eventKey", ek)
+    L.store.put_event(ek)
+    bd = {"autoWinner": "blue",
+          "red": {"windows": {"shift1": 60}, "totalPoints": 200,
+                  "endgameTower": ["None"] * 3, "autoTower": [None] * 3},
+          "blue": {"windows": {"shift1": 40}, "totalPoints": 150,
+                   "endgameTower": ["None"] * 3, "autoTower": [None] * 3}}
+    bad = []
+    for run in range(6):
+        mk = f"{ek}_qm{run + 1}"
+        L.store.put_match(ek, mk, label=f"Qualification {run + 1}", play_order=run + 1,
+                          red=[9001, 9002, 9003], blue=[9004, 9005, 9006], breakdown=bd)
+        bar = threading.Barrier(3)
+
+        def flush(team, who, station, secs):
+            bar.wait()
+            L.req("/api/sync", {"scout": [{
+                "eventKey": ek, "matchKey": mk, "team": team, "scoutId": who,
+                "deviceId": "d" + who, "alliance": "red", "station": station,
+                "updatedAt": time.time(),
+                "payload": {"intervals": [{"start": 31.0, "end": 31.0 + secs,
+                                           "phase": "shift1", "intensity": "steady"}]}}]})
+        ts = [threading.Thread(target=flush, args=a)
+              for a in ((9001, "AA", 1, 20), (9002, "BB", 2, 10), (9003, "CC", 3, 5))]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+        got = {r["team"]: r["fuel"] for r in L.store.solved(ek) if r["matchKey"] == mk}
+        row = [got.get(t) for t in (9001, 9002, 9003)]
+        if None in row or not (row[0] > row[1] > row[2]):
+            bad.append((run, row))
+    ok &= check("the fuel follows the seconds actually watched, every time",
+                not bad, f"({bad[:2]})")
+    L.store.set("eventKey", EK)
+    return ok
+
+
+def test_two_saves_at_once_keep_both_keys(L):
+    """Two tabs pressing SAVE, or one SAVE pressed twice.
+
+    `.env` is read, changed and written back, and it holds every key: without
+    one writer at a time, six runs out of six lost one of the two edits - and
+    both writers used the same temporary file, so the second rename came back
+    FileNotFoundError, out of the request handler, as a dropped connection with
+    the panel still saying "saving...".
+    """
+    ok = True
+    d = tempfile.mkdtemp(prefix="frc-env-")
+    path = os.path.join(d, ".env")
+    names = [envfile.encoded_name(f) for f in envfile.KEYS]
+    envfile.write_many({n: "start" for n in names}, path)
+    errs, lost = [], 0
+    for run in range(6):
+        bar = threading.Barrier(2)
+
+        def save(name, value):
+            bar.wait()
+            try:
+                envfile.write_many({name: value}, path)
+            except Exception as e:
+                errs.append(repr(e))
+        ts = [threading.Thread(target=save, args=(names[0], f"A{run}")),
+              threading.Thread(target=save, args=(names[1], f"B{run}"))]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+        have = envfile.parse(open(path, encoding="utf-8").read())
+        if have.get(names[0]) != f"A{run}" or have.get(names[1]) != f"B{run}":
+            lost += 1
+        if any(n not in have for n in names):
+            lost += 1
+    ok &= check("six rounds of two saves at once lose nothing", lost == 0, f"({lost})")
+    ok &= check("and nothing raises out of a save", not errs, f"({errs[:1]})")
+    ok &= check("with no temporary files left beside it",
+                os.listdir(d) == [".env"], f"({os.listdir(d)})")
+    shutil.rmtree(d, ignore_errors=True)
+    return ok
+
+
+def test_a_dead_button_does_not_spend_the_budget(L):
+    """The ceiling is there so a stuck button cannot spend a team's credit.
+
+    It was charged before the call and never given back, so a hub that could
+    not reach the model - being offline at a venue is the normal case, which
+    this app says out loud everywhere else - spent a slot per press while
+    generating nothing. Press a dead button through one Saturday morning and
+    the feature is off for the event, having never once answered.
+    """
+    ok = True
+    keep = sources._request
+    L.store.set("aiCalls", 0)
+    # A model and a key, so the routes below actually reach the adapter. The
+    # key never leaves this process: sources._request is stubbed throughout.
+    L.req("/api/config", {"aiModel": "anthropic:claude-opus-5",
+                          "aiKey": "sk-ant-" + "t" * 20})
+    try:
+        sources._request = lambda *a, **k: (None, 0)          # no internet
+        for _ in range(12):
+            L.req("/api/ai/notes/101", {"force": True})
+        ok &= check("twelve presses with nothing behind them spend nothing",
+                    L.hub.ai_calls() == 0, f"({L.hub.ai_calls()})")
+
+        # A reply that WAS generated costs, whichever way it came back: the
+        # vendor billed for the tokens either way.
+        for label, reply in (("an answer", {"stop_reason": "end_turn",
+                                            "content": [{"type": "text", "text": "two bullets"}]}),
+                             ("one cut short", {"stop_reason": "max_tokens", "content": []}),
+                             ("one declined", {"stop_reason": "refusal", "content": []})):
+            before = L.hub.ai_calls()
+            sources._request = (lambda b: (lambda *a, **k: (b, 200)))(reply)
+            L.req("/api/ai/notes/101", {"force": True})
+            ok &= check(f"{label} costs a slot", L.hub.ai_calls() == before + 1,
+                        f"({before} -> {L.hub.ai_calls()})")
+    finally:
+        sources._request = keep
+        L.store.set("aiCalls", 0)
+        L.req("/api/config", {"aiModel": "none", "aiKey": ""})
+    return ok
+
+
+def test_a_clock_fix_keeps_what_it_can(L):
+    """`lost` has to mean "in no window at all", not "starts outside one".
+
+    A clock corrected backwards moves the first hold of a match to before the
+    buzzer, and `phase_at(start)` calls that gone - but the split places almost
+    all of it in auto. solve_match reads this count to decide whether to
+    abandon the correction for that robot, so over-counting it left the robot
+    on the uncorrected timeline the correction exists to replace.
+    """
+    ok = True
+    ivs = [{"start": 1.0, "end": 9.0, "phase": "auto", "intensity": "steady"},
+           {"start": 3.0, "end": 12.0, "phase": "auto", "intensity": "steady"}]
+    shifted, lost = L.hub._rephase(ivs, -5.0)
+    placed = sum(rules.interval_secs(c) for c in rules.split_by_phase(shifted) if c.get("phase"))
+    ok &= check("a hold dragged over the buzzer is kept, not written off",
+                lost == 0 and placed > 10, f"(lost {lost}, {placed}s placed)")
+    _, lost = L.hub._rephase([{"start": 158.0, "end": 159.0, "phase": "endgame"}], 40.0)
+    ok &= check("and one shifted clean off the end really is gone", lost == 1, f"({lost})")
+    return ok
+
+
+def test_junk_in_every_answer_field(L):
+    """One phone sending nonsense must not take the dashboard out.
+
+    The interval lists were already cleaned on the way in; the answers beside
+    them were not, and every one of those is read as a number, as a word or as
+    a lookup key. Fuzzed across every field a phone can send: 66 of 504 junk
+    values took /api/analytics and both CSV exports down outright - no response
+    at all, so the dashboard fell back to its cached copy for the rest of the
+    event, which is the exact failure the interval cleaning was added for.
+    """
+    ok = True
+    junk = [None, True, False, 0, -1, 1e309, "", "x" * 5000, "<script>", ["a"], {"a": 1}, 3.14]
+    fields = ["endgameTower", "autoTower", "startPosition", "startLane", "traversal",
+              "beached", "climbSpot", "note", "accuracyRating", "driverRating",
+              "defenseRating", "preload", "climbStartSecs", "defenseTarget"]
+    broke = []
+    at = max([e["updatedAt"] for e in L.store.scout_entries(EK)] or [time.time()])
+    for field in fields:
+        for bad in junk:
+            at += 1
+            e = entry(f"{EK}_qm1", 101, "FZ", at)
+            e["payload"][field] = bad
+            code, _ = L.req("/api/sync", {"scout": [e]})
+            if code != 200:
+                broke.append((field, repr(bad)[:18], "sync", code))
+            for path in ("/api/analytics", "/api/state", "/api/export.csv?table=teams",
+                         "/api/export.csv?table=scout"):
+                code, _ = L.req(path, raw=".csv" in path)
+                if code != 200:
+                    broke.append((field, repr(bad)[:18], path, code))
+    ok &= check(f"{len(fields) * len(junk)} junk answers, read back through four endpoints",
+                not broke, f"({broke[:3]})")
+
+    # ...and a real answer in the same field still arrives.
+    at += 1
+    e = entry(f"{EK}_qm1", 101, "FZ", at)
+    e["payload"].update(endgameTower="Level3", accuracyRating=4, traversal="bump",
+                        note="  crossed on the bump every match  ")
+    L.req("/api/sync", {"scout": [e]})
+    _, a = L.req("/api/analytics")
+    o = (a["teams"].get("101") or a["teams"].get(101))["observed"]
+    ok &= check("and a real answer beside the junk still counts",
+                o["accuracy"] is not None and "bump" in (o["traversalKinds"] or {}),
+                f"({o['accuracy']}, {o['traversalKinds']})")
+    return ok
+
+
+def test_the_webhook_is_shut_without_a_token(L):
+    """The one open write endpoint with the whole schedule behind it.
+
+    `/api/nexus/webhook` checked the token only when one was saved - and
+    setup.md says plainly that the token is only for teams who registered a
+    webhook, so most hubs have none. Everything else reachable on the venue
+    wifi costs at worst a junk scouting row, which last-write-wins and the
+    solver absorb. This one POST rewrites every lineup and every status, so six
+    phones watch the wrong robots and the board calls the wrong match:
+    measured on a 12-match event, 12 of 12 rewritten. A hub with no token never
+    registered a webhook, so nothing legitimate is ever delivered here.
+    """
+    ok = True
+    ek = "2026hook"
+    L.store.set("eventKey", ek)
+    L.store.put_event(ek)
+    for i in range(1, 5):
+        L.store.put_match(ek, f"{ek}_qm{i}", label=f"Qualification {i}", play_order=i,
+                          red=[9001, 9002, 9003], blue=[9004, 9005, 9006])
+    L.store.set("nexusToken", None)
+
+    def push(token=None, at=None):
+        # Above whatever an earlier test left behind: apply_nexus_event orders
+        # updates by this, and Nexus warns they can arrive out of order.
+        return L.req("/api/nexus/webhook", {
+            "eventKey": ek, "dataAsOfTime": at or (L.hub.last_nexus_at + 60000),
+            "matches": [{"label": "Qualification 1", "status": "On field",
+                         "redTeams": ["1", "2", "3"], "blueTeams": ["4", "5", "6"]}]},
+            headers={"Nexus-Token": token} if token else None)
+
+    def lineup():
+        m = L.store.match(ek, f"{ek}_qm1") or {}
+        return m.get("red"), m.get("status")
+
+    push()
+    ok &= check("with no token saved, an unauthenticated push changes nothing",
+                lineup() == ([9001, 9002, 9003], None), f"({lineup()})")
+    ok &= check("and the hub says why, rather than dropping it in silence",
+                any("webhook token" in e["msg"] for e in L.hub.log))
+
+    # A team that did register one still gets its pushes, and only its pushes.
+    L.store.set("nexusToken", "from-frc-nexus")
+    push("wrong")
+    ok &= check("a wrong token is still refused", lineup() == ([9001, 9002, 9003], None),
+                f"({lineup()})")
+    # The handler answers before it applies - Nexus disables a webhook that
+    # keeps failing, so the 200 does not wait for the work - hence the poll.
+    push("from-frc-nexus")
+    for _ in range(40):
+        if lineup() == ([1, 2, 3], "On field"):
+            break
+        time.sleep(0.05)
+    ok &= check("and the right one still lands", lineup() == ([1, 2, 3], "On field"),
+                f"({lineup()})")
+    L.store.set("nexusToken", None)
+    L.store.set("eventKey", EK)
+    return ok
+
+
+def test_nobody_elses_format_can_raise(L):
+    """Three parsers read something this app did not write.
+
+    lovat.py promises at the top that it never raises; a cell reading `1e999`
+    is a float, `int()` of it is not, and that took the whole import down
+    through `int(teamNumber)` - the poller then retries it every five minutes
+    for the rest of the event. TBA's window counts are what the solver divides
+    between three robots, and a string in that field reached `int(total)` and
+    stopped the match solving at all. And the mDNS responder parses raw UDP off
+    the wire, where anything at all can arrive.
+    """
+    ok = True
+    cols = "match,teamNumber,scouter,notes,endgameClimb"
+    for label, text in (("a team number of 1e999", cols + "\nQ1,1e999,AK,,L2"),
+                        ("a team number that is not one", cols + "\nQ1,abc,AK,,L2"),
+                        ("an empty export", cols), ("junk", "\x00\x01\x02"),
+                        ("bytes instead of text", b"Q1,9001")):
+        try:
+            out = lovat_report.parse_report_csv(text, "2026x")
+            ok &= check(f"lovat: {label} parses to an answer, not an exception",
+                        out is None or isinstance(out, dict), f"({type(out)})")
+        except Exception as e:
+            ok &= check(f"lovat: {label} parses to an answer, not an exception", False,
+                        f"({type(e).__name__}: {e})")
+
+    bd = sources.parse_breakdown_2026({"score_breakdown": {
+        "red": {"hubScore": {"autoCount": "many", "shift1Count": 1e309,
+                             "shift2Count": 30, "shift3Count": None}},
+        "blue": {"hubScore": {"autoCount": 10}}}})
+    ok &= check("tba: a window count that is not a count is dropped, the real one kept",
+                bd["red"]["windows"] == {"shift2": 30}, f"({bd['red']['windows']})")
+
+    r = discover.MDNSResponder("192.168.1.5")
+    rng = random.Random(11)
+    for _ in range(300):
+        pkt = bytes(rng.randrange(256) for _ in range(rng.randint(0, 90)))
+        try:
+            r._maybe_reply(pkt)
+        except Exception as e:
+            ok &= check("mdns: random bytes off the wire never raise", False,
+                        f"({type(e).__name__}: {e})")
+            break
+    else:
+        ok &= check("mdns: 300 random packets off the wire never raise", True)
+    return ok
+
+
 def main():
     L = Live()
     try:
         seed_event(L)
         passed = True
         for fn in (test_sync_and_last_write_wins, test_solving_ran, test_analytics_null_safe,
-                   test_picklist_lock, test_export_import_idempotent,
+                   test_picklist_lock, test_two_leads_on_one_board,
+                   test_export_import_idempotent,
                    test_snapshot_and_restore, test_csv_export,
                    test_hostile_input, test_burst_of_connections,
                    test_junk_payload_cannot_blank_the_dashboard,
@@ -2060,8 +2699,20 @@ def main():
                    test_scout_data_is_lead_only,
                    test_cheap_polling, test_write_counters, test_static_revalidates,
                    test_nexus_broadcasts_only_on_change, test_scope_lists_are_complete,
+                   test_vendor_backoff_is_remembered,
                    test_collection_path_is_intact,
-                   test_after_screen_extras_reach_the_dashboard):
+                   test_after_screen_extras_reach_the_dashboard,
+                   test_one_climb_cannot_also_be_a_fall, test_event_picker_survives_junk,
+                   test_env_file_survives_a_failed_write,
+                   test_both_halves_read_a_key_the_same_way,
+                   test_the_room_is_told_what_the_hub_decided,
+                   test_the_buzzer_solves_from_every_scout,
+                   test_two_saves_at_once_keep_both_keys,
+                   test_a_dead_button_does_not_spend_the_budget,
+                   test_a_clock_fix_keeps_what_it_can,
+                   test_junk_in_every_answer_field,
+                   test_the_webhook_is_shut_without_a_token,
+                   test_nobody_elses_format_can_raise):
             print(f"\n{fn.__name__.replace('test_', '').replace('_', ' ')}")
             passed &= fn(L)
         print()

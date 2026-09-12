@@ -444,8 +444,11 @@ class Handler(BaseHTTPRequestHandler):
                 # type this file actually starts with, or as a download.
                 if not raw or len(raw) > 24 * 1024 * 1024:
                     continue
-                m.store.put_photo(rec["photoId"], ek, rec.get("team"),
-                                  _image_mime(rec.get("mime"), raw), raw)
+                try:
+                    m.store.put_photo(rec["photoId"], ek, rec.get("team"),
+                                      _image_mime(rec.get("mime"), raw), raw)
+                except (TypeError, ValueError):
+                    continue          # a team that is not a number: skip the row, keep the batch
                 stored += 1
             return self._json({"ok": True, "stored": stored})
 
@@ -494,12 +497,15 @@ def _secret(name):
     base64 is not encryption, and the reason it is here is legibility over a
     shoulder, not secrecy.
     """
-    plain = (os.environ.get(name) or "").strip()
-    if plain:
-        return plain
+    # Through the hub's own reader where it is importable, so the two sides of
+    # a push cannot disagree about which line wins. They did: this read the
+    # plain name first and the hub read the encoded one first, so a host with
+    # both lines set would have the mirror checking a different string from the
+    # one the hub sends - reported as "bad push key", from two halves each
+    # certain they were right.
     if envfile:
-        return envfile.decode((os.environ.get(name + envfile.B64) or "").strip()) or None
-    return None
+        return envfile.read(name) or None
+    return (os.environ.get(name) or "").strip() or None
 
 
 def main():

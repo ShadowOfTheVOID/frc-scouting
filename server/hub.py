@@ -117,6 +117,11 @@ SEATLOG_SCOPES = ("kv:seatLog",)
 # scope list that is complete on its own reading is worth more than one scope.
 CREW_SCOPES = ("kv:seats", "kv:devices", "kv:eventKey", "scout_entries")
 
+#: How long a single write to a streaming client may block before that client
+#: is treated as gone. Comfortably longer than the keepalive below, so it only
+#: ever fires on a socket that is not draining at all.
+SSE_WRITE_TIMEOUT = 60
+
 # How often an idle stream writes its comment frame. Every one of these wakes
 # six phones' radios for a byte, all day. There is no proxy between a phone and
 # a hub on the same LAN - the frame is only there so a stream that has gone
@@ -154,6 +159,36 @@ class Hub:
         self._recal_pending = False
         self.writes = []          # timestamps, for writes/min
         self.log = []             # ring buffer for the event log panel
+        # Both of those are written from every request thread at once - six
+        # phones flush at the buzzer - and read from another while the
+        # diagnostics panel is open. Rebuilding a list and assigning it back is
+        # not one step, so entries went missing and, on the log, a trim racing
+        # an append could drop a line somebody was about to need.
+        self._note_lock = threading.Lock()
+        # The source clients that carry state - see _client() below.
+        self._clients = {}
+        self._clients_lock = threading.Lock()
+        self._last_poll_all = 0.0
+        # One push to the mirror at a time. The poller and the PUSH NOW button
+        # are two threads, and a push is a whole event over a venue uplink.
+        self._push_lock = threading.Lock()
+        # apply_nexus_event is reached from the poller and from the webhook
+        # handler, and it decides what is news by comparing against the last
+        # payload it saw. Two threads inside that comparison at once is two
+        # copies of the same broadcast, or a dropped update.
+        self._nexus_lock = threading.Lock()
+        # Deciding who is in a chair and telling the room about it are one
+        # step. The decision was already atomic - store.mutate takes the write
+        # lock - but the broadcast is a separate statement, so two scouts
+        # claiming one chair in the same instant could have their messages
+        # scheduled in the opposite order to their writes. Measured, 3 races in
+        # 25: the hub holds the winner and every screen in the building shows
+        # the loser, until the next seat event or the next full poll. The crew
+        # board's FREE button, its unwatched-robot alert and the phones' own
+        # "you have been bumped" check all read that map.
+        self._seat_lock = threading.Lock()
+        # One solve at a time - see solve_match.
+        self._solve_lock = threading.Lock()
         # Where the credentials live. An attribute rather than the constant so a
         # test never writes the developer's own `.env`.
         self.env_path = envfile.PATH
@@ -168,18 +203,23 @@ class Hub:
         here with no ceiling on it.
         """
         now = time.time()
-        keep = [t for t in self.writes if now - t < 300]
-        keep.extend([now] * max(0, min(int(n), self.WRITES_KEPT)))
-        self.writes = keep[-self.WRITES_KEPT:]
+        with self._note_lock:
+            keep = [t for t in self.writes if now - t < 300]
+            keep.extend([now] * max(0, min(int(n), self.WRITES_KEPT)))
+            self.writes = keep[-self.WRITES_KEPT:]
 
     def note(self, level, msg):
-        self.log.append({"at": time.time(), "level": level, "msg": msg})
-        if len(self.log) > 300:
-            del self.log[:100]
+        with self._note_lock:
+            self.log.append({"at": time.time(), "level": level, "msg": msg})
+            if len(self.log) > 300:
+                del self.log[:100]
 
     def diag(self):
         now = time.time()
-        self.writes = [t for t in self.writes if now - t < 300]
+        with self._note_lock:
+            self.writes = [t for t in self.writes if now - t < 300]
+            writes = len(self.writes)
+            log = list(reversed(self.log[-40:]))
         mem = None
         try:
             import resource
@@ -240,7 +280,7 @@ class Hub:
             "python": platform.python_version(),
             "uptimeSec": int(now - self.started_at),
             "memoryMB": round(mem, 1) if mem else None,
-            "writesPerMin": round(len(self.writes) / 5.0, 1),
+            "writesPerMin": round(writes / 5.0, 1),
             "sseClients": len(self.subs),
             "services": services,
             # A short age rather than the default: this is the panel a lead
@@ -249,7 +289,7 @@ class Hub:
             # collapse a tab left open and polling.
             "addresses": discover.urls(self.port, max_age=30.0),
             "seats": self.seats(),
-            "log": list(reversed(self.log[-40:])),
+            "log": log,
         }
 
     # --------------------------------------------------------- settings
@@ -362,11 +402,38 @@ class Hub:
     def frc_events(self):
         return sources.FRCEvents(self.cfg("frcEventsUser"), self.cfg("frcEventsToken"))
 
+    # The two clients that remember something between calls, and so are the two
+    # that cannot be rebuilt per call.
+    #
+    # `Lovat.down_until` and `Client.down_until` are how this hub honours a
+    # vendor saying stop: Lovat allows one request every three seconds and 403s
+    # a team that is not verified, and an AI key that was just rejected will be
+    # rejected again. Both set that field on themselves - and both were handed
+    # out fresh from here on every single call, so the field was written onto an
+    # object that was thrown away on the next line. Nothing ever backed off:
+    # every press of TEST KEYS and every save (which fires _poll_all) went
+    # straight back at a vendor that had just refused us, and the diagnostics
+    # panel's "rate limited, backing off" line could never appear, because it
+    # reads `down_until` off a client that was one millisecond old.
+    #
+    # Cached by the credentials they were built from, so a key edited on the
+    # Setup page still takes effect on the next call - and clears the backoff
+    # with it, which is what somebody fixing a wrong key means by fixing it.
+    def _client(self, name, sig, build):
+        with self._clients_lock:
+            have = self._clients.get(name)
+            if have is None or have[0] != sig:
+                have = (sig, build())
+                self._clients[name] = have
+            return have[1]
+
     def lovat(self):
-        return sources.Lovat(self.cfg("lovatKey"))
+        key = self.cfg("lovatKey")
+        return self._client("lovat", key, lambda: sources.Lovat(key))
 
     def ai(self):
-        return ai.client(self.cfg)
+        sig = (self.cfg("aiProvider"), self.cfg("aiKey"), self.cfg("aiModel"))
+        return self._client("ai", sig, lambda: ai.client(self.cfg))
 
     def mirror(self):
         return offsite.Mirror(self.cfg("mirrorUrl"), self.cfg("mirrorKey"))
@@ -448,7 +515,11 @@ class Hub:
         team = _int(team)
         if not team:
             return {"events": [], "problem": "a team number is needed"}
-        year = int(year or SEASON)
+        # Both of these come off a query string, so both are whatever was
+        # typed. `int()` on the year raised straight out of the request handler
+        # - no response at all, just a dropped connection, on the one page
+        # somebody is using while nothing else works yet.
+        year = _int(year) or SEASON
         rows = self.statbotics.events_for_team(team, year)
         out = _events_from(rows, ("event", "key"), ("event_name", "name"))
         if out:
@@ -609,7 +680,12 @@ class Hub:
         return int(self.store.get("aiCalls") or 0)
 
     def ai_charge(self):
-        """Count one generated answer. False once the event ceiling is reached."""
+        """Count one generated answer. False once the event ceiling is reached.
+
+        Taken before the call rather than after it, so two buttons pressed at
+        once cannot both slip past the last slot.  `ai_refund` puts it back
+        when the vendor never answered at all.
+        """
         limit = self.ai_ceiling()
 
         def apply(n):
@@ -618,6 +694,21 @@ class Hub:
                 return None, False
             return n + 1, True
         return self.store.mutate("aiCalls", apply, 0)
+
+    def ai_refund(self):
+        """Give the slot back: nothing was generated and nothing was billed.
+
+        The ceiling exists so a stuck button cannot spend a team's credit all
+        afternoon. A hub that cannot reach the model spends nothing - and being
+        offline at a venue is the normal case, which this app says out loud
+        everywhere else - so charging for it is the ceiling protecting the
+        wrong thing: press a dead button through one Saturday morning and the
+        feature is off for the event, having never once answered.
+
+        Only for an answer that never arrived. A reply that was cut short or
+        declined was generated, and the vendor billed for it.
+        """
+        self.store.mutate("aiCalls", lambda n: (max(0, int(n or 0) - 1), None), 0)
 
     def csv_text(self, ek, table):
         """One of the dashboard's CSV exports, as text.
@@ -642,6 +733,8 @@ class Hub:
         if not self.mirror().ok:
             return
         res = offsite.push_once(self)
+        if res.get("skipped") == "already pushing":
+            return
         if res.get("ok"):
             self.status["mirror"] = time.time()
         elif res.get("reason"):
@@ -652,6 +745,7 @@ class Hub:
         q = queue.Queue(maxsize=64)
         q.who = who or {}
         q.since = time.time()
+        q.overflowed = False
         with self.subs_lock:
             self.subs.append(q)
             self.subs_gen += 1
@@ -732,13 +826,34 @@ class Hub:
             try:
                 q.put_nowait(msg)
             except queue.Full:
-                pass  # a wedged client must not stall the others
+                # A wedged client must not stall the others - but dropping the
+                # message and leaving the client connected is worse than
+                # dropping the client. It stays on the crew board as LIVE and
+                # simply stops hearing seat claims, match starts and the shared
+                # clock, with nothing on either end saying so, and it never
+                # recovers: nothing re-sends what it missed. Marked instead, so
+                # its own thread closes the stream; EventSource reconnects on
+                # its own and the phone re-reads the event on the way back in.
+                q.overflowed = True
 
     # --------------------------------------------------------- ingest
     def apply_nexus_event(self, payload):
-        """Nexus live event status, from push or poll.  Ordering guarded by dataAsOfTime."""
+        """Nexus live event status, from push or poll.  Ordering guarded by dataAsOfTime.
+
+        One thread at a time. Two reach this - the poller every twenty seconds,
+        and the webhook handler whenever Nexus pushes - and everything that
+        decides whether this payload is news (`last_nexus_at`, and the compare
+        against `last_nexus_live` at the end) is read and then written. Two
+        threads inside that is two copies of the same broadcast to every phone
+        in the building, or an update dropped because the other thread had
+        already moved the clock past it.
+        """
         if not payload:
             return False
+        with self._nexus_lock:
+            return self._apply_nexus_event(payload)
+
+    def _apply_nexus_event(self, payload):
         try:
             as_of = float(payload.get("dataAsOfTime") or 0)
         except (TypeError, ValueError):
@@ -1142,7 +1257,13 @@ class Hub:
             return False           # a broken password locks, it does not open
         if not password:
             return True            # none set: the panel's own lock is the guard
-        return hmac.compare_digest(password, (code or "").strip())
+        # Both sides trimmed, not just the one typed in. A password set with a
+        # space on the end - which `--set-admin-password` accepts, and which a
+        # password manager or a paste puts there - was stored with the space
+        # and compared against a value that had just had it taken off, so it
+        # could never be entered again by anybody, including the person who
+        # chose it.
+        return hmac.compare_digest(password.strip(), (code or "").strip())
 
     def issue_admin_token(self):
         return self._issue("adminTokens", self.ADMIN_MINUTES * 60)
@@ -1162,11 +1283,15 @@ class Hub:
     def end_admin(self, tok):
         self._drop_token("adminTokens", tok)
 
+    #: Every field of the board, so a hub that has never been edited answers
+    #: the same shape as one that has.
+    PICKLIST_BASE = {"weights": {}, "weights2": {}, "dnp": [], "order": [],
+                     "order2": [], "rev": 0}
+
     def picklist(self):
         # Two lists, because alliance selection asks two different questions:
         # the best robot left, and the best complement to the one we have.
-        base = {"weights": {}, "weights2": {}, "dnp": [], "order": [], "order2": []}
-        return {**base, **(self.store.get("picklist") or {})}
+        return {**self.PICKLIST_BASE, **(self.store.get("picklist") or {})}
 
     # ------------------------------------------------------- match clock
     def start_match(self, match_key, scout_id, client_now=None):
@@ -1258,7 +1383,11 @@ class Hub:
         device_id = str(device_id or "").strip()
         if not key or not scout_id or not device_id:
             return None
+        # Everything from here to the broadcast is one step - see _seat_lock.
+        with self._seat_lock:
+            return self._claim_seat(key, scout_id, device_id)
 
+    def _claim_seat(self, key, scout_id, device_id):
         def apply(seats):
             seats = self._live_seats(seats)
             prev = seats.get(key)
@@ -1303,6 +1432,10 @@ class Hub:
         click frees that phone or nobody, so a FREE aimed at the scout who
         walked off cannot land on the one who has just sat down in their place.
         """
+        with self._seat_lock:
+            return self._free_seat(key, device_id)
+
+    def _free_seat(self, key, device_id=None):
         def apply(seats):
             seats = self._live_seats(seats)
             prev = seats.get(key)
@@ -1416,19 +1549,42 @@ class Hub:
             except (TypeError, ValueError, KeyError):
                 continue
             ph = rules.phase_at(start)
-            if ph is None:
-                # Shifted off the end of the match: this observation no longer
-                # belongs to any window and stops counting for anyone.
-                lost += 1
             j = dict(iv)
             j["start"] = start
             j["end"] = end
             j["phase"] = ph["id"] if ph else None
+            # Lost means "in no window at all", and that is `split_by_phase`'s
+            # answer, not `phase_at(start)`'s. A hold that began a second
+            # before the buzzer - which is what a clock corrected backwards
+            # does to the first hold of a match - still spends almost all of
+            # itself inside auto, and the split places it there. Counting it
+            # as thrown away mattered because the caller reads this number to
+            # decide whether to abandon the correction for this robot
+            # entirely: measured, two holds over 17 seconds with 11 of them
+            # landing in auto, and the correction dropped for "throwing away
+            # every observation" - leaving the robot on the uncorrected
+            # timeline the correction exists to replace.
+            if not any(c.get("phase") for c in rules.split_by_phase([j])):
+                lost += 1
             out.append(j)
         return out, lost
 
     def solve_match(self, match_key):
-        """Allocate official per-window fuel across the three robots that scouts watched."""
+        """Allocate official per-window fuel across the three robots that scouts watched.
+
+        One solve at a time. Every one of these is read-the-entries, divide the
+        official totals between them, write the rows back - and six phones
+        flush at the buzzer, so three threads can be inside that for one match
+        at once, each having read the table at a different moment. The last to
+        WRITE won, not the last to read: measured, 1 match in 8 came out with a
+        robot watched for five seconds holding more fuel than one watched for
+        ten, because the answer that landed last had been computed without its
+        partners. Serialised, the last writer is also the last reader.
+        """
+        with self._solve_lock:
+            return self._solve_match(match_key)
+
+    def _solve_match(self, match_key):
         ek = self.event_key()
         m = self.store.match(ek, match_key)
         if not m or not m.get("breakdown"):
@@ -1818,6 +1974,17 @@ def _image_mime(raw):
     return m if m in IMAGE_MIMES else "application/octet-stream"
 
 
+#: What this hub calls a photo: the first 16 hex characters of the image's own
+#: sha1, and never anything else. The id is pasted into an `<img src>` on the
+#: dashboard and on the pit tablet, so a "photo" that is not an id is a string
+#: of somebody's choosing inside an HTML attribute on the hub's own origin -
+#: which is where the strategy token lives. Demonstrated: a pit record synced
+#: with `photos: ['x" onerror="..."']` ran script on the dashboard.
+#: Nothing legitimate is lost by this: every id in the table is written by
+#: put_photo below, from that same hash.
+_PHOTO_ID = re.compile(r"^[0-9a-f]{8,40}$")
+
+
 def _extract_photos(store, rec):
     """Pull data: URIs off a pit record into the photo table.
 
@@ -1838,8 +2005,8 @@ def _extract_photos(store, rec):
                 kept.append(pid)
             except Exception:
                 continue
-        elif isinstance(src, str):
-            kept.append(src)          # already an id
+        elif isinstance(src, str) and _PHOTO_ID.match(src):
+            kept.append(src)          # already an id, and shaped like one
     payload["photos"] = kept
     rec["payload"] = payload
 
@@ -2155,11 +2322,34 @@ def _ai_notes_payload(rec):
     }
 
 
-def _poll_all(h):
-    """Kick every source off the request thread. A poll must never block a save."""
+#: How often a button may kick the whole set of sources. A save has just
+#: changed a key and must go through; REFRESH is a button two people can lean
+#: on together, and every press is six outbound calls on somebody's quota.
+POLL_ALL_SECONDS = 10
+
+
+def _poll_all(h, force=False):
+    """Kick every source off the request thread. A poll must never block a save.
+
+    Rate limited unless a save asked for it. Two leads pressing REFRESH at the
+    same moment - or one lead pressing it repeatedly because nothing seems to
+    be happening, which is exactly when they will - used to be six fresh
+    threads per press against five vendors, with nothing between them and the
+    key's quota.
+    """
+    now = time.time()
+    if not force:
+        with h._clients_lock:
+            if now - getattr(h, "_last_poll_all", 0.0) < POLL_ALL_SECONDS:
+                return False
+            h._last_poll_all = now
+    else:
+        with h._clients_lock:
+            h._last_poll_all = now
     for fn in (h.poll_nexus, h.poll_nexus_slow, h.poll_tba, h.poll_frc_events,
                h.poll_statbotics, h.poll_lovat):
         threading.Thread(target=fn, daemon=True).start()
+    return True
 
 
 def _round(v, places=1):
@@ -2477,7 +2667,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         self.send_response(204)
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Strategy-Token")
+        # Every header this API is ever sent. X-Admin-Token was missing, so an
+        # admin request from any origin but the hub's own was refused at the
+        # preflight - which is every admin request on a hub started with
+        # --allow-remote-config, and every one from a phone that found the hub
+        # again at a second address.
+        self.send_header("Access-Control-Allow-Headers",
+                         "Content-Type, X-Strategy-Token, X-Admin-Token")
         self.send_header("Access-Control-Max-Age", "86400")
         self.send_header("Content-Length", "0")
         self.end_headers()
@@ -2906,7 +3102,7 @@ class Handler(BaseHTTPRequestHandler):
                 h.set_pin(cleaned["strategyPin"])
             if h.cfg("eventKey") and "eventKey" in body:
                 h.store.put_event(h.cfg("eventKey"), level=body.get("eventLevel"))
-            _poll_all(h)
+            _poll_all(h, force=True)      # a save has just changed a key
             # Saved, and everything that was quietly fixed or looks off on the
             # way in, so the page can say so rather than leaving it to be found
             # out on the Saturday.
@@ -2976,16 +3172,38 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/picklist":
             if not self._unlocked():
                 return self._json({"error": "picklist is read-only without the passcode"}, 403)
-            base = {"weights": {}, "weights2": {}, "dnp": [], "order": [], "order2": []}
-
+            # A patch, not a document. Two leads work this board at once during
+            # alliance selection - that is what the second dashboard is FOR -
+            # and both of them used to send the whole picklist on every edit.
+            # Measured, three runs out of three: one lead marks 254 do-not-pick
+            # while the other drags 1678 to the top, and the board ends up with
+            # one of the two edits and no sign the other ever happened. The
+            # write itself was always atomic; what collided was the payload.
+            #
+            # So only the fields actually sent are touched, and the flags come
+            # as add/remove rather than as a list - two leads flagging two
+            # different robots in the same second is not a conflict at all and
+            # must not be resolved as one.
             def apply(cur):
-                cur = {**base, **(cur or {})}
+                cur = {**Hub.PICKLIST_BASE, **(cur or {})}
                 for k in ("weights", "weights2", "dnp", "order", "order2"):
                     if k in body:
                         cur[k] = body[k]
+                dnp = [t for t in (_int(x) for x in (cur.get("dnp") or [])) if t is not None]
+                for x in (body.get("dnpAdd") or []):
+                    t = _int(x)
+                    if t is not None and t not in dnp:
+                        dnp.append(t)
+                drop = {t for t in (_int(x) for x in (body.get("dnpRemove") or []))
+                        if t is not None}
+                cur["dnp"] = [t for t in dnp if t not in drop]
+                # Which version of the board this is. The broadcast carries it
+                # so a second dashboard can tell the echo of its own edit from
+                # somebody else's, and a reader can tell it has fallen behind.
+                cur["rev"] = int(cur.get("rev") or 0) + 1
                 return cur, cur
             cur = h.store.mutate("picklist", apply, {})
-            h.broadcast("picklist", {"updatedAt": time.time()})
+            h.broadcast("picklist", {"updatedAt": time.time(), "rev": cur["rev"]})
             return self._json({"ok": True, "picklist": cur})
 
         if p == "/api/seat":
@@ -3065,6 +3283,24 @@ class Handler(BaseHTTPRequestHandler):
             if expected and token != expected:
                 sys.stderr.write("[nexus] webhook rejected: bad Nexus-Token\n")
                 return
+            if not expected:
+                # No token saved means no webhook was ever registered - the hub
+                # polls, and setup.md says so - which makes this the one write
+                # endpoint with nothing legitimate behind it and the whole
+                # schedule in front of it. Everything else open on the venue
+                # wifi costs at worst a junk scouting row, which last-write-wins
+                # and the solver absorb; this one POST rewrites every lineup and
+                # every status, so six phones watch the wrong robots and the
+                # board calls the wrong match. Measured on a 12-match event:
+                # one unauthenticated POST, 12 of 12 rewritten.
+                #
+                # Said out loud rather than dropped in silence, because the
+                # other way to arrive here is a team that registered a webhook
+                # and has not put the token in the box yet.
+                h.note("warn", "a Nexus webhook arrived but no webhook token is saved, so it "
+                               "was ignored - paste the token from frc.nexus into NEXUS "
+                               "WEBHOOK TOKEN, or ignore this if you never registered one")
+                return
             try:
                 if "match" in body and "matches" not in body:
                     m = body.get("match") or {}
@@ -3125,8 +3361,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(offsite.push_once(h, force=True))
 
         if p == "/api/refresh":
-            _poll_all(h)
-            return self._json({"ok": True})
+            # 200 either way: "already asked a moment ago" is not a failure, and
+            # the button has nothing useful to do with an error code.
+            return self._json({"ok": True, "polled": _poll_all(h)})
 
         if p == "/api/resolve":
             mk = body.get("matchKey")
@@ -3245,7 +3482,11 @@ class Handler(BaseHTTPRequestHandler):
         if not text:
             # Offline at a venue is the normal case, not an error worth a dialog.
             # The reason separates that from an answer that was cut off or
-            # declined, which need different things from the person reading it.
+            # declined, which need different things from the person reading it -
+            # and it decides whether the slot is given back, because one of
+            # those three was billed for and the other was not.
+            if reason == ai.UNREACHABLE:
+                h.ai_refund()
             return self._json({"configured": True, "text": None, "reason": reason})
         out = {"text": text, "provider": client.provider, "model": client.label,
                "at": time.time(), "stamp": stamp}
@@ -3258,6 +3499,19 @@ class Handler(BaseHTTPRequestHandler):
         who = {k: (parse_qs(urlparse(self.path).query).get(k) or [None])[0]
                for k in ("deviceId", "scoutId", "seat")}
         q = Handler.hub.subscribe(who)
+        # A bound on a write that never completes. A phone that walks out of
+        # range does not close its socket - TCP retransmits into the silence -
+        # so a write to it blocks, and this thread parks in it. The overflow
+        # flag above is read at the top of the loop, and a thread stuck inside
+        # a write never gets back there: the client stayed in the subscriber
+        # list, the crew board went on calling it LIVE, and the thread was
+        # never coming back. Measured with a client that opens the stream and
+        # then stops reading it: without this, still subscribed and still
+        # parked when everything else had finished.
+        try:
+            self.connection.settimeout(SSE_WRITE_TIMEOUT)
+        except OSError:
+            pass
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
@@ -3269,6 +3523,11 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
             last_touch = time.time()
             while True:
+                # Fell behind far enough that the hub gave up queueing for it.
+                # Closing is the honest end: this stream has a hole in it, and
+                # the client's reconnection is what repairs it.
+                if q.overflowed:
+                    break
                 try:
                     msg = q.get(timeout=SSE_KEEPALIVE_SECONDS)
                     self.wfile.write(f"data: {msg}\n\n".encode("utf-8"))
@@ -3292,6 +3551,30 @@ class Handler(BaseHTTPRequestHandler):
 class Server(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+
+    #: What a phone walking out of range looks like from in here. None of these
+    #: is a fault: the socket went away mid-request, which at a venue happens
+    #: every few minutes all day.
+    QUIET = (ConnectionResetError, ConnectionAbortedError, BrokenPipeError,
+             socket.timeout, TimeoutError)
+
+    def handle_error(self, request, client_address):
+        """Keep the hub's own window readable.
+
+        socketserver prints a full traceback for any exception out of a
+        handler, and a reset connection is one - so every phone that dropped
+        off the wifi wrote ten lines of stack into the window the lead is
+        watching, on top of the log line that actually mattered. This window is
+        the app's diagnostic surface (the banner, the key problems, the
+        checklist all print here), and log_message was silenced for exactly
+        this reason; this is the other half of it.
+
+        Anything that is NOT a disconnection still gets its traceback: a real
+        fault in a handler must not be quiet.
+        """
+        if isinstance(sys.exc_info()[1], self.QUIET):
+            return
+        ThreadingHTTPServer.handle_error(self, request, client_address)
     # socketserver defaults this to 5. Six phones flush the moment the buzzer
     # goes, two dashboards poll on their own timers and the pit tablet syncs
     # whenever it likes, so connections genuinely do arrive in bursts - and a
@@ -3454,6 +3737,16 @@ def main():
         print(f"  !! {why}")
     print()
 
+    # Windows only, and only with somebody in front of it: the one prompt that
+    # decides whether phones can reach this laptop at all. See server/firewall.py.
+    #
+    # Before the panel is opened, not after. The socket is bound by now but
+    # nothing is serving it until serve_forever() below, so a browser launched
+    # first sat on a page that could not load while this question waited in the
+    # terminal behind it - which is the same "prompt nobody saw" that this
+    # whole module exists to stop happening.
+    firewall.offer(store, args.port)
+
     # What to do next, in this window, on the run where it matters. A hub with
     # no event key is a hub where nothing else in the banner above works yet.
     left = hub.setup_steps(port=args.port)
@@ -3480,9 +3773,6 @@ def main():
               else "  Still to do: " + "; ".join(undone)
                    + f"\n         on  http://localhost:{args.port}/")
         print()
-    # Windows only, and only with somebody in front of it: the one prompt that
-    # decides whether phones can reach this laptop at all. See server/firewall.py.
-    firewall.offer(store, args.port)
 
     try:
         srv.serve_forever()

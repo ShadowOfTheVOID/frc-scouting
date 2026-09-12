@@ -555,7 +555,42 @@ def _payload(v):
     for k, val in list(v.items()):
         if k.endswith("Intervals") or k == "intervals":
             v[k] = [iv for iv in val if isinstance(iv, dict)] if isinstance(val, list) else []
+    # And the same rule for the answers beside them, for the same reason. Every
+    # one of these is read as a number, as a word, or as a lookup key, and none
+    # of those survives being handed something else: a `driverRating` of "x" is
+    # truthy, so it went into the list a mean is taken of; an `endgameTower`
+    # that is a list reaches `tower_points()` as a dict key and is unhashable;
+    # a `note` that is a number has no `.strip()`. Measured by fuzzing every
+    # field a phone can send: 66 of 504 junk values took /api/analytics and
+    # both CSV exports down outright - no response at all, the dashboard back
+    # on its cached copy, for the rest of the event.
+    #
+    # Dropped rather than corrected, so the field reads as "nobody said" - the
+    # same thing an unanswered question already means everywhere downstream.
+    for k in _NUMERIC:
+        val = v.get(k)
+        if k in v and (isinstance(val, bool) or not isinstance(val, (int, float))):
+            del v[k]
+    for k, cap in _TEXT.items():
+        val = v.get(k)
+        if k in v and not isinstance(val, str):
+            del v[k]
+        elif k in v and len(val) > cap:
+            v[k] = val[:cap]
     return v
+
+
+#: Answers that are read as numbers. A bool is an int in Python and is never
+#: one of these, so it is dropped with the rest.
+_NUMERIC = ("driverRating", "defenseRating", "accuracyRating", "preload",
+            "climbStartSecs", "autoClimbStartSecs", "defenseTarget")
+
+#: Answers that are read as words, and how long one may be. The categorical
+#: ones are picked from a list of four on the phone, so the cap is only there
+#: to stop something that is not the phone making every answer in the event
+#: carry a megabyte. `note` is what a scout actually typed and gets room.
+_TEXT = {"endgameTower": 32, "autoTower": 32, "startPosition": 32, "startLane": 32,
+         "traversal": 32, "beached": 32, "climbSpot": 32, "clockBy": 32, "note": 2000}
 
 
 def _finite(v):
