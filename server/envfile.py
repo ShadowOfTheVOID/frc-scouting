@@ -26,6 +26,8 @@ import base64
 import binascii
 import os
 import re
+import tempfile
+import threading
 
 #: Where the hub looks: the repository root, one level up from `server/`.
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -223,6 +225,15 @@ def write(name, value, path=PATH):
     return write_many({name: value}, path)
 
 
+#: One writer at a time. Everything below is read-the-file, change a line,
+#: write-the-file - and the admin panel can have two saves in the air at once
+#: from two tabs, or from one SAVE pressed twice. Measured without this, six
+#: runs out of six: two saves of two different keys, and one of the two edits
+#: is simply not in the file afterwards, because the second writer computed its
+#: version of the file from a read that happened before the first one landed.
+_write_lock = threading.Lock()
+
+
 def write_many(values, path=PATH):
     """Set several variables in one pass, keeping every other line as it was.
 
@@ -231,7 +242,17 @@ def write_many(values, path=PATH):
     the reader happens to win with.  One pass rather than one call per key
     because a save from the admin panel can carry eight of them, and eight
     rewrites of the same file is eight chances to be interrupted halfway.
+
+    The read and the write are one step, under `_write_lock`: a key that was
+    saved and is not in the file is the worst outcome this module has, because
+    the panel says SAVED either way and the only symptom is a vendor saying no
+    two days later.
     """
+    with _write_lock:
+        return _write_many(values, path)
+
+
+def _write_many(values, path):
     try:
         with open(path, encoding="utf-8") as fh:
             lines = fh.read().splitlines()
@@ -280,8 +301,16 @@ def _replace(path, text):
     runs. 0600 from the moment the temporary file exists, because for the
     moment it exists it is the password.
     """
-    tmp = path + ".tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    # A name of its own, not `path + ".tmp"`: two writers - two hubs started on
+    # one laptop, or a mirror sharing the checkout - would otherwise use the
+    # same temporary file, and the second `os.replace` fails with
+    # FileNotFoundError because the first already renamed it away. Measured:
+    # that is what a concurrent save did before this, and it came out of the
+    # request handler as a dropped connection with the panel still saying
+    # "saving...".
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(path)) or ".",
+                               prefix=".env-", suffix=".tmp")
+    os.chmod(tmp, 0o600)                     # mkstemp is 0600 already; say so out loud
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)

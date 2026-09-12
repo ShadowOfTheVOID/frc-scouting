@@ -4,6 +4,7 @@
 import * as db from './db.js';
 import * as net from './net.js';
 import * as chart from './chart.js';
+import * as pick from './picklist.js';
 import { loadRules, rpThresholds, rules as gameRules } from './game2026.js';
 import { every, coalesce } from './timers.js';
 
@@ -349,22 +350,12 @@ function renderTeams() {
 }
 
 // ═════════════════════════════════════════════════════════════ PICKLIST
+// The formula itself is in web/js/picklist.js, because the sheet the lead
+// prints and carries into alliance selection ranks with the same one - and
+// when it lived in both files, correcting one of them made the paper and the
+// screen disagree about the same robots.
 function score(t) {
-  const W = activeWeights();
-  const e = t.exact, o = t.observed, s = t.estimated;
-  const climb = ({ Level3: 1, Level2: 0.65, Level1: 0.3, None: 0 })[e.bestClimb] || 0;
-  const l3 = (e.climbRate.Level3 || 0) / 100;
-  const rel = 1 - Math.min(1, (o.diedRate + o.noShowRate) / 100);
-  const stock = (o.stockpileRate || 0) / 100;
-  // 1..4 on the phone ('not at all' .. 'a lot'), so 1 is the floor and not a
-  // fifth of a point. Divided by 5 it was: a robot a scout explicitly marked
-  // as not defending scored 0.2 here, which on the second-pick board - where
-  // defence is weighted 35 - put it seven points ahead of a robot nobody had
-  // rated at all.
-  const def = Math.max(0, ((o.defense || 1) - 1) / 3);
-  const maxFuel = maxFuelAcross(ANALYTICS);
-  return W.climb * (climb * .6 + l3 * .4) + W.reliability * rel +
-         W.stockpile * stock + W.fuel * (s.avgFuel / maxFuel) + W.defense * def;
+  return pick.score(t, activeWeights(), maxFuelAcross(ANALYTICS));
 }
 /**
  * The best average fuel at the event, for normalising one team against it.

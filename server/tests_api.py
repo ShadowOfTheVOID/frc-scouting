@@ -2313,6 +2313,149 @@ def test_both_halves_read_a_key_the_same_way(L):
     return ok
 
 
+def test_the_room_is_told_what_the_hub_decided(L):
+    """Two scouts take one chair. Every other screen has to end up on the winner.
+
+    The write was always atomic - one of them wins - but the broadcast that
+    tells the room was a separate statement, so the two messages could be
+    scheduled in the opposite order to the two writes. Measured before this, 3
+    races in 25: the hub holds the winner and every screen in the building shows
+    the loser, until the next seat event or the next full poll. The crew board's
+    FREE button, its unwatched-robot alert and the phones' own "you have been
+    bumped" check all read that map.
+    """
+    ok = True
+    ek = "2026told"
+    L.store.set("eventKey", ek)
+    L.store.put_event(ek)
+    real, sent = L.hub.broadcast, []
+
+    def spy(kind, payload):
+        if kind == "seats":
+            sent.append(payload)
+        real(kind, payload)
+    L.hub.broadcast = spy
+    try:
+        wrong = 0
+        for run in range(12):
+            sent.clear()
+            bar = threading.Barrier(2)
+
+            def claim(who, dev):
+                bar.wait()
+                L.req("/api/seat", {"alliance": "red", "station": 1,
+                                    "scoutId": who, "deviceId": dev})
+            ts = [threading.Thread(target=claim, args=(f"A{run}", f"da{run}")),
+                  threading.Thread(target=claim, args=(f"B{run}", f"db{run}"))]
+            for t in ts:
+                t.start()
+            for t in ts:
+                t.join()
+            held = (L.hub.seats().get("red1") or {}).get("scoutId")
+            told = ((sent[-1].get("seats") if sent else {}) or {}).get("red1", {}).get("scoutId")
+            if held != told:
+                wrong += 1
+        ok &= check("12 races for one chair leave every screen on the winner",
+                    wrong == 0, f"({wrong} left the room on the loser)")
+    finally:
+        L.hub.broadcast = real
+    for k in list(L.hub.seats()):
+        L.req("/api/unseat", {"seat": k})
+    return ok
+
+
+def test_the_buzzer_solves_from_every_scout(L):
+    """Three scouts on one alliance flush at the same instant.
+
+    Each sync solves the match it touched, so three threads were inside
+    read-entries / divide / write-rows for one match at once, each from a
+    different read. The last to WRITE won, not the last to read: measured, 1
+    match in 8 came out with a robot watched for five seconds holding more fuel
+    than one watched for ten.
+    """
+    ok = True
+    ek = "2026buzzer"
+    L.store.set("eventKey", ek)
+    L.store.put_event(ek)
+    bd = {"autoWinner": "blue",
+          "red": {"windows": {"shift1": 60}, "totalPoints": 200,
+                  "endgameTower": ["None"] * 3, "autoTower": [None] * 3},
+          "blue": {"windows": {"shift1": 40}, "totalPoints": 150,
+                   "endgameTower": ["None"] * 3, "autoTower": [None] * 3}}
+    bad = []
+    for run in range(6):
+        mk = f"{ek}_qm{run + 1}"
+        L.store.put_match(ek, mk, label=f"Qualification {run + 1}", play_order=run + 1,
+                          red=[9001, 9002, 9003], blue=[9004, 9005, 9006], breakdown=bd)
+        bar = threading.Barrier(3)
+
+        def flush(team, who, station, secs):
+            bar.wait()
+            L.req("/api/sync", {"scout": [{
+                "eventKey": ek, "matchKey": mk, "team": team, "scoutId": who,
+                "deviceId": "d" + who, "alliance": "red", "station": station,
+                "updatedAt": time.time(),
+                "payload": {"intervals": [{"start": 31.0, "end": 31.0 + secs,
+                                           "phase": "shift1", "intensity": "steady"}]}}]})
+        ts = [threading.Thread(target=flush, args=a)
+              for a in ((9001, "AA", 1, 20), (9002, "BB", 2, 10), (9003, "CC", 3, 5))]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+        got = {r["team"]: r["fuel"] for r in L.store.solved(ek) if r["matchKey"] == mk}
+        row = [got.get(t) for t in (9001, 9002, 9003)]
+        if None in row or not (row[0] > row[1] > row[2]):
+            bad.append((run, row))
+    ok &= check("the fuel follows the seconds actually watched, every time",
+                not bad, f"({bad[:2]})")
+    L.store.set("eventKey", EK)
+    return ok
+
+
+def test_two_saves_at_once_keep_both_keys(L):
+    """Two tabs pressing SAVE, or one SAVE pressed twice.
+
+    `.env` is read, changed and written back, and it holds every key: without
+    one writer at a time, six runs out of six lost one of the two edits - and
+    both writers used the same temporary file, so the second rename came back
+    FileNotFoundError, out of the request handler, as a dropped connection with
+    the panel still saying "saving...".
+    """
+    ok = True
+    d = tempfile.mkdtemp(prefix="frc-env-")
+    path = os.path.join(d, ".env")
+    names = [envfile.encoded_name(f) for f in envfile.KEYS]
+    envfile.write_many({n: "start" for n in names}, path)
+    errs, lost = [], 0
+    for run in range(6):
+        bar = threading.Barrier(2)
+
+        def save(name, value):
+            bar.wait()
+            try:
+                envfile.write_many({name: value}, path)
+            except Exception as e:
+                errs.append(repr(e))
+        ts = [threading.Thread(target=save, args=(names[0], f"A{run}")),
+              threading.Thread(target=save, args=(names[1], f"B{run}"))]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+        have = envfile.parse(open(path, encoding="utf-8").read())
+        if have.get(names[0]) != f"A{run}" or have.get(names[1]) != f"B{run}":
+            lost += 1
+        if any(n not in have for n in names):
+            lost += 1
+    ok &= check("six rounds of two saves at once lose nothing", lost == 0, f"({lost})")
+    ok &= check("and nothing raises out of a save", not errs, f"({errs[:1]})")
+    ok &= check("with no temporary files left beside it",
+                os.listdir(d) == [".env"], f"({os.listdir(d)})")
+    shutil.rmtree(d, ignore_errors=True)
+    return ok
+
+
 def main():
     L = Live()
     try:
@@ -2341,7 +2484,10 @@ def main():
                    test_after_screen_extras_reach_the_dashboard,
                    test_one_climb_cannot_also_be_a_fall, test_event_picker_survives_junk,
                    test_env_file_survives_a_failed_write,
-                   test_both_halves_read_a_key_the_same_way):
+                   test_both_halves_read_a_key_the_same_way,
+                   test_the_room_is_told_what_the_hub_decided,
+                   test_the_buzzer_solves_from_every_scout,
+                   test_two_saves_at_once_keep_both_keys):
             print(f"\n{fn.__name__.replace('test_', '').replace('_', ' ')}")
             passed &= fn(L)
         print()

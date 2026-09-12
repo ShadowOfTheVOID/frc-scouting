@@ -117,6 +117,11 @@ SEATLOG_SCOPES = ("kv:seatLog",)
 # scope list that is complete on its own reading is worth more than one scope.
 CREW_SCOPES = ("kv:seats", "kv:devices", "kv:eventKey", "scout_entries")
 
+#: How long a single write to a streaming client may block before that client
+#: is treated as gone. Comfortably longer than the keepalive below, so it only
+#: ever fires on a socket that is not draining at all.
+SSE_WRITE_TIMEOUT = 60
+
 # How often an idle stream writes its comment frame. Every one of these wakes
 # six phones' radios for a byte, all day. There is no proxy between a phone and
 # a hub on the same LAN - the frame is only there so a stream that has gone
@@ -172,6 +177,18 @@ class Hub:
         # payload it saw. Two threads inside that comparison at once is two
         # copies of the same broadcast, or a dropped update.
         self._nexus_lock = threading.Lock()
+        # Deciding who is in a chair and telling the room about it are one
+        # step. The decision was already atomic - store.mutate takes the write
+        # lock - but the broadcast is a separate statement, so two scouts
+        # claiming one chair in the same instant could have their messages
+        # scheduled in the opposite order to their writes. Measured, 3 races in
+        # 25: the hub holds the winner and every screen in the building shows
+        # the loser, until the next seat event or the next full poll. The crew
+        # board's FREE button, its unwatched-robot alert and the phones' own
+        # "you have been bumped" check all read that map.
+        self._seat_lock = threading.Lock()
+        # One solve at a time - see solve_match.
+        self._solve_lock = threading.Lock()
         # Where the credentials live. An attribute rather than the constant so a
         # test never writes the developer's own `.env`.
         self.env_path = envfile.PATH
@@ -1346,7 +1363,11 @@ class Hub:
         device_id = str(device_id or "").strip()
         if not key or not scout_id or not device_id:
             return None
+        # Everything from here to the broadcast is one step - see _seat_lock.
+        with self._seat_lock:
+            return self._claim_seat(key, scout_id, device_id)
 
+    def _claim_seat(self, key, scout_id, device_id):
         def apply(seats):
             seats = self._live_seats(seats)
             prev = seats.get(key)
@@ -1391,6 +1412,10 @@ class Hub:
         click frees that phone or nobody, so a FREE aimed at the scout who
         walked off cannot land on the one who has just sat down in their place.
         """
+        with self._seat_lock:
+            return self._free_seat(key, device_id)
+
+    def _free_seat(self, key, device_id=None):
         def apply(seats):
             seats = self._live_seats(seats)
             prev = seats.get(key)
@@ -1516,7 +1541,21 @@ class Hub:
         return out, lost
 
     def solve_match(self, match_key):
-        """Allocate official per-window fuel across the three robots that scouts watched."""
+        """Allocate official per-window fuel across the three robots that scouts watched.
+
+        One solve at a time. Every one of these is read-the-entries, divide the
+        official totals between them, write the rows back - and six phones
+        flush at the buzzer, so three threads can be inside that for one match
+        at once, each having read the table at a different moment. The last to
+        WRITE won, not the last to read: measured, 1 match in 8 came out with a
+        robot watched for five seconds holding more fuel than one watched for
+        ten, because the answer that landed last had been computed without its
+        partners. Serialised, the last writer is also the last reader.
+        """
+        with self._solve_lock:
+            return self._solve_match(match_key)
+
+    def _solve_match(self, match_key):
         ek = self.event_key()
         m = self.store.match(ek, match_key)
         if not m or not m.get("breakdown"):
@@ -3409,6 +3448,19 @@ class Handler(BaseHTTPRequestHandler):
         who = {k: (parse_qs(urlparse(self.path).query).get(k) or [None])[0]
                for k in ("deviceId", "scoutId", "seat")}
         q = Handler.hub.subscribe(who)
+        # A bound on a write that never completes. A phone that walks out of
+        # range does not close its socket - TCP retransmits into the silence -
+        # so a write to it blocks, and this thread parks in it. The overflow
+        # flag above is read at the top of the loop, and a thread stuck inside
+        # a write never gets back there: the client stayed in the subscriber
+        # list, the crew board went on calling it LIVE, and the thread was
+        # never coming back. Measured with a client that opens the stream and
+        # then stops reading it: without this, still subscribed and still
+        # parked when everything else had finished.
+        try:
+            self.connection.settimeout(SSE_WRITE_TIMEOUT)
+        except OSError:
+            pass
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
@@ -3448,6 +3500,30 @@ class Handler(BaseHTTPRequestHandler):
 class Server(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+
+    #: What a phone walking out of range looks like from in here. None of these
+    #: is a fault: the socket went away mid-request, which at a venue happens
+    #: every few minutes all day.
+    QUIET = (ConnectionResetError, ConnectionAbortedError, BrokenPipeError,
+             socket.timeout, TimeoutError)
+
+    def handle_error(self, request, client_address):
+        """Keep the hub's own window readable.
+
+        socketserver prints a full traceback for any exception out of a
+        handler, and a reset connection is one - so every phone that dropped
+        off the wifi wrote ten lines of stack into the window the lead is
+        watching, on top of the log line that actually mattered. This window is
+        the app's diagnostic surface (the banner, the key problems, the
+        checklist all print here), and log_message was silenced for exactly
+        this reason; this is the other half of it.
+
+        Anything that is NOT a disconnection still gets its traceback: a real
+        fault in a handler must not be quiet.
+        """
+        if isinstance(sys.exc_info()[1], self.QUIET):
+            return
+        ThreadingHTTPServer.handle_error(self, request, client_address)
     # socketserver defaults this to 5. Six phones flush the moment the buzzer
     # goes, two dashboards poll on their own timers and the pit tablet syncs
     # whenever it likes, so connections genuinely do arrive in bursts - and a

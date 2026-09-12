@@ -7,6 +7,9 @@ and ETag work, and OpenRouter.
 Third pass: the same branch with `main` merged back in, over the setup
 checklist, the keys moving into `.env`, the Windows firewall helper and the
 after screen's second page.
+Fourth pass: stress harnesses rather than a code read - concurrent clients
+against a live hub, every fix proved by removing it and watching the failure
+come back.
 
 Everything below is committed and pushed. Five test suites pass, and both CI
 gates hold (accuracy 9.4% of TBA over 253 fitted windows; the Nexus/TBA merge
@@ -177,6 +180,34 @@ went over what landed.
 | **`/api/eventsfor?year=abc` killed the request thread.** `int()` on a query-string value, straight out of the handler - no response, a dropped connection - on the one page somebody is looking at while nothing else on the hub works yet. The same shape as the mirror's `?rev=` in the second pass; worth grepping for the next one |
 | **The firewall check matched the port as a substring.** `str(port) in out` over `netsh`'s output says yes for `--port 605` against a rule holding 6059 - the false "allowed" that `exists()`'s own docstring says it is there to catch. Matched as a whole number now, still without reading a label, because netsh prints in whatever language Windows was installed in |
 | **The panel was opened in a browser before the firewall question was answered.** The socket is bound by then but nothing serves it until `serve_forever()`, so on the one platform this feature exists for, the browser sat on a page that could not load while the question waited in the terminal behind it - which is the same "prompt nobody saw" the module was written to stop. The offer goes first |
+
+### Fourth pass — driven by stress rather than by reading
+
+Load harnesses this time, not a code read: concurrent clients against a live
+hub, with an invariant asserted after each round and the fix proved by putting
+the lock back and watching the failure return.
+
+| what was wrong |
+| --- |
+| **Two saves to `.env` at once lost one of them, six runs out of six** - and crashed. It is read, changed and written back, and it holds every key: without one writer at a time, one of two concurrent edits is simply not in the file afterwards. Worse, the atomic write added in the third pass gave both writers the same temporary name, so the second `os.replace` came back `FileNotFoundError` out of the request handler - a dropped connection with the panel still saying "saving…". One writer at a time, and a temporary name of its own. Nine writers × six saves each, with a reader alongside: nothing lost, no gaps seen, no temporary left |
+| **The room could be told the loser won a chair.** Two scouts claiming one station: the write was always atomic, but the broadcast that tells everyone is a separate statement, so the two messages could be scheduled in the opposite order to the two writes. Measured, 3 races in 25 (6 in 25 on a second run): the hub holds the winner and every screen in the building shows the loser, until the next seat event or the next full poll - and the crew board's FREE button, its unwatched-robot alert and the phones' own bump check all read that map. Deciding and telling are one step now |
+| **A match could be solved from a partial view of it.** Every `/api/sync` solves the match it touched, so three scouts flushing at one buzzer put three threads inside read-entries / divide-the-official-totals / write-the-rows at once, each from a different read - and the last to WRITE won, not the last to read. Measured, 1 match in 8: a robot watched for five seconds came out holding more fuel than one watched for ten. Serialised, so the last writer is also the last reader |
+| **A stream client that stopped reading parked a thread forever.** The overflow mark added earlier is read at the top of the loop, and a thread blocked *inside* a write never gets back there - so a phone that walks out of range (TCP retransmits into the silence rather than closing) left the hub holding the subscription, the crew board calling it LIVE, and a thread that was never coming back. A write to a streaming client is bounded now; with the bound, a client that opens the stream and never reads it is let go |
+| **Every phone that dropped off the wifi printed a stack trace** into the hub's own window. socketserver reports any exception out of a handler, and a reset connection is one. That window is this app's diagnostic surface - the banner, the key problems and the checklist all print there, and `log_message` was silenced for exactly this reason. Disconnections are quiet now; a real fault in a handler still gets its traceback, which is checked |
+| **The printed picklist and the screen ranked robots differently.** The sheet a lead carries into alliance selection had its own copy of the score, and the defence correction in the second pass only reached the dashboard's. Driven on the seeded demo: the paper's top second pick was 9984, the screen's was 9989. The formula is one module now (`web/js/picklist.js`), imported by both - which is what the comment above it already claimed |
+
+Two things the stress said were fine, having looked:
+
+- **The ETags.** A first pass at this reported 110 "stale 304s" in 868 polls;
+  every one was the harness racing itself - it fetched the truth *after* the
+  304, with writers still running. Redone one-write-at-a-time with nothing
+  racing, across nine kinds of write and all four conditional endpoints: every
+  tag told the truth.
+- **Picklist broadcasts arriving out of order.** Same shape as the seat one and
+  it does not matter, because that message carries a revision rather than the
+  board: a client that sees a revision it did not write re-reads, in whatever
+  order the two arrive. It is the payload in the seat message that made
+  ordering load-bearing there.
 
 ## Checked and clean
 
