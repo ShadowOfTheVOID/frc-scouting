@@ -23,8 +23,11 @@ const CLIMB = { Level3: 1, Level2: 0.65, Level1: 0.3, None: 0 };
  */
 export function score(t, weights, maxFuel) {
   const e = t.exact, o = t.observed, s = t.estimated;
+  // `climbRate` is empty and `bestClimb` null for a robot no official result
+  // has landed for. Both read as the bottom of the scale, which is the rule
+  // above - a robot nobody can confirm climbs does not score for climbing.
   const climb = CLIMB[e.bestClimb] || 0;
-  const l3 = (e.climbRate.Level3 || 0) / 100;
+  const l3 = ((e.climbRate || {}).Level3 || 0) / 100;
   // Broke down or never turned up. Both end the same way for an alliance.
   const rel = 1 - Math.min(1, (o.diedRate + o.noShowRate) / 100);
   const stock = (o.stockpileRate || 0) / 100;
