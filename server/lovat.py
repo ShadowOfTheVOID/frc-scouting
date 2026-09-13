@@ -83,6 +83,12 @@ CLIMB_START = {"l1StartTime": "Level1", "l2StartTime": "Level2", "l3StartTime": 
 #: rather than lists, and are tallied for the same reason: "beached on the fuel"
 #: and "beached on the bump" are different problems, and the rate above cannot
 #: tell them apart.
+#:
+#: For those three, a cell Lovat wrote as TRUE/FALSE is skipped rather than
+#: tallied.  Those spellings carry no kind - the rate in FLAGS has already read
+#: them - and counting them put "false" into a row whose entire job is to say
+#: WHICH kind, immediately beside the percentage that already said whether.  The
+#: dashboard reads "gets beached 0% - false" off exactly that.
 LISTS = {"robotRoles": "roles", "feederTypes": "feederTypes", "intakeType": "intakeTypes",
          "beached": "beachedKinds", "fieldTraversal": "traversalKinds",
          "autoClimb": "autoClimbResults"}
@@ -265,11 +271,15 @@ def _team_record(team, rows, event_key):
 
     for col, name in LISTS.items():
         tally = {}
+        # Only the three enum columns drop their boolean spellings; a role or an
+        # intake type is free to be called whatever Lovat calls it.
+        enum_col = col in ENUM_FLAGS
         for r in rows:
             for item in (r.get(col) or "").split("|"):
                 item = item.strip()
-                if item:
-                    tally[item] = tally.get(item, 0) + 1
+                if not item or (enum_col and _bool(item) is not None):
+                    continue
+                tally[item] = tally.get(item, 0) + 1
         rec[name] = tally
 
     climbs = {}
