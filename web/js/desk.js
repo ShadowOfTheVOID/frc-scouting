@@ -32,9 +32,17 @@ const RANK_COLS = '56px minmax(120px,1fr) 84px 74px 52px 44px 86px';
 const ALL_COLS  = '62px 56px minmax(160px,1fr) 84px 74px 62px 60px 62px 62px 56px 52px 70px 64px';
 
 // ------------------------------------------------------------------ bits
+/** TBA's climb for one robot, or a dash for one no result has landed for.
+ *
+ * NONE and an empty cell are opposite facts. NONE is the field saying this
+ * robot stayed on the floor in every match it has played; an empty cell is
+ * nobody having told us yet. Rendering the second as the first put a flat
+ * NONE beside every opponent in a match not yet played.
+ */
 function climbCell(t) {
   const best = t.exact.bestClimb;
-  const rate = Math.round(t.exact.climbRate[best] || 0);
+  if (!best) return '<span class="band">—</span>';
+  const rate = Math.round((t.exact.climbRate || {})[best] || 0);
   const cls = { Level3: 'l3', Level2: 'l2', Level1: 'l1' }[best] || 'none';
   return best === 'None'
     ? '<span class="cl none">NONE</span>'
@@ -265,7 +273,7 @@ function sortVal(t, k) {
     case 'team': return t.team; case 'name': return 0;
     case 'fuel': return t.estimated.avgFuel;
     case 'climb': return CLIMB_RANK[t.exact.bestClimb] || 0;
-    case 'tower': return t.exact.avgTowerPoints;
+    case 'tower': return t.exact.avgTowerPoints ?? -1;
     case 'stock': return t.observed.stockpileRate;
     case 'waste': return -(t.observed.wastedFuelPct ?? 999);
     case 'died': return -t.observed.diedRate;
@@ -323,7 +331,7 @@ function renderTeams() {
       <span class="num">${t.estimated.avgFuel} <span class="band">±${t.estimated.band}</span></span>
       <span class="num">${climbCell(t)}</span>
       <span class="num">${t.epa.epa ?? '—'}</span>
-      <span class="num">${t.exact.avgTowerPoints}</span>
+      <span class="num">${t.exact.avgTowerPoints ?? '—'}</span>
       <span class="num">${Math.round(t.observed.stockpileRate)}%</span>
       <span class="num">${t.observed.wastedFuelPct == null ? '—' : Math.round(t.observed.wastedFuelPct) + '%'}</span>
       <span class="num">${Math.round(t.observed.diedRate)}%</span>
@@ -1036,16 +1044,24 @@ function normCdf(z) {
 /** Projected points for one alliance, with the spread of a single match. */
 function project(m, side) {
   const lineup = (m && m[side]) || [];
-  const teams = lineup.map((t) => (ANALYTICS && ANALYTICS.teams[t]) || null);
+  // `estimated.matches`, not "is there a row" - the same test analytics.py's
+  // match_projection() uses, and the two are meant to be the same sum. Every
+  // team AT the event has a row (analytics unions store.teams()), so counting
+  // rows meant every robot read as scouted: the tile could never say "2 of 3",
+  // the "not scouted" line below could never fire, and a fuel total quietly
+  // missing a robot was presented as a weak alliance rather than an unknown one.
+  const records = lineup.map((t) => (ANALYTICS && ANALYTICS.teams[t]) || null);
+  const teams = records.map((r) => (r && r.estimated && r.estimated.matches ? r : null));
   const fuel = teams.reduce((a, t) => a + (t ? t.estimated.avgFuel : 0), 0);
   // matchBand, not band: band is how well we know a team's average, this is how
   // much one match swings. Independent robots, so the variances add.
   const spread = Math.sqrt(teams.reduce((a, t) => a + (t ? (t.estimated.matchBand || 0) ** 2 : 0), 0));
   const band = Math.sqrt(teams.reduce((a, t) => a + (t ? t.estimated.band ** 2 : 0), 0));
-  const tower = teams.reduce((a, t) => a + (t ? t.exact.avgTowerPoints : 0), 0);
+  const tower = teams.reduce((a, t) => a + ((t && t.exact.avgTowerPoints) || 0), 0);
   const fp = gameRules().fuelPoints;
   const scouted = teams.filter(Boolean).length;
-  return { teams, lineup, fuel, band, spread, tower, points: fuel * fp + tower, scouted };
+  return { teams, records, lineup, fuel, band, spread, tower,
+           points: fuel * fp + tower, scouted };
 }
 
 /**
@@ -1080,25 +1096,38 @@ function verdictBanner(m, side) {
 
 function allianceCard(m, side) {
   const pr = project(m, side);
-  const { lineup, teams, fuel, tower } = pr;
+  const { lineup, teams, records, fuel, tower } = pr;
   const band = Math.round(pr.band);
   const label = side === 'red' ? 'RED' : 'BLUE';
   const th = rpThresholds((STATE && STATE.event && STATE.event.level) || 'regional');
-  const rows = lineup.map((t) => {
-    const d = teams[lineup.indexOf(t)];
-    if (!d) return `<div class="r" style="grid-template-columns:56px 1fr 90px 80px"><span class="tno">${t}</span>
-      <span class="nm">not scouted</span><span class="num">—</span><span class="num">—</span></div>`;
-    return `<div class="r" style="grid-template-columns:56px 1fr 90px 80px">
-      <span class="tno">${t}</span><span class="nm">${esc(d.name || '')}</span>
-      <span class="num">${d.estimated.avgFuel} <span class="band">±${d.estimated.band}</span></span>
-      <span class="num">${climbCell(d)}</span></div>`;
+  // Two records per robot on purpose. `d` is the one the projection was allowed
+  // to use - our own solved fuel, or null - and `rec` is everything the hub
+  // knows about that team, which exists whether or not a scout of ours ever sat
+  // on it. TBA's climb and Lovat's count come off `rec`, so the robot nobody
+  // watched stops being a blank row. It is the robot you most need something
+  // about, and this is the screen that gets read out loud.
+  const rows = lineup.map((t, i) => {
+    const d = teams[i];
+    const rec = records[i];
+    const fuelCell = d
+      ? `${d.estimated.avgFuel} <span class="band">±${d.estimated.band}</span>`
+      : '<span class="band">not scouted</span>';
+    return `<div class="r" style="grid-template-columns:56px 1fr 90px 80px 78px">
+      <span class="tno">${t}</span><span class="nm">${esc((rec && rec.name) || '')}</span>
+      <span class="num">${fuelCell}</span>
+      <span class="num">${rec ? climbCell(rec) : '<span class="band">—</span>'}</span>
+      <span class="num">${rec ? lovatCell(rec) : '<span class="band">—</span>'}</span></div>`;
   }).join('');
+  // Robots our own scouts have nothing on that Lovat does. Named on the tile
+  // because the tile is what gets read out - and never added to the sum:
+  // somebody else's scouting is a second opinion, not a measurement of ours.
+  const lovatFills = records.filter((r, i) => !teams[i] && lovatN(r || {})).length;
   return `<div style="display:flex;flex-direction:column;gap:14px">
     <div class="eyebrow" style="color:${side === 'red' ? 'var(--red-label)' : 'var(--blue-label)'}">
       ${label} · ${esc((m && m.label) || '')}</div>
     ${verdictBanner(m, side)}
-    ${autoClashNote(teams)}
-    ${defenseNote(m, side, teams)}
+    ${autoClashNote(records)}
+    ${defenseNote(m, side, records)}
     <div class="tiles" style="grid-template-columns:repeat(3,1fr)">
       ${tile('PROJECTED FUEL', Math.round(fuel),
              // A robot nobody has scouted contributes nothing to this sum, so
@@ -1108,6 +1137,8 @@ function allianceCard(m, side) {
              // read out loud.
              pr.scouted < lineup.length
                ? `${pr.scouted} of ${lineup.length} robots scouted — incomplete`
+                 + (lovatFills
+                    ? ` · lovat has ${lovatFills === 1 ? 'another' : lovatFills}` : '')
                : `±${band} · Energized at ${th.energized}`,
              fuel >= th.energized ? '' : 'warn')}
       ${tile('TOWER POINTS', Math.round(tower), `Traversal at ${th.traversal}`,
@@ -1115,8 +1146,9 @@ function allianceCard(m, side) {
       ${tile('SUPERCHARGED', fuel >= th.supercharged ? 'YES' : 'NO', `needs ${th.supercharged}`)}
     </div>
     <div class="tbl">
-      <div class="hd" style="grid-template-columns:56px 1fr 90px 80px">
-        <span>TEAM</span><span>NAME</span><span class="num">FUEL</span><span class="num">CLIMB</span></div>
+      <div class="hd" style="grid-template-columns:56px 1fr 90px 80px 78px">
+        <span>TEAM</span><span>NAME</span><span class="num">FUEL</span><span class="num">CLIMB</span>
+        <span class="num">LOVAT</span></div>
       ${rows || '<div class="empty">No lineup yet.</div>'}
     </div></div>`;
 }
@@ -1277,9 +1309,14 @@ function renderTeamDetail() {
     <div class="tiles" style="grid-template-columns:repeat(3,1fr)">
       ${tile('FUEL / MATCH', es.avgFuel,
              `± ${es.band}${es.cycleRate ? ` · ${es.cycleRate}/s` : ''} · estimated`)}
-      ${tile('BEST CLIMB', e.bestClimb === 'None' ? '—' : e.bestClimb.replace('Level', 'L'),
-             `${Math.round(e.climbRate[e.bestClimb] || 0)}% of matches · exact`)}
-      ${tile('TOWER PTS', e.avgTowerPoints, `auto climb ${e.autoClimbRate ?? 0}%`)}
+      ${tile('BEST CLIMB', !e.bestClimb || e.bestClimb === 'None' ? '—'
+               : e.bestClimb.replace('Level', 'L'),
+             e.matchesWithOfficial
+               ? `${Math.round((e.climbRate || {})[e.bestClimb] || 0)}% of matches · exact`
+               : 'no official result yet')}
+      ${tile('TOWER PTS', e.avgTowerPoints ?? '—',
+             e.autoClimbRate == null ? 'no official result yet'
+               : `auto climb ${e.autoClimbRate}%`)}
       ${tile('RELIABILITY', `${Math.round(100 - o.diedRate - o.noShowRate)}%`,
              `died ${Math.round(o.diedRate)}% · no-show ${Math.round(o.noShowRate)}%`,
              (o.diedRate + o.noShowRate) > 20 ? 'warn' : '')}

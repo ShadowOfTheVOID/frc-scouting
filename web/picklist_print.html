@@ -114,7 +114,7 @@ $('#rows').innerHTML = ranked.map(({ t, s }, i) => {
     <td class="n rk">${i + 1}</td>
     <td class="tno">${t.team}</td>
     <td class="nm">${esc(t.name || '')}${taken.has(t.team) ? ' — picked' : ''}</td>
-    <td class="n">${e.bestClimb === 'None' ? '—' : e.bestClimb.replace('Level', 'L')}</td>
+    <td class="n">${!e.bestClimb || e.bestClimb === 'None' ? '—' : e.bestClimb.replace('Level', 'L')}</td>
     <td class="n">${e.rank ?? '—'}</td>
     <td class="n">${e.opr ?? '—'}</td>
     <td class="n">${t.epa.epa ?? '—'}</td>

@@ -463,7 +463,8 @@ function openTeam(team) {
       ${cell('EPA', num(t.epa?.epa, 0))}
       ${cell('BEST CLIMB', esc(ex.bestClimb || '—'))}
       ${cell('TOWER PTS', num(ex.avgTowerPoints, 1))}
-      ${cell('AUTO CLIMB', `${num(ex.autoClimbRate, 0)}<small>%</small>`)}
+      ${cell('AUTO CLIMB', ex.autoClimbRate == null ? '&mdash;'
+        : `${num(ex.autoClimbRate, 0)}<small>%</small>`)}
       ${cell('AVG RP', num(ex.avgRP, 2))}
       ${cell('STOCKPILES', `${num(ob.stockpileRate, 0)}<small>%</small>`)}
       ${cell('FEEDS', `${num(ob.feedRate, 0)}<small>%</small>`)}
