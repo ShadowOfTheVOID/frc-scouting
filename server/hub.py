@@ -1634,6 +1634,20 @@ class Hub:
             if not robots:
                 continue
             rows = solve.solve_match(info.get("windows") or {}, robots, mult=mult, bootstrap=120)
+            # A robot nobody was sitting on is marked, not averaged. All three
+            # rows stay - the division of the official total has to keep adding
+            # up to it, and the leftover is real fuel this alliance scored that
+            # we cannot attribute - but the row for a robot with no intervals is
+            # not a measurement of that robot. It comes out holding whatever the
+            # division left over, with a bootstrap band of zero because there was
+            # nothing to resample: measured on the demo with one robot's
+            # scouting removed, `2.3 fuel ±1.5` for a robot Lovat's scouts
+            # counted 70.5 on, and indistinguishable on every screen from a
+            # robot watched all day and found useless.
+            watched = {r["team"] for r in robots if r["intervals"]}
+            for r in rows:
+                if r["team"] not in watched:
+                    r["provisional"] = True
             out_rows.extend(rows)
 
             observed = sum(len(r["intervals"]) for r in robots)
@@ -2079,8 +2093,11 @@ def _csv_table(h, ek, table):
                 t["matchesScouted"], e["matchesWithOfficial"],
                 round(sum(deltas) / len(deltas), 1) if deltas else None,
                 es["avgFuel"], es["band"], es["consistency"], e["bestClimb"],
-                round(e["climbRate"].get("Level3", 0), 1), round(e["climbRate"].get("Level2", 0), 1),
-                round(e["climbRate"].get("Level1", 0), 1), e["autoClimbRate"],
+                # An empty climbRate is a robot no official result has landed
+                # for yet. A blank cell says that; a 0 in a spreadsheet column
+                # headed climbL3Pct is read as a robot that does not climb.
+                _pct(e["climbRate"].get("Level3")), _pct(e["climbRate"].get("Level2")),
+                _pct(e["climbRate"].get("Level1")), e["autoClimbRate"],
                 e["avgTowerPoints"], e["avgRP"], o["stockpileRate"], o["wastedFuelPct"],
                 o["feedRate"], o["feedSecs"], o["defenseSecs"],
                 o.get("defenseFacedSecs"), o.get("defenseFacedMatches"),
@@ -2177,6 +2194,11 @@ def _csv_table(h, ek, table):
         return header, rows
 
     raise KeyError(table)
+
+
+def _pct(v):
+    """One rate as a CSV cell: rounded, or blank for a rate nobody measured."""
+    return round(v, 1) if v is not None else None
 
 
 def _counts(m):
