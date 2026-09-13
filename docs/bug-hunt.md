@@ -14,6 +14,8 @@ Fifth pass: fuzzing every field a phone can send, and the three numbers-side
 bugs that came out of reading what the fuzz hit.
 Sixth pass: the write endpoints, and fuzzing the four parsers that read
 something this app did not write.
+Seventh pass: `claude/lovat-logic-features-c97xih` - the robot nobody watched,
+and the Lovat columns that were being parsed and thrown away.
 
 Everything below is committed and pushed. Five test suites pass, and both CI
 gates hold (accuracy 9.4% of TBA over 253 fitted windows; the Nexus/TBA merge
@@ -238,6 +240,35 @@ Fuzzed: 800 inputs across the mDNS responder (raw UDP off the wire), Lovat's
 CSV, TBA's match shape, the rules and the solver, the key-hygiene boxes and the
 `.env` parser. Six distinct raises before, none after.
 
+### Seventh pass - the robot nobody watched
+
+One family, found by asking what the MATCH tab says about an opponent our crew
+never sat on. Driven in Chromium against the seeded demo with one robot's
+scouting deleted, and each leg proved by stashing the fix and running the same
+drive against the old files:
+
+```
+before   9972  Off-Season Demo Team 9972   2.3 ±1.5   NONE
+         PROJECTED FUEL 75   ±10 · Energized at 100
+after    9972  Off-Season Demo Team 9972   not scouted   L1 · 67%   71 n5
+         PROJECTED FUEL 73   2 of 3 robots scouted — incomplete · lovat has another
+```
+
+| what was wrong |
+| --- |
+| **The solver wrote a fuel average for a robot nobody watched.** Every robot in the lineup got a row, and the division of the official total hands one with no intervals whatever is left over - with a bootstrap band of zero, because there is nothing to resample. `2.3 fuel ±1.5` for a robot Lovat's scouts counted 70.5 on, and on every screen in this app a number with a band on it means *measured*. The rows have to stay - the three of them add up to the total TBA published, which `tests_api.py` asserts, and the leftover is real fuel this alliance scored that we cannot attribute - so the row for an unwatched robot is marked instead, and nothing averages it or draws it. `provisional` now has one meaning wherever it is set, stated in `solve.py`: a number we wrote down, not a measurement of this robot. The first version of this fix dropped the rows instead, and the suite caught it in one run |
+| **The `exact` block was built by walking our own scout entries.** It is TBA's block, and TBA's breakdown names every robot on the field - but the loop reached the match through `by_match[e["matchKey"]]`, so a robot nobody of ours watched had no climb, no tower points, no record and no RP, from data sitting right there. It walks the schedule now. The same robot goes from `bestClimb None` to `L1, 67% of six matches`. Two things fall out: the per-match dedupe is gone, because one row per match is now true by construction rather than by a `seen_matches` guard against a HAND OVER, and the alliance comes off the lineup instead of off whatever a scout typed |
+| **And where nothing official has landed, it now reads as unknown.** `climbRate` was 0.0 for every level and `_best_climb` returned the string `"None"`, which `climbCell` draws as a confident NONE. A rate of zero and a bestClimb of "None" are measurements - they say this robot was watched and stayed on the floor - and saying that about a robot no result has posted for is the same lie in a different column. Null now, with every reader guarded: the tiles say `no official result yet`, the teams CSV leaves the cell blank rather than writing 0 under `climbL3Pct`, the mirror draws a dash. Both halves of the picklist were driven, because that is the one read in the room with no time to find anything out: screen and paper still rank identically and neither throws |
+| **`2 of 3 robots scouted` could not fire.** `project()` counted a robot as scouted if an analytics row existed - and analytics emits a row for every team AT the event, because it unions the team list TBA gives us. So the count was always the full lineup: the warning never appeared, the `not scouted` row never appeared, and a fuel total quietly missing a robot read as a weak alliance rather than an unknown one. This is the second-pass fix above coming back through a different door; that one corrected the caption, not the predicate under it. It asks `estimated.matches` now, the same question `analytics.match_projection` asks one file away. `project()` had to keep both arrays doing it: the auto-clash and defence warnings read `observed`, and a robot two scouts watched that TBA has not posted a result for still starts in a zone |
+| **Lovat's kind-tally kept the boolean spelling.** `beached`, `fieldTraversal` and `autoClimb` are enums in Lovat's schema and were TRUE/FALSE in an older export - `ENUM_FLAGS` exists for exactly that - but the tally read those three columns raw. An export written the old way came back `beachedKinds {"FALSE": 4}`, and the team page printed `gets beached 0% · false` with `crosses the field 100% · true` under it. That row's whole job is to say WHICH kind; the percentage beside it had already said whether. Those spellings are skipped now, so an older export gets an empty tally, which is the truth about it |
+| **The fixture could not have caught either bug it exists for** - Still open #2, below, now closed. No BOM and TRUE/FALSE in three enum columns: the two things that let `e36147a` ship. Removing the BOM strip from `lovat.py` entirely used to leave the suite green; it now takes five assertions down with it. The fixture leads with a BOM and carries the real vocabulary, keeping every rate the suite already asserted and every awkward row it already had. `seed_demo` writes enums and a BOM too. The column order is still this repo's own - REBUILT is a fictional game, so there is no real export to copy an order from, which is the one half of that item that cannot be done |
+
+Two gaps in the seed found by adding panels that read them: it wrote zero
+camping defence always, and gave each robot a single climb level, so the demo
+could draw neither the contact/camping split nor a per-level climb rate and
+would not have noticed either breaking. Robots fall short of their best level
+sometimes now, which is also what makes our own `climbRate` worth a column.
+
 ## Checked and clean
 
 Do not re-litigate these without new evidence.
@@ -270,18 +301,14 @@ Nothing is blocked. These are the threads that were live when the hunt paused.
 
 1. **The hunt itself.** It stopped because it was asked to, not because the app
    is clean. No claim is made that nothing is left.
-2. **`server/fixtures/lovat_report_example.csv` is unrepresentative** in exactly
-   the two ways that let `e36147a` live: it has no BOM, and it uses TRUE/FALSE
-   where the real export sends enum strings. Regenerating it from Lovat's real
-   `CondensedReport` field order would make `tests_lovat.py` mean something.
-3. **`tests_api.py` carries test cases added before the no-test-files
+2. **`tests_api.py` carries test cases added before the no-test-files
    instruction.** They are committed and passing. If the instruction was meant
    to apply retroactively, they should come out.
-4. **`seed_demo.py` defaults to 40 matches / 31 teams.** Real quals run 60–75.
+3. **`seed_demo.py` defaults to 40 matches / 31 teams.** Real quals run 60–75.
    The seed also generates intervals strictly inside each window, which is why
    the phase-straddle bug in `0db516f` could not be caught by the existing
    Monte Carlo.
-5. **A HAND OVER mid-match is read three different ways.** `hub.solve_match`
+4. **A HAND OVER mid-match is read two different ways.** `hub.solve_match`
    takes the newest of the two rows for one (match, team) on the grounds that
    the outgoing scout's row is a partial match; `analytics._team_trend` and
    `analytics.score_report` take the *first* on the grounds that it covers the
@@ -289,12 +316,14 @@ Nothing is blocked. These are the threads that were live when the hunt paused.
    row is the whole match — the incoming scout gets a fresh entry, so the two
    are complementary halves of one observation. Nothing here is wrong enough to
    have shown up in the accuracy gate, and merging them is a solver change
-   rather than a fix, so it is written down rather than done.
-6. **`Handler._body()` does not drain a body it refuses.** A bogus or oversized
+   rather than a fix, so it is written down rather than done. (It was three
+   ways until the seventh pass: `_team_summary` had a third reading of its own,
+   which went with the entries-driven `exact` block.)
+5. **`Handler._body()` does not drain a body it refuses.** A bogus or oversized
    `Content-Length` gets a JSON answer, and then the unread bytes are parsed as
    the next request on a keep-alive connection. Only reachable by a malformed
    request, and it costs that one connection.
-7. **`db.saveScout` stamps `updatedAt` from `Date.now()`, not `net.serverNow()`.**
+6. **`db.saveScout` stamps `updatedAt` from `Date.now()`, not `net.serverNow()`.**
    Last-write-wins on the hub is decided by that number, and the skew-corrected
    clock exists three modules away. It only bites when two phones write the same
    (match, team, scout) — a HAND OVER onto a second phone — and `db.js` cannot

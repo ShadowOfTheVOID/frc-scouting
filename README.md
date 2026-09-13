@@ -314,7 +314,9 @@ curl -X DELETE "https://api.lovat.app/v1/manager/apikey?uuid=…" -H "authorizat
 - The hub asks once every five minutes. Lovat rate-limits a key to one request every three
   seconds, so this leaves that limit completely alone.
 - A blank Lovat column means **nobody at this event uploaded that robot**. It is not a zero, it
-  is not a bad robot, and nothing here will treat it as one.
+  is not a bad robot, and nothing here will treat it as one. The GRAPHS side pane says how many
+  of this event's teams they have and when anything last arrived, so "no key", "they have
+  nothing" and "they are backing us off" do not look the same.
 - Playoff rows cannot be joined onto our qualification schedule, so they are counted in the
   totals and listed separately rather than being quietly attached to the wrong match.
 
@@ -631,7 +633,10 @@ uncertainty shaded around the fuel line and Lovat's count of the same robot draw
 ## Reading a match before it happens
 
 The **MATCH** tab puts both alliances side by side: projected fuel and points, win probability
-with the margin it came from, and each robot's fuel and climb. It follows the field by default;
+with the margin it came from, and each robot's fuel, climb and what Lovat's scouts made of it.
+A robot nobody on our crew has watched says **not scouted** rather than showing a number — and
+still carries the official climb, because that comes from the field rather than from us, and
+Lovat's count beside it. The projected fuel says how many of the three robots we actually have. It follows the field by default;
 pick any match from the dropdown to look ahead or back. Two warnings fire on their own — two
 partners who both start in the same auto zone, and an opponent with a logged history of
 defending someone in this lineup.
@@ -670,7 +675,7 @@ the fuel column.
 | Phones cannot connect at all | Windows Firewall blocked it | Restart the server, click **Allow access** on **Private networks** |
 | A phone says it cannot reach the hub | out of range, or the laptop moved networks | Walk back toward the laptop. Data is safe; it sends itself |
 | An AI panel says "the model could not be reached" | no internet, or the key is wrong | it is safe to ignore — nothing else depends on it. Re-check the key at http://localhost:6059/ |
-| The LOVAT column is empty | no Lovat key, or nobody uploaded that robot | not a fault: blank means nobody scouted it there, which is not a zero. If you never got a key, Lovat has no page for it — see *Getting a Lovat key* above |
+| The LOVAT column is empty | no Lovat key, nobody uploaded that robot, or Lovat is backing us off | not a fault: blank means nobody scouted it there, which is not a zero. The **GRAPHS** tab's side pane says which of the three it is — how many of this event's teams Lovat has, and how long ago anything arrived. If you never got a key, Lovat has no page for it — see *Getting a Lovat key* above |
 | Scouts see an old event's teams | event key not changed | http://localhost:6059/ on the laptop, set the new event key |
 | Fuel numbers look wrong for one team | a scout was on their own clock, or missed matches | Check the **HEALTH** tab — flagged matches are listed with the reason |
 | Every team's fuel looks too high, or too low | scouts are calling shooting harder or softer than it scores | **HEALTH** tab, ACCURACY panel — it says `running N% hot` or `cold`. Worth a word about the rate ladder; the solver corrects for it either way |

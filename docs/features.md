@@ -287,7 +287,11 @@ so the legend never re-shuffles under the reader.
   relationship. A team far off the agreement line is one the two sets of scouts read
   differently — usually a robot one of them has seen fewer times.
 
-The side pane counts how many teams each source has anything for, lists the busiest defenders
+The side pane counts how many teams each source has anything for — Lovat's as `N of M here`,
+with how many rows arrived, how long ago they were fetched, and how many playoff rows were
+counted but could not be placed on our schedule. An empty LOVAT column has three causes that
+look identical everywhere else (no key, a 403 backing us off, nobody having uploaded that robot)
+and this is the line that tells them apart. It also lists the busiest defenders
 and the most-defended robots, and — from Lovat only — how many seconds into a match each robot
 leaves to go and climb. Our own scouting cannot produce that number: a scout with two thumbs
 cannot time a climb.
@@ -377,7 +381,7 @@ Nothing at the venue degrades when it is red.
 ### MATCH
 
 Both alliances side by side: projected fuel and points, win probability with the margin it came
-from, and each robot's fuel and climb. It follows the field — on-field, then queuing, then the
+from, and each robot's fuel, climb and **what Lovat's scouts counted on it**. It follows the field — on-field, then queuing, then the
 next unplayed match — until you pick a specific match from the dropdown, after which it holds
 still so a refresh does not move it while you are reading.
 
@@ -386,6 +390,12 @@ Two warnings fire here:
 - **AUTO** — two robots on the same alliance that habitually start in the same zone. Worth
   asking about before the match rather than watching it happen.
 - **EXPECT DEFENCE** — an opponent with a logged history of defending someone in this lineup.
+
+This is the screen where a robot our own crew has never watched turns up most often, and the one
+where somebody else's scouting is most use. Its row reads **not scouted** rather than a number,
+carries TBA's climb for it anyway, and carries Lovat's count beside that. The PROJECTED FUEL
+tile says how many of the three we actually have — and that Lovat has one of the others, when it
+does. Lovat never enters the projection: the sum is ours, and theirs sits next to it.
 
 **HOW TO PLAY IT** is generated (see [AI](#ai)) and only appears with a model configured. Four
 labelled lines: how the alliances compare, the one opposing robot that decides the match, who
@@ -433,7 +443,7 @@ confidently wrong. `server/analytics.py` enforces the split.
 
 | Block | Source | Trust |
 |---|---|---|
-| `exact` | The Blue Alliance | Exact. Rank, record, ranking points, OPR, per-robot climb per match, auto climb, tower points. |
+| `exact` | The Blue Alliance | Exact. Rank, record, ranking points, OPR, per-robot climb per match, auto climb, tower points. Taken off the **schedule**, not off our own scouting, so it is there for every robot at the event whether or not one of our scouts sat on it — which is the robot you most want it for. Blank until an official result lands, never a zero. |
 | `estimated` | our solver | Estimated, **always** carries a band. Fuel per match, consistency, cycle rate. |
 | `observed` | the scouts | Reliable in kind, not in magnitude — yes/no answers, ratings, counts. |
 | `epa` | Statbotics | An independent outside read, which is why it earns a place beside a number we produced ourselves. |
@@ -456,11 +466,12 @@ pits about.
 |---|---|
 | fuel, throughput, fuel per second, accuracy, volleys | their scouts' count of the same robot, next to ours |
 | feeding — seconds, rate, feeds per match, balls fed | |
-| defence — total, contact, camping, effectiveness | |
-| **climb start time**, per level, and auto climb start | the second the robot left to go and climb. Theirs is a timer and ours is the CLIMB button's own timestamp, so the two sit in different blocks — but ours is no longer blank |
-| climbs and climb rate per level, best climb | `L2`, `Level 2` and `2` all normalise onto our vocabulary; a label we cannot read is unknown, never a failed climb |
+| defence — total, contact, camping, effectiveness | contact and camping shown apart where they differ: pushing and parking are answered differently, and our own scouting has no word for the second |
+| **climb start time**, per level, and auto climb start | the second the robot left to go and climb. Theirs is a timer and ours is the CLIMB button's own timestamp, so the two sit in different blocks — but ours is no longer blank. Drawn per level as well as pooled: leaving at 128s for an L3 is quick, leaving at 128s for an L1 is a robot that gave up half the endgame |
+| climbs and climb rate per level, best climb | `L2`, `Level 2` and `2` all normalise onto our vocabulary; a label we cannot read is unknown, never a failed climb. Shown per level, because "best climb L2" is the same line for a robot that made one in nine matches of ten and one that made it once |
+| **auto climb, split three ways** | `SUCCEEDED` / `FAILED` / `NOT_ATTEMPTED`. One percentage cannot tell "never tried" from "tried and fell off", and those are different robots to put on an alliance |
 | points — total, auto, teleop — and driver ability | |
-| beached, scores-while-moving, disrupts, field traversal | booleans, counted as a rate over the rows that answered |
+| beached, scores-while-moving, disrupts, field traversal | a rate over the rows that answered. Three of these are enums in Lovat's schema and were booleans in an older export, so both spellings are read — and only the enum carries a *kind* beside the rate, which is what the panel shows |
 | outpost intakes, robot roles, feeder types, intake type | |
 | scouter names and free-text notes | notes are shown beside ours, tagged `· lovat` |
 
