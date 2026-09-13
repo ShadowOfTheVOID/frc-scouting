@@ -117,6 +117,21 @@ def _event_summary(store, event_key, include_scouts=False):
         faced = faced_secs.setdefault(target, {})
         faced[e["matchKey"]] = faced.get(e["matchKey"], 0.0) + secs
 
+    # Which matches each robot actually played, off the schedule rather than off
+    # our scouting. The `exact` block is TBA's, and TBA knows what every robot on
+    # the field did whether or not one of our scouts was sitting on it - reading
+    # it through our entries meant an opponent nobody watched had no climb, no
+    # tower points and no record, on the tab where an opponent is the whole
+    # question. One row per match by construction, so a HAND OVER mid-match
+    # cannot double anything either.
+    matches_by_team = {}
+    for m in matches:
+        if not m.get("breakdown"):
+            continue
+        for side in ("red", "blue"):
+            for t in (m.get(side) or []):
+                matches_by_team.setdefault(t, []).append((m, side))
+
     # A team Lovat has and we do not is still a team at this event worth a row -
     # it is the case where somebody else's scouting is most use to us.
     lovat_teams = [t for t in (_int(k) for k in lovat_rows) if t is not None]
@@ -129,7 +144,8 @@ def _event_summary(store, event_key, include_scouts=False):
                                   _lookup(rankings, team), _lookup(epa, team),
                                   defended_by.get(team) or {},
                                   _lookup(lovat_rows, team),
-                                  faced_secs.get(team) or {})
+                                  faced_secs.get(team) or {},
+                                  matches_by_team.get(team) or [])
         # Kept beside the averages rather than folded into them: an average
         # says how good a robot is, a series says whether it is getting better,
         # and a picklist meeting the night before eliminations wants both.
@@ -312,9 +328,12 @@ def _team_trend(team, matches, entries, solved, lovat, faced_secs):
             # asked whether the team had EVER been scouted instead, so a
             # station going quiet mid-event was invisible to it.
             "scouted": bool(e),
-            # estimated
-            "fuel": sv["fuel"] if sv else None,
-            "band": sv["band"] if sv else None,
+            # estimated. A provisional row is not a measurement of this robot
+            # (see solve.provisional_match), so it reads as no measurement here
+            # too - the line breaks, which is what a gap already means on every
+            # chart in this app: nobody was watching, not nothing happened.
+            "fuel": sv["fuel"] if sv and not sv.get("provisional") else None,
+            "band": sv["band"] if sv and not sv.get("provisional") else None,
             "provisional": bool(sv.get("provisional")) if sv else None,
             # exact - the whole alliance, which is what TBA publishes
             "officialFuel": (sum(v for v in (info.get("windows") or {}).values() if v)
@@ -419,11 +438,14 @@ def _int(v):
 
 
 def _team_summary(team, meta, entries, solved, by_match, ranking=None, epa=None,
-                  defended_by=None, lovat=None, faced_secs=None):
+                  defended_by=None, lovat=None, faced_secs=None, official=None):
     ranking, epa = ranking or {}, epa or {}
     defended_by = defended_by or {}
     faced_secs = faced_secs or {}
     lovat = lovat or {}
+    # (match, alliance) for every match this robot played that has an official
+    # breakdown.  Off the schedule, not off our entries - see event_summary.
+    official = official or []
     # ---------------------------------------------- EXACT (from TBA)
     climbs = {"Level1": 0, "Level2": 0, "Level3": 0, "None": 0}
     auto_climbs = 0
@@ -432,27 +454,19 @@ def _team_summary(team, meta, entries, solved, by_match, ranking=None, epa=None,
     rps = []
     official_matches = 0
 
-    # One match counts once, however many scouts watched the robot. These numbers
-    # come from TBA, not from the scout - and a HAND OVER mid-match leaves two
-    # entries for the same (match, team), which would otherwise double every
-    # climb, tower point and RP for that match.
-    seen_matches = set()
-    for e in entries:
-        m = by_match.get(e["matchKey"])
-        if not m or not m.get("breakdown"):
-            continue
-        if e["matchKey"] in seen_matches:
-            continue
-        alliance = e.get("alliance")
-        info = (m["breakdown"] or {}).get(alliance)
+    # One row per match this robot played, taken off the schedule.  The alliance
+    # is whichever lineup the team is in, not whichever one a scout typed: the
+    # schedule is the authority on that, and asking it removes a whole class of
+    # scout-versus-schedule disagreement from a block that claims to be exact.
+    for m, alliance in official:
+        info = (m.get("breakdown") or {}).get(alliance)
         lineup = m.get(alliance) or []
         if not info or team not in lineup:
             continue
-        seen_matches.add(e["matchKey"])
         official_matches += 1
         opp = "blue" if alliance == "red" else "red"
         ours = info.get("totalPoints")
-        theirs = ((m["breakdown"] or {}).get(opp) or {}).get("totalPoints")
+        theirs = ((m.get("breakdown") or {}).get(opp) or {}).get("totalPoints")
         if ours is not None and theirs is not None:
             if ours > theirs:
                 wins += 1
@@ -603,15 +617,22 @@ def _team_summary(team, meta, entries, solved, by_match, ranking=None, epa=None,
         "team": team,
         "name": meta.get("name"),
         "matchesScouted": len(entries),
+        # Nothing official read means UNKNOWN, and it has to read as unknown all
+        # the way out. A rate of 0.0 and a bestClimb of "None" are measurements:
+        # they say this robot was watched and did not climb. For a robot no
+        # match has posted a result for yet, that is a claim made from nothing -
+        # and the MATCH tab drew it as a flat `NONE` beside `0 ±0` on the one
+        # screen that gets read out loud before a match.
         "exact": {
             "matchesWithOfficial": official_matches,
-            "climbs": climbs,
-            "climbRate": {k: (v / official_matches * 100.0 if official_matches else 0.0)
-                          for k, v in climbs.items()},
+            "climbs": climbs if official_matches else {},
+            "climbRate": ({k: (v / official_matches * 100.0) for k, v in climbs.items()}
+                          if official_matches else {}),
             "autoClimbs": auto_climbs,
-            "autoClimbRate": round(auto_climbs / official_matches * 100.0, 1) if official_matches else 0.0,
-            "avgTowerPoints": round(_mean(tower_pts), 1),
-            "bestClimb": _best_climb(climbs),
+            "autoClimbRate": (round(auto_climbs / official_matches * 100.0, 1)
+                              if official_matches else None),
+            "avgTowerPoints": round(_mean(tower_pts), 1) if official_matches else None,
+            "bestClimb": _best_climb(climbs) if official_matches else None,
             "avgRP": round(_mean(rps), 2) if rps else None,
             # Official standings win over anything we can derive: they count
             # every match, not just the ones a scout was sitting for.
@@ -743,6 +764,13 @@ def _record(ranking, wins, losses, ties):
 
 
 def _best_climb(climbs):
+    """The highest level TBA recorded, or "None" for a robot that did not climb.
+
+    Only ever called where at least one official result was read, because
+    "None" here is the fact that it stayed on the floor - which is a different
+    answer from having nothing to go on, and the caller is the one that knows
+    which of the two it is holding.
+    """
     for lvl in ("Level3", "Level2", "Level1"):
         if climbs.get(lvl):
             return lvl

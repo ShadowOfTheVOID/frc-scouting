@@ -162,6 +162,14 @@ def provisional_match(robots, mult=None):
     Falls back to raw rate x duration - the same estimate Lovat produces - and
     marks it provisional so the UI can show it differently and the solver can
     replace it once TBA posts.
+
+    `provisional` means one thing wherever it is set: **this row is a number we
+    wrote down, not a measurement of this robot.** Two things set it - this
+    function, where no official total exists yet, and `hub._solve_match`, where
+    a robot had no scout on it and the division handed it whatever was left
+    over. Both rows still have to exist, because the three of them have to add
+    up to the alliance total TBA published. Neither may be averaged into a
+    robot's fuel or drawn on its chart, and `analytics` skips both.
     """
     mult = mult or dict(BUCKET_PRIORS)
     out = []
