@@ -2153,16 +2153,22 @@ def _csv_table(h, ek, table):
                   "accuracy", "volleys", "ballsFed", "feedSecs", "feedingRate", "feedsPerMatch",
                   "defenseSecs", "contactDefenseSecs", "campingDefenseSecs",
                   "defenseEffectiveness", "totalPoints", "autoPoints", "teleopPoints",
-                  "driver", "bestClimb", "climbL3Pct", "climbL2Pct", "climbL1Pct",
-                  "autoClimbPct", "climbStartSecs", "autoClimbStartSecs", "beachedPct",
-                  "scoresWhileMovingPct", "disruptPct", "traversalPct", "outpostIntakes",
-                  "roles", "intakeTypes", "unmatchedRows"]
+                  "driver", "bestClimb", "climbsRead", "climbL3Pct", "climbL2Pct", "climbL1Pct",
+                  # Per level as well as pooled: "starts its L3 at 128s" and
+                  # "starts its L1 at 128s" are different robots, which is why
+                  # the parser keeps them apart in the first place.
+                  "climbStartL3Secs", "climbStartL2Secs", "climbStartL1Secs",
+                  "autoClimbPct", "autoClimbResults", "climbStartSecs", "autoClimbStartSecs",
+                  "beachedPct", "beachedKinds",
+                  "scoresWhileMovingPct", "disruptPct", "traversalPct", "traversalKinds",
+                  "outpostIntakes", "roles", "intakeTypes", "feederTypes", "unmatchedRows"]
         rows = []
         for t in sorted(summary["teams"].values(), key=lambda x: x["team"]):
             lv = t.get("lovat") or {}
             if not lv.get("matches"):
                 continue
             cr = lv.get("climbRate") or {}
+            cs = lv.get("climbStart") or {}
             rows.append([
                 t["team"], t.get("name"), lv.get("matches"), lv.get("scouters"),
                 lv.get("avgFuel"), lv.get("fuelPerSec"), lv.get("throughput"),
@@ -2171,12 +2177,17 @@ def _csv_table(h, ek, table):
                 lv.get("defenseSecs"), lv.get("contactDefenseSecs"),
                 lv.get("campingDefenseSecs"), lv.get("defenseEffectiveness"),
                 lv.get("totalPoints"), lv.get("autoPoints"), lv.get("teleopPoints"),
-                lv.get("driver"), lv.get("bestClimb"),
+                lv.get("driver"), lv.get("bestClimb"), lv.get("climbsRead"),
                 cr.get("Level3"), cr.get("Level2"), cr.get("Level1"),
-                lv.get("autoClimbRate"), lv.get("climbStartSecs"), lv.get("autoClimbStartSecs"),
-                lv.get("beachedRate"), lv.get("scoresWhileMovingRate"), lv.get("disruptRate"),
-                lv.get("traversalRate"), lv.get("outpostIntakes"),
+                cs.get("Level3"), cs.get("Level2"), cs.get("Level1"),
+                lv.get("autoClimbRate"), _counts(lv.get("autoClimbResults")),
+                lv.get("climbStartSecs"), lv.get("autoClimbStartSecs"),
+                lv.get("beachedRate"), _counts(lv.get("beachedKinds")),
+                lv.get("scoresWhileMovingRate"), lv.get("disruptRate"),
+                lv.get("traversalRate"), _counts(lv.get("traversalKinds")),
+                lv.get("outpostIntakes"),
                 _counts(lv.get("roles")), _counts(lv.get("intakeTypes")),
+                _counts(lv.get("feederTypes")),
                 " · ".join(lv.get("unmatched") or []) or None,
             ])
         return header, rows

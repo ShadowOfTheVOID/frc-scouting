@@ -311,6 +311,65 @@ function kinds(map, skip) {
   return ` <span class="band">${rows.slice(0, 3).map(([k]) => esc(k.toLowerCase().replace(/_/g, ' '))).join(', ')}</span>`;
 }
 
+/** Lovat's auto climb, split into the three outcomes their export separates.
+ *
+ * One percentage cannot tell "never tried" from "tried and fell off", and
+ * those are different robots to put on an alliance: the first has an auto you
+ * can plan around, the second has one that costs it the endgame it started.
+ */
+const AUTO_CLIMB_WORDS = { SUCCEEDED: 'made', FAILED: 'fell', NOT_ATTEMPTED: 'never tried' };
+function autoClimbSplit(map) {
+  const rows = Object.entries(map || {}).sort((a, b) => b[1] - a[1]);
+  if (!rows.length) return '';
+  return ` <span class="band">${rows.map(([k, n]) =>
+    esc(`${AUTO_CLIMB_WORDS[k] || k.toLowerCase().replace(/_/g, ' ')}${n > 1 ? ` \u00d7${n}` : ''}`))
+    .join(' · ')}</span>`;
+}
+
+/** Lovat's climb rate per level, which one "best climb" hides.
+ *
+ * A robot that made L3 in nine matches of ten and a robot that made it once
+ * both read "Level3" on their own, and an alliance captain is choosing
+ * between them.
+ */
+function climbRateLevels(map) {
+  const rows = Object.entries(map || {})
+    .filter(([lvl, pct]) => lvl !== 'None' && pct)
+    .sort((a, b) => b[0].localeCompare(a[0]));
+  if (!rows.length) return '';
+  const [best, ...rest] = rows;
+  return esc(`${best[0].replace('Level', 'L')} ${Math.round(best[1])}%`)
+    + (rest.length ? ` <span class="band">${rest.map(([lvl, pct]) =>
+        esc(`${lvl.replace('Level', 'L')} ${Math.round(pct)}%`)).join(' · ')}</span>` : '');
+}
+
+/** Where the climb clock actually went, level by level.
+ *
+ * "Starts its L3 at 128s" and "starts its L1 at 128s" are different robots -
+ * the first is quick, the second has given up half the endgame - which is why
+ * the parser keeps these apart. Only shown when there is more than one level
+ * in it; with one, the pooled number beside this already said it.
+ */
+function climbStartLevels(map) {
+  const rows = Object.entries(map || {}).sort((a, b) => b[0].localeCompare(a[0]));
+  if (rows.length < 2) return '';
+  return ` <span class="band">${rows.map(([lvl, secs]) =>
+    esc(`${lvl.replace('Level', 'L')} ${Math.round(secs)}s`)).join(' · ')}</span>`;
+}
+
+/** Contact and camping defence, which their export separates and ours cannot.
+ *
+ * Camping is a robot parked in a scoring zone rather than one pushing; an
+ * alliance answers the two differently, and the total alone hides which.
+ */
+function defenceSplit(lv) {
+  // Only when it actually splits. A robot with no camping time has a contact
+  // figure identical to the total beside it, and saying it twice is noise.
+  if (!lv.campingDefenseSecs) return '';
+  return ` <span class="band">${esc(`contact ${lv.contactDefenseSecs ?? '?'}s`
+    + ` · camping ${lv.campingDefenseSecs}s`)}</span>`;
+}
+
 function lovatCell(t) {
   if (!lovatN(t) || t.lovat.avgFuel == null) return '<span class="band">—</span>';
   return `${Math.round(t.lovat.avgFuel)} <span class="band">n${lovatN(t)}</span>`;
@@ -1367,15 +1426,19 @@ function renderTeamDetail() {
         <div class="kv"><span>fuel / match</span><b>${lv.avgFuel ?? '—'}</b></div>
         <div class="kv"><span>fuel / second</span><b>${lv.fuelPerSec ?? '—'}</b></div>
         <div class="kv"><span>accuracy</span><b>${lv.accuracy == null ? '—' : lv.accuracy}</b></div>
-        <div class="kv"><span>best climb seen</span><b>${esc(lv.bestClimb || '—')}${
-          lv.autoClimbRate == null ? '' : ` · auto ${Math.round(lv.autoClimbRate)}%`}</b></div>
+        <div class="kv"><span>best climb seen</span><b>${climbRateLevels(lv.climbRate)
+          || esc((lv.bestClimb || '—').replace('Level', 'L'))}</b></div>
+        <div class="kv"><span>auto climb</span><b>${lv.autoClimbRate == null ? '—'
+          : Math.round(lv.autoClimbRate) + '%'}${autoClimbSplit(lv.autoClimbResults)}</b></div>
         <div class="kv"><span>driver</span><b>${lv.driver ?? '—'}</b></div>
         <div class="kv"><span>feeding</span><b>${lv.feedSecs == null ? '—' : lv.feedSecs + 's/match'}</b></div>
         <div class="kv"><span>defence</span><b>${lv.defenseSecs == null ? '—' : lv.defenseSecs + 's/match'}${
-          lv.defenseEffectiveness == null ? '' : ` · effect ${lv.defenseEffectiveness}`}</b></div>
+          lv.defenseEffectiveness == null ? '' : ` · effect ${lv.defenseEffectiveness}`}${
+          defenceSplit(lv)}</b></div>
         <div class="kv"><span>leaves to climb at</span><b>${lv.climbStartSecs == null ? '—'
           : `${Math.round(lv.climbStartSecs)}s${lv.autoClimbStartSecs == null ? ''
-             : ` · auto ${Math.round(lv.autoClimbStartSecs)}s`}`}</b></div>
+             : ` · auto ${Math.round(lv.autoClimbStartSecs)}s`}`}${
+          climbStartLevels(lv.climbStart)}</b></div>
         <div class="kv"><span>scores while moving</span><b>${lv.scoresWhileMovingRate == null
           ? '—' : Math.round(lv.scoresWhileMovingRate) + '%'}</b></div>
         <div class="kv"><span>crosses the field</span><b>${lv.traversalRate == null
@@ -1389,6 +1452,7 @@ function renderTeamDetail() {
         <div class="kv"><span>outpost intakes</span><b>${lv.outpostIntakes ?? '—'}</b></div>
         <div class="kv"><span>roles</span><b>${teamRoles(lv.roles)}</b></div>
         <div class="kv"><span>intake</span><b>${teamRoles(lv.intakeTypes)}</b></div>
+        <div class="kv"><span>feeds from</span><b>${teamRoles(lv.feederTypes)}</b></div>
         ${(lv.unmatched || []).length ? `<div class="hint" style="margin-top:6px">${
           lv.unmatched.length} row${lv.unmatched.length > 1 ? 's' : ''} we could not place on our
           schedule (${esc(lv.unmatched.join(', '))}) — counted here, not joined to a match.</div>` : ''}
@@ -1697,12 +1761,29 @@ function renderGraphs() {
   });
 
   // ---- the side pane
-  const withLovat = rows.filter((t) => lovatN(t)).length;
   const withEpa = rows.filter((t) => t.epa.epa != null).length;
+  // An empty LOVAT column has three causes that look identical everywhere else
+  // - no key, a 403 backing us off, and nobody having uploaded that robot -
+  // and this is the pane where somebody is already looking at what each source
+  // has. `lovat` in CONFIG.status is the last poll that came back with data,
+  // not the last one we tried, so an hour here means an hour old.
+  const lc = (ANALYTICS && ANALYTICS.lovatCoverage) || null;
+  const lvAt = CONFIG && CONFIG.status && CONFIG.status.lovat;
+  const lvKey = !!(CONFIG && CONFIG.keys && CONFIG.keys.lovat);
   $('#gSources').innerHTML = `
     <div class="kv"><span>teams our scouts have seen</span><b>${rows.filter((t) => t.matchesScouted).length}</b></div>
-    <div class="kv"><span>teams lovat has</span><b>${withLovat || '—'}</b></div>
-    <div class="kv"><span>teams statbotics has</span><b>${withEpa || '—'}</b></div>`;
+    <div class="kv"><span>teams lovat has</span><b>${lc && lc.teams
+      ? `${lc.teams} <span class="band">of ${lc.ofTeams} here</span>` : '—'}</b></div>
+    <div class="kv"><span>teams statbotics has</span><b>${withEpa || '—'}</b></div>
+    <div class="hint" style="margin-top:8px">${lc && lc.rows
+      ? `${lc.rows} row${lc.rows === 1 ? '' : 's'} from their scouts${lvAt
+          ? `, last fetched ${esc(ago(secsSince(lvAt)))}` : ''}${lc.unplaced
+          ? ` · ${lc.unplaced} playoff row${lc.unplaced === 1 ? '' : 's'} counted but not `
+            + 'placed on our schedule' : ''}.`
+      : lvKey
+        ? 'Lovat has nothing for this event yet — nobody there has uploaded it.'
+        : 'No Lovat key on the hub, so their column is blank everywhere — it is not a zero.'
+      }</div>`;
 
   const defenders = rows.filter((t) => t.observed.defenseSecs)
     .sort((a, b) => b.observed.defenseSecs - a.observed.defenseSecs).slice(0, 5);
