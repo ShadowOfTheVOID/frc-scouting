@@ -158,6 +158,7 @@ def _event_summary(store, event_key, include_scouts=False):
         "eventKey": event_key,
         "teams": out,
         "coverage": _coverage(matches, entries),
+        "lovatCoverage": _lovat_coverage(lovat_rows, teams),
         "scoreReport": score_report(store, event_key, matches, entries),
         **({"scouts": _scout_reliability(entries, by_match, solved)} if include_scouts else {}),
     }
@@ -269,6 +270,30 @@ def _start(iv):
 def _interval_secs(intervals):
     return sum(rules.interval_secs(iv)
                for iv in (intervals or []))
+
+
+def _lovat_coverage(lovat_rows, teams):
+    """How much of this event other teams' scouts have, in one line.
+
+    "The LOVAT column is empty" has three causes that look identical on every
+    screen - no key at all, a 403 backing us off, or nobody having uploaded
+    that particular robot - which is why the README needs a troubleshooting row
+    for it. This is the half a dashboard can answer without asking Lovat
+    anything: how many of the robots here they have something on, and how many
+    of their rows we could not put on our schedule.
+    """
+    recs = [r for r in lovat_rows.values() if isinstance(r, dict)]
+    return {
+        "teams": sum(1 for r in recs if r.get("matches")),
+        "ofTeams": len(teams) or len(recs),
+        "rows": sum(r.get("matches") or 0 for r in recs),
+        # Counted off perMatch rather than off the `unmatched` label set, which
+        # is deduplicated: this is how many ROWS could not be joined. Playoff
+        # labels, almost always - real data about the robot that cannot be hung
+        # on a qualification match of the same number.
+        "unplaced": sum(1 for r in recs for row in (r.get("perMatch") or [])
+                        if not row.get("matchKey")),
+    }
 
 
 def _team_trend(team, matches, entries, solved, lovat, faced_secs):
