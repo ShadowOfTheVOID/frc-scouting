@@ -905,12 +905,17 @@ python3 server/lovat_key.py [--name "6059 scouting hub"] [--list] [--revoke UUID
                             [--show] [--no-save]
 ```
 
-Mints a Lovat API key and writes it into `.env`. Paste the `profile` request out of a signed-in
-dashboard's Network tab, in whatever form the browser offers to copy it — the whole `curl`
-command, the `fetch` version, the `authorization:` line, or the token alone. The credential is
-read off stdin rather than taken as an argument, because it is a password for 72 hours and an
-argument would be in the shell's history and in the process list. `--no-save` prints the key
-instead of writing it; `--show` does both. Nothing here needs `curl`, or a particular shell.
+Mints a Lovat API key and writes it into `.env`. Copy the `profile` request out of a signed-in
+dashboard's Network tab and run it: it reads the clipboard itself (`Get-Clipboard` on Windows,
+`pbpaste` on macOS, `wl-paste`/`xclip`/`xsel` on Linux — all things the system already has), and
+falls back to asking for a paste, which is what `--paste` forces and what a headless machine
+gets. `--from-file PATH` is the third route. Whichever it is, the token is found inside whatever
+form the browser copied: the whole `curl` command, the `fetch` version, the `authorization:`
+line, or the token alone. A pasted credential is read off stdin rather than taken as an
+argument, because it is a password for 72 hours and an argument would be in the shell's history
+and in the process list. `--no-save` prints the key instead of writing it; `--show` does both.
+Nothing here needs `curl`, or a particular shell. `get-lovat-key.bat` and
+`get-lovat-key.command` are double-click wrappers, beside the two for the hub itself.
 
 ```
 python3 server/seed_demo.py [--db data/demo.db] [--event 2026demo] [--teams 31] [--matches 40] [--via-nexus]
