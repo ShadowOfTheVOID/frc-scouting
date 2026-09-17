@@ -10,6 +10,25 @@ const DB_VERSION = 1;
 
 let _db = null;
 
+/**
+ * The clock a record is stamped with, in seconds.
+ *
+ * The hub resolves a collision on this number - last write wins - so it has to
+ * be a clock every phone agrees on. Read off `Date.now()` it was each phone's
+ * own: one running twenty minutes fast won every collision and one running
+ * twenty minutes slow lost every one, silently, because a rejected write looks
+ * exactly like a write that never happened. It bites on a HAND OVER, where two
+ * phones write the same (match, team, scout) - which is the case where the
+ * losing row is somebody's half of a match.
+ *
+ * `net.js` corrects for skew against the hub and pushes itself in here. This
+ * module cannot import it back - net.js imports this one - and the default
+ * keeps db.js usable on its own, and correct on a phone that has never
+ * reached a hub, where the skew would have been zero anyway.
+ */
+let _now = () => Date.now() / 1000;
+export function setClock(fn) { if (typeof fn === 'function') _now = fn; }
+
 export function deviceId() {
   let id = localStorage.getItem('deviceId');
   if (!id) {
@@ -97,7 +116,7 @@ export async function saveScout(rec) {
     ...rec,
     id: scoutId(rec.matchKey, rec.team, rec.scoutId),
     deviceId: deviceId(),
-    updatedAt: Date.now() / 1000,
+    updatedAt: _now(),
   };
   await put('scout', full);
   await enqueue('scout', full);
@@ -109,7 +128,7 @@ export async function savePit(rec) {
     ...rec,
     id: `${rec.eventKey}|${rec.team}`,
     deviceId: deviceId(),
-    updatedAt: Date.now() / 1000,
+    updatedAt: _now(),
   };
   await put('pit', full);
   await enqueue('pit', full);
