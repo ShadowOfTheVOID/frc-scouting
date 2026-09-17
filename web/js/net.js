@@ -28,6 +28,11 @@ export function serverNow() {
   return Date.now() / 1000 + state.skew;
 }
 
+// Stamp records with that clock rather than this phone's own. The hub decides
+// last-write-wins on it, so every phone in the building has to be reading the
+// same one. Pushed down rather than imported up: db.js is below this module.
+db.setClock(serverNow);
+
 const listeners = new Set();
 export function onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); }
 function emit() { for (const fn of listeners) { try { fn(state); } catch (e) { console.error(e); } } }
