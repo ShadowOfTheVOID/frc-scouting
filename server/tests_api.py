@@ -2690,6 +2690,40 @@ def test_nobody_elses_format_can_raise(L):
                 and bd["autoWinner"] == "red",
                 f"({bd['blue']['totalPoints']}, {bd['blue']['rp']}, {bd.get('autoWinner')})")
 
+    # Nexus's live payload, which is the one that rewrites every lineup and
+    # every status. A shape we cannot read used to raise straight out of the
+    # match loop, leaving the payload HALF applied and everything after the
+    # loop - `nexusLive`, which carries the queueing status and the
+    # announcements - never written at all. One bad row cost the eight matches
+    # behind it, and `On field` is what arms the scouting screen on six phones.
+    nek = "2026fuzznx"
+    was = L.store.get("eventKey")
+    L.store.set("eventKey", nek)
+    rows = [{"label": f"Qualification {i}", "status": "Queuing",
+             "redTeams": ["101", "102", "103"], "blueTeams": ["201", "202", "203"]}
+            for i in range(1, 21)]
+    rows[12]["status"] = ["On field"]            # the row Nexus garbled
+    rows[13]["status"] = "On field"              # the row that arms the phones
+    try:
+        L.hub.apply_nexus_event({"eventKey": nek, "dataAsOfTime": L.hub.last_nexus_at + 60000,
+                                 "nowQueuing": "Qualification 14", "matches": rows})
+        raised = None
+    except Exception as e:
+        raised = f"{type(e).__name__}: {e}"
+    got = {m["label"]: m for m in L.store.matches(nek)}
+    ok &= check("nexus: one row in a shape we cannot read costs that row alone",
+                raised is None and len(got) == 19 and "Qualification 13" not in got,
+                f"({raised or len(got)})")
+    ok &= check("nexus: so the match on the field behind it still lands",
+                (got.get("Qualification 14") or {}).get("status") == "On field",
+                f"({(got.get('Qualification 14') or {}).get('status')})")
+    ok &= check("nexus: and everything after the loop is written, not skipped",
+                (L.store.get("nexusLive") or {}).get("nowQueuing") == "Qualification 14",
+                f"({L.store.get('nexusLive')})")
+    ok &= check("nexus: the skipped row is said out loud, not dropped in silence",
+                any("could not read" in e["msg"] for e in L.hub.log))
+    L.store.set("eventKey", was)
+
     r = discover.MDNSResponder("192.168.1.5")
     rng = random.Random(11)
     for _ in range(300):

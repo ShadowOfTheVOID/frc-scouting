@@ -854,24 +854,55 @@ class Hub:
             return self._apply_nexus_event(payload)
 
     def _apply_nexus_event(self, payload):
-        try:
-            as_of = float(payload.get("dataAsOfTime") or 0)
-        except (TypeError, ValueError):
-            as_of = 0.0
-        if as_of and as_of <= self.last_nexus_at:
+        # Somebody else's JSON, over the network, mid-event - and this is the
+        # one that rewrites every lineup and every status. A shape we did not
+        # expect used to raise straight out of the loop below, which is not a
+        # crash (the poller catches it) but is worse than one: the payload is
+        # left HALF applied, and everything after the loop - `nexusLive`, which
+        # carries the queueing status and the announcements, and the freshness
+        # the SERVER tab shows - is never written at all. Measured on a
+        # 20-match payload with one row carrying a list where a status goes:
+        # 12 of 20 matches written, `nexusLive` still empty, and Q14 - the row
+        # marked `On field`, the single thing that arms the scouting screen on
+        # all six phones - in the missing half.
+        if not isinstance(payload, dict):
+            return False
+        as_of = payload.get("dataAsOfTime")
+        as_of = as_of if isinstance(as_of, (int, float)) and not isinstance(as_of, bool) else None
+        # A NaN here compares False against everything, so storing one would
+        # disable the out-of-order guard for the rest of the run.
+        as_of = as_of if as_of is not None and math.isfinite(as_of) else None
+        if as_of is not None and as_of <= self.last_nexus_at:
             return False  # Nexus warns updates can arrive out of order
-        self.last_nexus_at = as_of or time.time()
 
         ek = payload.get("eventKey") or self.event_key()
-        if not ek:
+        if not (ek and isinstance(ek, str)):
             return False
         self.store.put_event(ek)
-        for i, m in enumerate(payload.get("matches") or []):
-            label = m.get("label")
-            if not label:
+        rows = payload.get("matches")
+        skipped = 0
+        for i, m in enumerate(rows if isinstance(rows, list) else []):
+            if not isinstance(m, dict):
+                skipped += 1
                 continue
-            red = [_int(t) for t in (m.get("redTeams") or [])]
-            blue = [_int(t) for t in (m.get("blueTeams") or [])]
+            label = m.get("label")
+            if not (label and isinstance(label, str)):
+                skipped += 1
+                continue
+            # Everything below goes into sqlite or into a regex. A row we
+            # cannot read costs that row and nothing else - the next one is
+            # somebody's lineup, and the one after that may be the match on the
+            # field right now.
+            red_raw, blue_raw = m.get("redTeams"), m.get("blueTeams")
+            status, times = m.get("status"), m.get("times")
+            if not (isinstance(red_raw, (list, tuple, type(None)))
+                    and isinstance(blue_raw, (list, tuple, type(None)))
+                    and isinstance(status, (str, type(None)))
+                    and isinstance(times, (dict, type(None)))):
+                skipped += 1
+                continue
+            red = [_int(t) for t in (red_raw or [])]
+            blue = [_int(t) for t in (blue_raw or [])]
             # A qualification's number IS its place in the schedule. This used
             # to take the index within the payload, which is only the same
             # thing when the payload is the whole schedule - a live feed
@@ -886,12 +917,22 @@ class Hub:
                 ek, resolve_match_key(self.store, ek, label, red, blue),
                 label=label, play_order=int(qual.group(1)) if qual else 10000 + i,
                 red=red, blue=blue,
-                status=m.get("status"), times=m.get("times"))
+                status=status, times=times)
+        if skipped:
+            # Never silently: a schedule quietly one match short is exactly the
+            # kind of thing nobody notices until six scouts watch nothing.
+            self.note("error", f"nexus: {skipped} match row(s) in a shape we could "
+                               f"not read, skipped - the rest of the schedule is applied")
+        # Only once the payload has actually landed. Advancing it before the
+        # loop meant a payload that failed part way through poisoned its own
+        # retry: Nexus re-sends the same `dataAsOfTime`, and that now reads as
+        # an update we have already seen.
+        self.last_nexus_at = as_of if as_of is not None else time.time()
         self.store.set("nexusLive", {
             "nowQueuing": payload.get("nowQueuing"),
             "announcements": payload.get("announcements") or [],
             "partsRequests": payload.get("partsRequests") or [],
-            "dataAsOfTime": as_of,
+            "dataAsOfTime": as_of or 0.0,
         })
         self.status["nexus"] = time.time()
         # Only when something actually moved. `dataAsOfTime` above is Nexus's
