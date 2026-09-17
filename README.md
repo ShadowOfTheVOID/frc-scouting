@@ -242,18 +242,22 @@ the dashboard has already made. Use Chrome or Edge; Safari's inspector has no *C
 
 ##### Step 3 — run the key script
 
-```
-python3 server/lovat_key.py
-```
+**Windows** — double-click **`get-lovat-key.bat`**. **Mac** — double-click
+**`get-lovat-key.command`**. From a terminal it is `python3 server/lovat_key.py`, or `python` on
+Windows. It needs no curl and does not care which shell you are in.
 
-On Windows, `python` rather than `python3`. It needs no curl and does not care which shell you
-are in. It prints the steps above, waits, and you paste what the browser gave you — **the whole
-command is fine**, and so is just the `authorization:` line, or just the token on its own. Press
-Enter twice when the paste is in.
+**Copying in step 2 is all it needs**: it reads the clipboard itself, so there is nothing to
+paste and nothing to type. If it cannot read one — no desktop session, or a Linux box with none
+of `wl-paste`, `xclip` or `xsel` — it prints the steps above and asks for a paste instead, and
+**the whole command is fine**, as is just the `authorization:` line or the token alone. Press
+Enter twice when the paste is in. `--from-file token.txt` is there for anything else, and
+`--paste` skips the clipboard for anyone who would rather it did not look.
 
 That is the whole job. What it is doing for you, and why each part of it used to go wrong:
 
-- **It finds the token inside whatever you pasted.** Chrome on a Mac copies a `\`-continued
+- **It never needs a long paste into a console.** Pasting several kilobytes into Command Prompt
+  is the worst part of doing this on Windows, and reading the clipboard skips it entirely.
+- **It finds the token inside whatever you gave it.** Chrome on a Mac copies a `\`-continued
   command in single quotes, Command Prompt gets `^` and double quotes, and `Copy as fetch` is
   JavaScript. It reads all of them, so "copy the value after `Bearer `, not the whole line" —
   the usual cause of a `401` on a token that works — stops being something to get right.

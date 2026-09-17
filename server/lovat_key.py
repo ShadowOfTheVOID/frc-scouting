@@ -37,7 +37,9 @@ import base64
 import json
 import os
 import re
+import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -63,6 +65,45 @@ JWT = re.compile(r"eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]+")
 #: an easy mistake, they arrive minutes apart - is answered with the reason
 #: rather than with Lovat's 403.
 LVT = re.compile(r"\blvt-[A-Za-z0-9_\-.]+")
+
+
+#: How to read the clipboard using only what the operating system already has.
+#: PowerShell ships with every supported Windows; `pbpaste` is part of macOS;
+#: on Linux it is whichever of the three the desktop happens to have. Nothing
+#: to install, which is the rule for everything in this repository.
+#:
+#: This matters most on Windows, where the alternative is pasting several
+#: kilobytes into a console window that has its own opinions about how long a
+#: line may be. Copying in the browser and running this is shorter anyway.
+CLIPBOARD = {
+    "win32": [["powershell", "-NoProfile", "-Command", "Get-Clipboard"]],
+    "darwin": [["pbpaste"]],
+}
+CLIPBOARD_LINUX = [["wl-paste", "--no-newline"],
+                   ["xclip", "-selection", "clipboard", "-o"],
+                   ["xsel", "--clipboard", "--output"]]
+
+
+def clipboard():
+    """Whatever is on the clipboard, or `""` if we cannot read it.
+
+    Never raises and never explains itself: this is an opportunistic first
+    look, and every way it can fail - no such command, no desktop session, a
+    five-second timeout - ends in the same place, which is asking for a paste
+    instead.
+    """
+    tries = CLIPBOARD.get(sys.platform) or CLIPBOARD_LINUX
+    # Without this a console window flashes up on Windows for each attempt.
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+    for cmd in tries:
+        try:
+            done = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                  timeout=5, creationflags=flags)
+        except Exception:
+            continue
+        if done.returncode == 0 and done.stdout:
+            return done.stdout.decode("utf-8", "replace")
+    return ""
 
 
 def extract_token(text):
@@ -193,7 +234,7 @@ def explain(status, body, what="mint a key"):
     if status == 401:
         return ("Lovat rejected the sign-in token. It lasts 72 hours, so the usual "
                 "cause is a stale copy - open the Network tab again and take a fresh "
-                "one. If you copied the whole `authorization: Bearer eyJ…` line, that "
+                "one. If you copied the whole `authorization: Bearer eyJ...` line, that "
                 "is fine here; this script takes the line apart for you.")
     if status == 403 and "api key" in low:
         return ("That token is an API key, not a browser credential - a key cannot "
@@ -253,32 +294,66 @@ HOW = """
        one below it, which carries no credential.
     6. Right-click it -> Copy -> Copy as cURL.
 
-  Then paste it here. The whole command is fine; so is just the
-  `authorization:` line, or just the token. Press Enter twice when you are done.
+  Then run this again - copying is all it needs, because it reads the
+  clipboard itself. If that did not work, paste here instead: the whole
+  command is fine, and so is just the `authorization:` line or the token
+  alone. Press Enter twice when you are done.
 
   What you are pasting is a password for your Lovat account, good for 72 hours.
   It is not written anywhere by this script and is never printed back.
 """
 
 
-def prompt_for_token(out=None, stream=None):
-    """`(token, None)` or `(None, why not)`, with the instructions on screen."""
-    out = out or sys.stdout
-    out.write(HOW + "\n  paste here: ")
-    out.flush()
-    token, problem = extract_token(read_paste(stream, out))
+def _check(text, out, where):
+    """One candidate, wherever it came from.  `(token, None)` or `(None, why not)`.
+
+    The expiry is read here rather than at each call site, because the answer
+    to a stale token is the same whether it was pasted, read off the clipboard
+    or taken out of a file: go and copy a fresh one.
+    """
+    token, problem = extract_token(text)
     if problem:
         return None, problem
+    out.write("\n  " + where)
     exp = token_expiry(token)
     if exp is not None:
-        import time
         left = exp - time.time()
         if left <= 0:
+            out.write(".\n")
             return None, ("that token %s. Nothing else is wrong with it - they last "
                           "72 hours. Reload the dashboard and copy the `profile` "
                           "request again." % _left(left))
-        out.write("\n  token read, %s.\n" % _left(left))
+        out.write(", %s" % _left(left))
+    out.write(".\n")
     return token, None
+
+
+def prompt_for_token(out=None, stream=None, from_file=None, use_clipboard=True):
+    """The sign-in token, from the easiest place it can be found.
+
+    The clipboard first, because the browser step ends with a copy and asking
+    somebody to paste several kilobytes into a console is the worst part of
+    this on Windows. Silent when there is nothing usable there - an empty
+    clipboard, no desktop session, a machine with none of the three Linux
+    tools - and it falls through to asking, which always works.
+    """
+    out = out or sys.stdout
+    if from_file:
+        try:
+            with open(from_file, "r", encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
+        except OSError as e:
+            return None, "could not read %s (%s)." % (from_file, e.strerror or e)
+        return _check(text, out, "token read from %s" % from_file)
+
+    if use_clipboard:
+        text = clipboard()
+        if text and extract_token(text)[0]:
+            return _check(text, out, "found a sign-in token on your clipboard")
+
+    out.write(HOW + "\n  paste here: ")
+    out.flush()
+    return _check(read_paste(stream, out), out, "token read")
 
 
 def mint(token, name, req=request):
@@ -323,7 +398,8 @@ def save(key, path=None):
 
 
 def _mint_command(args, out):
-    token, problem = prompt_for_token(out)
+    token, problem = prompt_for_token(
+        out, from_file=args.from_file, use_clipboard=not args.paste)
     if problem:
         out.write("\n  %s\n\n" % problem)
         return 1
@@ -351,7 +427,8 @@ def _mint_command(args, out):
 
 
 def _list_command(args, out):
-    token, problem = prompt_for_token(out)
+    token, problem = prompt_for_token(
+        out, from_file=args.from_file, use_clipboard=not args.paste)
     if problem:
         out.write("\n  %s\n\n" % problem)
         return 1
@@ -375,7 +452,8 @@ def _list_command(args, out):
 
 
 def _revoke_command(args, out):
-    token, problem = prompt_for_token(out)
+    token, problem = prompt_for_token(
+        out, from_file=args.from_file, use_clipboard=not args.paste)
     if problem:
         out.write("\n  %s\n\n" % problem)
         return 1
@@ -402,6 +480,11 @@ def main(argv=None, out=None):
                     help="also print the key after saving it (default: saved, not shown)")
     ap.add_argument("--no-save", action="store_true",
                     help="print the key instead of writing it into .env")
+    ap.add_argument("--paste", action="store_true",
+                    help="ask for a paste instead of reading the clipboard")
+    ap.add_argument("--from-file", metavar="PATH",
+                    help="read the browser token out of a file, for when neither the "
+                         "clipboard nor a paste will do")
     args = ap.parse_args(argv)
     try:
         if args.revoke:
