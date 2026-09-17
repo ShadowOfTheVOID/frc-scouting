@@ -2805,15 +2805,43 @@ class Handler(BaseHTTPRequestHandler):
         take the request thread down with an AttributeError - no response at
         all, the phone seeing a dropped connection rather than an answer. A
         malformed Content-Length did the same before the read even started.
+
+        A body we REFUSE is a body still sitting on the socket, and this hub
+        speaks HTTP/1.1, so the next request down that connection is parsed
+        starting from the middle of it. Driven with two requests pipelined on
+        one socket: the POST was answered 200, and the leftover `{"scout":[]}`
+        was then glued onto the next request line and came back
+        `501 Unsupported method ('{"scout":[]}GET')`. The malformed request
+        costs the well-formed one behind it - and on a phone flushing its queue
+        that is /api/sync, which is carrying somebody's morning.
+
+        So refusing a body also ends the connection. It cannot be drained: the
+        two cases are a length we could not read, where we do not know how many
+        bytes to skip, and a length past MAX_BODY, where reading them is the
+        thing the limit exists to prevent. The client pays one reconnect.
         """
         try:
             n = int(self.headers.get("Content-Length") or 0)
         except (TypeError, ValueError):
+            self.close_connection = True
             return {}
-        if n <= 0 or n > self.MAX_BODY:
+        if n == 0:
+            return {}
+        if n < 0 or n > self.MAX_BODY:
+            self.close_connection = True
             return {}
         try:
-            v = json.loads(self.rfile.read(n).decode("utf-8"))
+            raw = self.rfile.read(n)
+        except Exception:
+            self.close_connection = True
+            return {}
+        # Short read: the client hung up mid-body, so whatever is left of it is
+        # not a request either.
+        if len(raw) != n:
+            self.close_connection = True
+            return {}
+        try:
+            v = json.loads(raw.decode("utf-8"))
         except Exception:
             return {}
         return v if isinstance(v, dict) else {}
