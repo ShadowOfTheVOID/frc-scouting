@@ -2661,6 +2661,35 @@ def test_nobody_elses_format_can_raise(L):
     ok &= check("tba: a window count that is not a count is dropped, the real one kept",
                 bd["red"]["windows"] == {"shift2": 30}, f"({bd['red']['windows']})")
 
+    # The rest of the same breakdown, which was kept verbatim while the window
+    # counts beside it were being checked. A tower level is looked up in a dict
+    # and counted in one, `totalPoints` is compared with `>`, and `rp` is
+    # averaged - so a list, an object or a string in any of them is not a wrong
+    # number, it is a TypeError out of every caller of `event_summary`: that is
+    # /api/analytics and both CSV exports dark for the rest of the event.
+    # Fuzzed at 240 shapes across every field, 36 of them raised.
+    bd = sources.parse_breakdown_2026({"score_breakdown": {
+        "red": {"endGameTowerRobot1": ["Level3"], "endGameTowerRobot2": {"l": 2},
+                "endGameTowerRobot3": "Level1", "autoTowerRobot1": 3,
+                "totalPoints": "lots", "rp": [], "totalTowerPoints": float("nan"),
+                "minorFoulCount": "two", "hubScore": {"autoCount": 9}},
+        "blue": {"hubScore": {"autoCount": 4}, "totalPoints": 80, "rp": 2.5,
+                 "endGameTowerRobot1": "None"}}})
+    ok &= check("tba: a tower level that is not a level reads as unknown, and the real one stays",
+                bd["red"]["endgameTower"] == [None, None, "Level1"]
+                and bd["red"]["autoTower"] == [None, None, None],
+                f"({bd['red']['endgameTower']}, {bd['red']['autoTower']})")
+    ok &= check("tba: points, rp and foul counts that are not numbers read as unknown",
+                bd["red"]["totalPoints"] is None and bd["red"]["rp"] is None
+                and bd["red"]["totalTowerPoints"] is None
+                and bd["red"]["fouls"] == {"minor": None, "major": None},
+                f"({bd['red']['totalPoints']}, {bd['red']['rp']}, {bd['red']['fouls']})")
+    ok &= check("tba: and a real answer in the same fields still counts",
+                bd["blue"]["totalPoints"] == 80 and bd["blue"]["rp"] == 2.5
+                and bd["blue"]["endgameTower"][0] == "None"
+                and bd["autoWinner"] == "red",
+                f"({bd['blue']['totalPoints']}, {bd['blue']['rp']}, {bd.get('autoWinner')})")
+
     r = discover.MDNSResponder("192.168.1.5")
     rng = random.Random(11)
     for _ in range(300):
