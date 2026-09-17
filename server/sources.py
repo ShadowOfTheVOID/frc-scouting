@@ -181,6 +181,32 @@ def _count(v):
     return int(v) if math.isfinite(v) else None
 
 
+def _number(v):
+    """A real number out of somebody else's JSON, or None.
+
+    `_count`'s neighbour, without the rounding: points and ranking points are
+    compared, summed and averaged rather than allocated between robots.
+    """
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    return v if math.isfinite(v) else None
+
+
+def _level(v):
+    """A tower level out of somebody else's JSON, or None.
+
+    A string and nothing else. `analytics` counts this in a dict and
+    `rules.tower_points` looks it up in one, so a list or an object here is not
+    a wrong answer - it is `TypeError: unhashable type` out of every caller of
+    `event_summary`, which is /api/analytics and both CSV exports going dark
+    for the rest of the event. The identical shape arriving from a PHONE was
+    closed in the fifth pass; this is the half of it that arrives from TBA, and
+    it is the likelier half: REBUILT's breakdown schema is read from somebody
+    else's server mid-event, and we find out it changed by it changing.
+    """
+    return v if isinstance(v, str) else None
+
+
 def parse_breakdown_2026(match):
     """Pull the per-window fuel counts and per-robot tower levels out of a TBA match.
 
@@ -221,15 +247,20 @@ def parse_breakdown_2026(match):
             # is wrapped - but it does mean that match never solves, silently,
             # for the rest of the event.
             "windows": {k: v for k, v in windows.items() if _count(v) is not None},
-            "autoTower": [a.get(f"autoTowerRobot{i}") for i in (1, 2, 3)],
-            "endgameTower": [a.get(f"endGameTowerRobot{i}") for i in (1, 2, 3)],
-            "totalPoints": a.get("totalPoints"),
-            "totalTowerPoints": a.get("totalTowerPoints"),
-            "rp": a.get("rp"),
+            # Every one of these is read as its type further in - looked up in a
+            # dict, compared with `>`, or averaged - and the window counts above
+            # were the only ones being checked. Fuzzed across the whole
+            # breakdown: 36 of 240 shapes took `event_summary` down outright.
+            "autoTower": [_level(a.get(f"autoTowerRobot{i}")) for i in (1, 2, 3)],
+            "endgameTower": [_level(a.get(f"endGameTowerRobot{i}")) for i in (1, 2, 3)],
+            "totalPoints": _number(a.get("totalPoints")),
+            "totalTowerPoints": _number(a.get("totalTowerPoints")),
+            "rp": _number(a.get("rp")),
             "energized": a.get("energizedAchieved"),
             "supercharged": a.get("superchargedAchieved"),
             "traversal": a.get("traversalAchieved"),
-            "fouls": {"minor": a.get("minorFoulCount"), "major": a.get("majorFoulCount")},
+            "fouls": {"minor": _count(a.get("minorFoulCount")),
+                      "major": _count(a.get("majorFoulCount"))},
         }
     # Which alliance won auto decides who sits out shift 1.
     if "red" in out and "blue" in out:
