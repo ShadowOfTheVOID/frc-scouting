@@ -181,14 +181,11 @@ returns 403.
 token inside whatever you paste, tells you how long it has left, mints the key, writes it into
 `.env` for you, and says in plain words what any refusal means.
 
-```
-python3 server/lovat_key.py
-```
+**Windows** — double-click **`get-lovat-key.bat`**.
+**Mac** — double-click **`get-lovat-key.command`**.
+Or from a terminal: `python3 server/lovat_key.py` (`python` on Windows).
 
-(On Windows, `python` rather than `python3`. This does **not** need curl, and it does not care
-whether you are in PowerShell or Command Prompt.)
-
-It prints where to click, and then waits for a paste:
+It needs no curl and does not care which shell you are in. Do the browser half first:
 
 1. Signed in to the dashboard in Chrome or Edge, **F12** → **Network**, tick **Preserve log**,
    filter `api.lovat.app`.
@@ -196,8 +193,10 @@ It prints where to click, and then waits for a paste:
    seconds after the page, not with it.
 3. Click the **`profile`** row whose Type is **fetch**, not the `preflight` one under it.
    Right-click → **Copy** → **Copy as cURL**.
-4. Paste the whole thing into the script and press Enter twice. The whole command is fine; so is
-   just the `authorization:` line, or just the token.
+4. Run the script. **It reads your clipboard**, so copying is all it needs — nothing to paste
+   and nothing to type. If it cannot read one (no desktop session, or a Linux box without
+   `wl-paste`/`xclip`/`xsel`), it asks for a paste instead: the whole command is fine, and so is
+   just the `authorization:` line or the token alone. `--from-file token.txt` is the third way.
 
 It writes the key straight into `.env`, base64-encoded and `0600`, exactly as the admin panel
 would — so there is no `lvt-…` to copy out of a terminal before it scrolls away, and nothing to

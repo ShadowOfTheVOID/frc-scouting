@@ -13,6 +13,7 @@ leads with a BOM the way the real export does, it spells one climb `L2` and
 another `Level3`, it carries a label we cannot read at all (`Snorkel`), a
 playoff row that must not join onto a qual match, and columns nobody filled.
 """
+import io
 import os
 import shutil
 import sys
@@ -372,6 +373,59 @@ def test_the_key_script_explains_lovat():
     return ok
 
 
+def test_the_key_script_takes_the_token_from_wherever_it_is():
+    """Clipboard, then a paste, then a file - in that order and never stuck.
+
+    The clipboard is first because the browser step ends with a copy, and
+    because the alternative on Windows is pasting several kilobytes into a
+    console window with its own opinion of how long a line may be. It is only
+    ever an opportunistic look: anything unusable there falls through to
+    asking, which works everywhere.
+    """
+    ok = True
+    tok = _jwt(3600 * 47)
+    curl = ('curl "https://api.lovat.app/v1/manager/profile" ^\n'
+            '  -H "authorization: Bearer %s"\n' % tok)
+    was = lovat_key.clipboard
+    d = tempfile.mkdtemp(prefix="lovat-tok-")
+    try:
+        lovat_key.clipboard = lambda: curl
+        got, why = lovat_key.prompt_for_token(io.StringIO())
+        ok &= check("a copied request is picked up off the clipboard, with nothing typed",
+                    got == tok, "(%s)" % (why or got))
+
+        lovat_key.clipboard = lambda: "something else I copied earlier"
+        out = io.StringIO()
+        got, why = lovat_key.prompt_for_token(out, io.StringIO(curl + "\n"))
+        ok &= check("a clipboard with no token in it falls through to asking",
+                    got == tok and "Network" in out.getvalue(), "(%s)" % (why or got))
+
+        lovat_key.clipboard = lambda: ""
+        got, why = lovat_key.prompt_for_token(io.StringIO(), io.StringIO(curl + "\n"))
+        ok &= check("and so does a machine with no way to read one at all",
+                    got == tok, "(%s)" % (why or got))
+
+        lovat_key.clipboard = lambda: curl
+        got, why = lovat_key.prompt_for_token(
+            io.StringIO(), io.StringIO(curl + "\n"), use_clipboard=False)
+        ok &= check("--paste asks anyway, for anyone who would rather it did not look",
+                    got == tok, "(%s)" % (why or got))
+
+        path = os.path.join(d, "token.txt")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(curl)
+        got, why = lovat_key.prompt_for_token(io.StringIO(), from_file=path)
+        ok &= check("--from-file reads one off disk", got == tok, "(%s)" % (why or got))
+        got, why = lovat_key.prompt_for_token(
+            io.StringIO(), from_file=os.path.join(d, "nothing-here.txt"))
+        ok &= check("and a file that is not there says which one",
+                    got is None and "nothing-here.txt" in (why or ""), "(%s)" % why)
+    finally:
+        lovat_key.clipboard = was
+        shutil.rmtree(d, ignore_errors=True)
+    return ok
+
+
 def test_the_key_script_saves_it_the_way_the_panel_would():
     """Into `.env`, base64, 0600, and the hand-typed line taken out with it.
 
@@ -396,9 +450,12 @@ def test_the_key_script_saves_it_the_way_the_panel_would():
                     not any(l.startswith("LOVAT_API_KEY=") for l in lines))
         ok &= check("every other key in the file is left exactly as it was",
                     "NEXUS_API_KEY_B64=bngtc29tZXRoaW5n" in lines, "(%s)" % lines)
-        ok &= check("and the file is not readable by anyone else",
-                    oct(os.stat(path).st_mode & 0o777) == "0o600",
-                    "(%s)" % oct(os.stat(path).st_mode & 0o777))
+        # Windows has no such mode bits, and `envfile` says so where it writes
+        # them. Asserting them there would be asserting something about POSIX.
+        if os.name != "nt":
+            ok &= check("and the file is not readable by anyone else",
+                        oct(os.stat(path).st_mode & 0o777) == "0o600",
+                        "(%s)" % oct(os.stat(path).st_mode & 0o777))
     finally:
         shutil.rmtree(d, ignore_errors=True)
         os.environ.pop(envfile.encoded_name("lovatKey"), None)
@@ -413,6 +470,7 @@ if __name__ == "__main__":
                test_the_key_script_reads_any_paste,
                test_the_key_script_reads_the_tokens_own_clock,
                test_the_key_script_explains_lovat,
+               test_the_key_script_takes_the_token_from_wherever_it_is,
                test_the_key_script_saves_it_the_way_the_panel_would):
         print("\n" + fn.__name__.replace("test_", "").replace("_", " "))
         ok &= fn()
