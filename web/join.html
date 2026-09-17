@@ -10,11 +10,39 @@
   .qr { background: #fff; padding: 16px; border-radius: 14px; text-align: center; }
   .qr img, .qr canvas { width: 100%; max-width: 300px; height: auto; image-rendering: pixelated; }
   .qr .u { color: #111; font: 600 14px ui-monospace, Menlo, monospace; margin-top: 10px; word-break: break-all; }
+  /* One address, one code. A laptop with a second network adapter - an Ethernet
+     cable as well as wifi, or a virtual one left by VirtualBox, Docker or a VPN -
+     used to put two identical squares side by side under a heading that says
+     THIS, and six scouts then guessed. Half of them scan an address their phone
+     cannot reach, and the symptom is a page that will not load: exactly what the
+     firewall advice further down this page is about, which is the wrong thing to
+     go and check. The best guess is big and on its own now. */
+  #qrOne { display: flex; justify-content: center; }
+  #qrOne .qr { padding: 20px; }
+  #qrOne .qr img { max-width: 380px; }
+  #qrAlts { margin-top: 20px; }
+  #qrAlts > summary { cursor: pointer; list-style: none; font: 800 11px Barlow, sans-serif;
+    letter-spacing: .14em; color: var(--t4); }
+  #qrAlts > summary::-webkit-details-marker { display: none; }
+  #qrAlts > summary::before { content: "\25B8  "; color: var(--t5); }
+  #qrAlts[open] > summary::before { content: "\25BE  "; }
+  #qrAlts > summary:hover { color: var(--t1); }
+  /* Small, and the size of their contents. As a stretching grid one fallback
+     became a white panel the width of the screen, which is a louder thing than
+     the code people are meant to be scanning. */
+  #qrAlts .qrs { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 14px; }
+  /* Wide enough that a whole address fits on one line: these are read out to
+     somebody typing it in by hand, which is what this section is for. */
+  #qrAlts .qr { width: 244px; padding: 12px; }
+  #qrAlts .qr img { max-width: 176px; }
+  #qrAlts .qr .u { font-size: 11px; margin-top: 8px; word-break: normal; }
+  #qrAlts > p { max-width: 720px; }
 </style>
 </head>
 <body>
 <div class="shell"><div class="apphead"><div class="bar"></div><div class="in"><div><h1>POINT A PHONE CAMERA AT THIS</h1><div class="sub">SCANNING USES THE PHONE'S OWN CAMERA APP — NOTHING TO INSTALL</div></div></div></div><div class="pane mid">
-  <div class="qrs" id="qrs"><p class="hint">finding addresses…</p></div>
+  <div id="qrOne"><p class="hint">finding addresses…</p></div>
+  <div id="qrAltsHolder"></div>
   <div class="callout">
     <div class="h">THEN TELL THEM: ADD IT TO THE HOME SCREEN, BEFORE THE FIRST MATCH</div>
     <div class="b">On iPhone — <b>Share</b> → <b>Add to Home Screen</b> → <b>Add</b>, then open it
@@ -46,7 +74,8 @@
 <script src="/js/vendor/qrcode.js"></script>
 <script>
 (async () => {
-  const box = document.getElementById('qrs');
+  const one = document.getElementById('qrOne');
+  const holder = document.getElementById('qrAltsHolder');
   let urls = [];
   try {
     const r = await fetch('/api/discover');
@@ -54,16 +83,47 @@
   } catch {}
   if (!urls.length) urls = [location.origin];
 
-  box.innerHTML = '';
-  for (const u of urls) {
+  // These come off this laptop's own interfaces rather than from anything a
+  // phone can send, so this is belt and braces - but it goes into innerHTML,
+  // and this page is on a projector at a competition.
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  const tile = (u, cell) => {
     const target = u + '/scout';
     const qr = qrcode(0, 'M');
     qr.addData(target);
     qr.make();
     const d = document.createElement('div');
     d.className = 'qr';
-    d.innerHTML = qr.createImgTag(6, 8) + `<div class="u">${target}</div>`;
-    box.appendChild(d);
+    d.innerHTML = qr.createImgTag(cell, 8) + '<div class="u">' + esc(target) + '</div>';
+    return d;
+  };
+
+  // The first is the best guess and always has been: `discover.local_ipv4s()`
+  // ranks a hub's own hotspot first and then the address this laptop reaches
+  // the internet through, which is the one the phones are on. The startup
+  // banner has always trusted that order - it prints "<- try this first" - and
+  // this page is the one place that did not.
+  one.innerHTML = '';
+  one.appendChild(tile(urls[0], 10));
+
+  if (urls.length > 1) {
+    const d = document.createElement('details');
+    d.id = 'qrAlts';
+    d.innerHTML =
+      '<summary>THIS LAPTOP HAS ' + urls.length + ' ADDRESSES \u2014 OPEN THIS ONLY IF THE '
+      + 'CODE ABOVE DOES NOT LOAD</summary>'
+      + '<p class="hint">A second address means a second network adapter: an Ethernet cable as '
+      + 'well as wifi, a phone hotspot, or a virtual one left behind by VirtualBox, Docker or a '
+      + 'VPN. Only an address on the same wifi as the phones can work, and the code above is '
+      + 'the one this laptop reaches the network through, so try it first and ignore these '
+      + 'unless it fails.</p>';
+    const row = document.createElement('div');
+    row.className = 'qrs';
+    for (const u of urls.slice(1)) row.appendChild(tile(u, 4));
+    d.appendChild(row);
+    holder.appendChild(d);
   }
 })();
 </script>

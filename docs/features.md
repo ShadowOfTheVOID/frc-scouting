@@ -20,7 +20,7 @@ One Python process serves all of them. Nothing is installed on any phone.
 | `/dashboard` | scout lead, strategy | Seven tabs of everything the hub knows. |
 | `/pit` | pit scouts, on phones | The pit map, and a form per robot. |
 | `/` | the hub laptop only | **The admin panel.** Event key, API keys, passcodes, the off-site mirror. Opens read-only and refuses to open at all from a phone. |
-| `/join` | the hub laptop screen | A QR code per network address. Scouts point a camera at it. |
+| `/join` | the hub laptop screen | **One** QR code — the address this laptop reaches the network through, which is the one the phones are on. Scouts point a camera at it. A laptop with a second adapter (Ethernet as well as wifi, or a virtual one from VirtualBox, Docker or a VPN) keeps the others behind a fold, because two equal codes under a heading that says *this* is half the crew scanning an address their phone cannot reach. |
 | `/picklist/print` | the hub laptop | Paper fallback for alliance selection. |
 
 And one that is not this process at all: the **off-site mirror**, a separate website on a host
