@@ -14,12 +14,17 @@ another `Level3`, it carries a label we cannot read at all (`Snorkel`), a
 playoff row that must not join onto a qual match, and columns nobody filled.
 """
 import os
+import shutil
 import sys
+import tempfile
+import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 
 import lovat  # noqa: E402
+import lovat_key  # noqa: E402
+import envfile  # noqa: E402
 
 EK = "2026test"
 FIXTURE = os.path.join(_HERE, "fixtures", "lovat_report_example.csv")
@@ -252,11 +257,163 @@ def test_survives_a_bad_file():
     return ok
 
 
+def _jwt(seconds_left):
+    """A browser token shaped like Auth0's, with an expiry we choose."""
+    import base64 as _b64, json as _json, time as _time
+    enc = lambda raw: _b64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+    return "%s.%s.signature" % (
+        enc(b'{"alg":"RS256","typ":"JWT"}'),
+        enc(_json.dumps({"exp": int(_time.time() + seconds_left)}).encode()))
+
+
+def test_the_key_script_reads_any_paste():
+    """Whatever the browser put on the clipboard has the token in it somewhere.
+
+    Chrome on a Mac copies a `\\`-continued command in single quotes, Command
+    Prompt gets `^` and double quotes, `Copy as fetch` is JavaScript, and
+    plenty of people copy the one header line. Matching the token itself rather
+    than the shape of the command around it reads all of them.
+    """
+    ok = True
+    tok = _jwt(3600 * 40)
+    for label, blob in (
+            ("a Copy as cURL from Chrome",
+             "curl 'https://api.lovat.app/v1/manager/profile' \\\n"
+             "  -H 'accept: application/json' \\\n"
+             "  -H 'authorization: Bearer %s' \\\n  --compressed" % tok),
+            ("the Command Prompt version, with ^ and double quotes",
+             'curl "https://api.lovat.app/v1/manager/profile" ^\n'
+             '  -H "authorization: Bearer %s"' % tok),
+            ("Copy as fetch",
+             'fetch("https://api.lovat.app/v1/manager/profile", {"headers":'
+             '{"authorization":"Bearer %s"}});' % tok),
+            ("just the header line", "authorization: Bearer %s" % tok),
+            ("just the token", tok),
+            ("a cookie token first, then the real one",
+             "-H 'cookie: s=%s' -H 'authorization: Bearer %s'" % (_jwt(999), tok))):
+        got, why = lovat_key.extract_token(blob)
+        ok &= check("the token comes out of %s" % label, got == tok, "(%s)" % (why or got))
+
+    # The two wrong pastes worth naming, because both look like success.
+    got, why = lovat_key.extract_token("lvt-abcdefghijklmnop")
+    ok &= check("pasting the key where the token goes says so, rather than 403ing later",
+                got is None and "cannot mint another key" in (why or ""), "(%s)" % why)
+    got, why = lovat_key.extract_token(
+        "curl 'https://api.lovat.app/v1/manager/profile' -X OPTIONS")
+    ok &= check("and the preflight row is named as the one with no credential in it",
+                got is None and "preflight" in (why or ""), "(%s)" % why)
+    return ok
+
+
+def test_the_key_script_reads_the_tokens_own_clock():
+    """A stale token and a wrong one are the same 401, so ask before sending.
+
+    Read, never verified - only Lovat can check the signature. The expiry is
+    read for one reason: 72 hours is exactly long enough for a scouting lead to
+    do step one on Friday and the rest on Sunday.
+    """
+    ok = True
+    ok &= check("a fresh token's time is read off it",
+                lovat_key._left(lovat_key.token_expiry(_jwt(3600 * 47)) - time.time())
+                == "46 hours left")
+    ok &= check("hours all the way up, because these last 72 of them",
+                lovat_key._left(3600 * 71) == "71 hours left")
+    ok &= check("a stale one says how stale",
+                lovat_key._left(-7200).startswith("expired 2 hours"),
+                "(%s)" % lovat_key._left(-7200))
+    ok &= check("and a token whose payload is not readable is simply unknown",
+                lovat_key.token_expiry("not.a.token") is None)
+    return ok
+
+
+def test_the_key_script_explains_lovat():
+    """Two different 403s, and only one of them is anything you can act on.
+
+    `/profile` checks that you are signed in; `/apikey` also checks that a
+    person at Lovat has verified your team. Asking both is what lets the second
+    403 be reported as the team check rather than as a bad token - which is the
+    failure that sends people off to mint a second token that fails identically.
+    """
+    ok = True
+    tok = _jwt(3600)
+
+    def stub(profile, apikey=None):
+        def req(method, path, token, params=None, timeout=20):
+            return profile if path == "/profile" else apikey
+        return req
+
+    key, who = lovat_key.mint(tok, "hub", stub(
+        (200, {"teamNumber": 6059, "teamName": "Voltage"}), (200, {"apiKey": "lvt-real"})))
+    ok &= check("a key comes back, with who it belongs to",
+                key == "lvt-real" and "6059" in who, "(%s, %s)" % (key, who))
+
+    key, why = lovat_key.mint(tok, "hub", stub(
+        (200, {"teamNumber": 6059}), (403, {"message": "Your team has not been verified yet"})))
+    ok &= check("signed in but unverified is reported as the team check, not the token",
+                key is None and "verified your team" in why and "Team email" in why,
+                "(%s)" % why)
+
+    key, why = lovat_key.mint(tok, "hub", stub(
+        (403, {"message": "Cannot create API key using an API key"})))
+    ok &= check("and a key used as a token is reported as that instead",
+                key is None and "cannot mint another key" in why, "(%s)" % why)
+
+    key, why = lovat_key.mint(tok, "hub", stub((401, {"message": "Unauthorized"})))
+    ok &= check("a 401 points at the 72-hour expiry, which is what it usually is",
+                key is None and "72 hours" in why, "(%s)" % why)
+    key, why = lovat_key.mint(tok, "hub", stub((401, {"message": "No team"})))
+    ok &= check("except the one that says no team, which is a different errand",
+                key is None and "not on a team" in why, "(%s)" % why)
+
+    key, why = lovat_key.mint(tok, "hub", stub(
+        (200, {"teamNumber": 6059}), (200, {"somethingElse": 1})))
+    ok &= check("an answer with no key in it is said out loud, not read as success",
+                key is None and "no key back" in why, "(%s)" % why)
+    return ok
+
+
+def test_the_key_script_saves_it_the_way_the_panel_would():
+    """Into `.env`, base64, 0600, and the hand-typed line taken out with it.
+
+    One key, one home: a plain `LOVAT_API_KEY=` left behind beside the encoded
+    line is a key that changes depending on which one the reader wins with.
+    """
+    ok = True
+    d = tempfile.mkdtemp(prefix="lovat-key-test-")
+    try:
+        path = os.path.join(d, ".env")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("NEXUS_API_KEY_B64=bngtc29tZXRoaW5n\nLOVAT_API_KEY=lvt-by-hand\n")
+        lovat_key.save("lvt-minted", path)
+        with open(path, encoding="utf-8") as fh:
+            lines = [l.strip() for l in fh if l.strip()]
+        coded = [l for l in lines if l.startswith("LOVAT_API_KEY_B64=")]
+        ok &= check("the key is written base64-encoded",
+                    len(coded) == 1
+                    and envfile.decode(coded[0].split("=", 1)[1]) == "lvt-minted",
+                    "(%s)" % lines)
+        ok &= check("the hand-typed plain line goes with it",
+                    not any(l.startswith("LOVAT_API_KEY=") for l in lines))
+        ok &= check("every other key in the file is left exactly as it was",
+                    "NEXUS_API_KEY_B64=bngtc29tZXRoaW5n" in lines, "(%s)" % lines)
+        ok &= check("and the file is not readable by anyone else",
+                    oct(os.stat(path).st_mode & 0o777) == "0o600",
+                    "(%s)" % oct(os.stat(path).st_mode & 0o777))
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+        os.environ.pop(envfile.encoded_name("lovatKey"), None)
+    return ok
+
+
 if __name__ == "__main__":
     ok = True
     for fn in (test_match_keys, test_parse_fixture, test_per_match_rows,
                test_climb_timing, test_the_bom_is_stripped, test_enum_flags,
-               test_kind_tallies, test_survives_a_bad_file):
+               test_kind_tallies, test_survives_a_bad_file,
+               test_the_key_script_reads_any_paste,
+               test_the_key_script_reads_the_tokens_own_clock,
+               test_the_key_script_explains_lovat,
+               test_the_key_script_saves_it_the_way_the_panel_would):
         print("\n" + fn.__name__.replace("test_", "").replace("_", " "))
         ok &= fn()
     print("\n" + ("ALL PASS" if ok else "FAILURES ABOVE"))
