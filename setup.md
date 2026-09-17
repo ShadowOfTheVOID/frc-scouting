@@ -177,47 +177,71 @@ it.
 minutes** — a stale link is why this silently never completes, and without it every step below
 returns 403.
 
-**Then check you have curl.**
+**Then run the key script.** It is one command, and it does the whole exchange — finds the
+token inside whatever you paste, tells you how long it has left, mints the key, writes it into
+`.env` for you, and says in plain words what any refusal means.
 
-- **Windows** — `curl --version` in **Command Prompt**. Windows 10 and 11 ship it. If it is
-  missing: `winget install cURL.cURL`, or install
-  [Git for Windows](https://git-scm.com/download/win), which includes it.
-- **Mac** — `curl --version` in Terminal. Part of macOS, nothing to install.
+```
+python3 server/lovat_key.py
+```
 
-> **Windows: not PowerShell.** There, `curl` is an alias for `Invoke-WebRequest` and does not
-> understand `-X` or `-H`. Use Command Prompt, or write `curl.exe`.
+(On Windows, `python` rather than `python3`. This does **not** need curl, and it does not care
+whether you are in PowerShell or Command Prompt.)
 
-**Then mint the key.** Chrome or Edge — Safari's inspector cannot *Copy as cURL*.
+It prints where to click, and then waits for a paste:
 
-1. Signed in to the dashboard, **F12** → **Network**, tick **Preserve log**, filter
-   `api.lovat.app`.
+1. Signed in to the dashboard in Chrome or Edge, **F12** → **Network**, tick **Preserve log**,
+   filter `api.lovat.app`.
 2. Reload and **wait for the app to finish drawing** — it is Flutter, so the API calls come
    seconds after the page, not with it.
 3. Click the **`profile`** row whose Type is **fetch**, not the `preflight` one under it.
-   Right-click → **Copy** → **Copy as cURL**. Paste in your terminal, do not run it.
-4. Change two things: path `profile` → `apikey?name=6059%20scouting%20hub`, and add `-X POST`.
-   Keep the token as copied; delete every header except `authorization`.
+   Right-click → **Copy** → **Copy as cURL**.
+4. Paste the whole thing into the script and press Enter twice. The whole command is fine; so is
+   just the `authorization:` line, or just the token.
 
-   ```bash
-   curl -X POST --url "https://api.lovat.app/v1/manager/apikey?name=6059%20scouting%20hub" \
-     -H "authorization: Bearer eyJhbGciOi…"
-   ```
+It writes the key straight into `.env`, base64-encoded and `0600`, exactly as the admin panel
+would — so there is no `lvt-…` to copy out of a terminal before it scrolls away, and nothing to
+paste into the panel afterwards. Restart the hub to pick it up, then **TEST KEYS**.
 
-   On Windows Command Prompt use one line, or `^` to continue instead of `\`.
-5. **Copy the `lvt-…` straight away.** Only its hash is kept, so that response is the only place
-   it ever exists — listing your keys later shows a name and a date, never the key.
-6. Paste into **LOVAT API KEY**.
+The same script also answers `--list` (what keys your team already has) and `--revoke <uuid>`.
 
 > That browser token is a full account password lasting **72 hours**, and nothing invalidates it
-> early. Never paste it into a chat, an issue or a screenshot.
+> early. Never paste it into a chat, an issue or a screenshot. The script reads it off stdin
+> rather than off the command line for that reason — an argument would be in your shell history
+> — and never prints it back.
 >
-> `403 Your team has not been verified yet` is the email step — and `/profile` succeeding does
-> not rule it out, since only `/apikey` checks the team. A `401` after it just worked is usually
-> the whole header line copied instead of the value after `Bearer `. Changing the path but not
-> the method (or the reverse) gives you your profile back or a 404 — the usual reason for "there
-> is no API key in the response". `403 Cannot create API key using an API key` means an `lvt-`
-> key went where the browser token goes. (The other Lovat approval, where a person checks your
-> team, gates the team join code rather than API keys, so it does not block this.)
+> `403 Your team has not been verified yet` is the email step above, not the token, and the
+> script says so: `/profile` succeeding does not rule it out, since only `/apikey` checks the
+> team. (The other Lovat approval, where a person checks your team, gates the team join code
+> rather than API keys, so it does not block this.)
+
+<details>
+<summary><b>By hand instead, with curl</b> — the script does all of this for you</summary>
+
+You need curl: `curl --version` in **Command Prompt** on Windows (10 and 11 ship it; otherwise
+`winget install cURL.cURL`), or in Terminal on a Mac. **Not PowerShell** — there `curl` is an
+alias for `Invoke-WebRequest` and does not understand `-X` or `-H`; use Command Prompt, or write
+`curl.exe`.
+
+Copy the `profile` request as above, then change two things: path `profile` →
+`apikey?name=6059%20scouting%20hub`, and add `-X POST`. Keep the token as copied; delete every
+header except `authorization`.
+
+```bash
+curl -X POST --url "https://api.lovat.app/v1/manager/apikey?name=6059%20scouting%20hub" \
+  -H "authorization: Bearer eyJhbGciOi…"
+```
+
+On Windows Command Prompt use one line, or `^` to continue instead of `\`. **Copy the `lvt-…`
+straight away** — only its hash is kept, so that response is the only place it ever exists — and
+paste it into **LOVAT API KEY**.
+
+A `401` after it just worked is usually the whole header line copied instead of the value after
+`Bearer `. Changing the path but not the method (or the reverse) gives you your profile back or
+a 404 — the usual reason for "there is no API key in the response". `403 Cannot create API key
+using an API key` means an `lvt-` key went where the browser token goes.
+
+</details>
 
 Everything Lovat sends stays in its own column and its own colour. It never changes your own
 numbers — the solver and the picklist do not read it.

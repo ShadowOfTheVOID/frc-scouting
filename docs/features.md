@@ -707,7 +707,7 @@ are the only settings a new competition needs.
 | **Nexus** — required | Live queueing and match status, pit map, pit addresses, inspection, alliance selection. Its `On field` is what arms the match screen on the phones; without it every scout has to tap **THEY'RE ON THE FIELD** by hand, six times an hour. |
 | **Nexus webhook token** | Only if you registered a push webhook. |
 | **FRC Events** | The official result a few minutes before TBA posts it. Does not feed the solver. A username and a token: the token is a UUID (`8-4-4-4-12` hex digits) and does not expire, and the box warns — never refuses — when what was pasted is not that shape. Pasting the joined `username:token`, or the base64 `Basic` blob out of their documentation, fills in both boxes: that blob is only `base64("username:token")`, which is what the API actually sends. |
-| **Lovat API key** | Other teams' scouting for this event. It starts `lvt-`, and there is no screen anywhere in Lovat that makes one — the endpoints are on their server and nothing in their own apps calls them, so it is a `POST /v1/manager/apikey` carrying the `Authorization` header off a signed-in dashboard request (setup.md has the steps). Your team email has to be verified on Lovat first, which is what their 403 means. Polled once every five minutes — Lovat allows one request every three seconds per key, so the hub stays well inside it. The export is scoped to what your Lovat account is allowed to see, so a short list is a setting on their side, not a failure on ours. |
+| **Lovat API key** | Other teams' scouting for this event. It starts `lvt-`, and there is no screen anywhere in Lovat that makes one — the endpoints are on their server and nothing in their own apps calls them, so it is a `POST /v1/manager/apikey` carrying the `Authorization` header off a signed-in dashboard request. `python3 server/lovat_key.py` does that exchange: paste the `profile` request out of the browser's Network tab in any form the browser offers, and it extracts the credential, checks its expiry locally before spending a request, mints the key, writes it into `.env` base64-encoded, and separates Lovat's two 403s — the one that means your team is not verified yet from the one that means you pasted a key where the token goes. `--list` and `--revoke` use the same credential. setup.md has the browser steps and the by-hand curl. Your team email has to be verified on Lovat first, which is what their 403 means. Polled once every five minutes — Lovat allows one request every three seconds per key, so the hub stays well inside it. The export is scoped to what your Lovat account is allowed to see, so a short list is a setting on their side, not a failure on ours. |
 | **AI model** | One list, grouped Claude / Gemini / OpenAI / OpenRouter, each option priced per million tokens. Picking a model picks who it is sent to, so there is no provider field to get wrong. Starts on **Claude Opus 5**, so pasting a key is enough — you never have to touch the list. *none* turns the three panels below off entirely, and stays off even with a key in the box. **other** takes a typed model id for anything released after this list was written; the name decides where it is sent. |
 | **OpenRouter** | The fourth group, and not a model-maker: one key and one bill in front of everybody else's models, including the open-weight ones nobody else sells. Its ids name the maker first — `anthropic/claude-opus-5` — and a slash in the id is the whole routing rule, so the same model bought direct and bought through OpenRouter stay two different choices with two different keys. The list shows three; **other** takes any of the hundreds it carries. Prices are the makers' own; OpenRouter takes its cut when the credit is bought. |
 | **AI key** | The key for whoever the model above goes to. A key from any of the others is refused here rather than saved: that mismatch has no symptom anywhere except every AI answer reading *the model could not be reached*. The pair worth naming is an `sk-or-` key under `claude-opus-5` rather than `anthropic/claude-opus-5` — the two read the same and only one of them takes it. |
@@ -899,6 +899,18 @@ online will ask about whatever event key it holds, and for an event that does no
 demo, a restored snapshot under a placeholder key — it gets a truthful "nothing" back and stores
 that over what was there. The hub notes in its log when polling is off, because a source that is
 silent and a source that is down must not look the same.
+
+```
+python3 server/lovat_key.py [--name "6059 scouting hub"] [--list] [--revoke UUID]
+                            [--show] [--no-save]
+```
+
+Mints a Lovat API key and writes it into `.env`. Paste the `profile` request out of a signed-in
+dashboard's Network tab, in whatever form the browser offers to copy it — the whole `curl`
+command, the `fetch` version, the `authorization:` line, or the token alone. The credential is
+read off stdin rather than taken as an argument, because it is a password for 72 hours and an
+argument would be in the shell's history and in the process list. `--no-save` prints the key
+instead of writing it; `--show` does both. Nothing here needs `curl`, or a particular shell.
 
 ```
 python3 server/seed_demo.py [--db data/demo.db] [--event 2026demo] [--teams 31] [--matches 40] [--via-nexus]
