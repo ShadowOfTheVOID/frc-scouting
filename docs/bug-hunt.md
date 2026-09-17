@@ -16,10 +16,15 @@ Sixth pass: the write endpoints, and fuzzing the four parsers that read
 something this app did not write.
 Seventh pass: `claude/lovat-logic-features-c97xih` - the robot nobody watched,
 and the Lovat columns that were being parsed and thrown away.
+Eighth pass: the same branch, over the two feeds a hub reads from somebody
+else's server mid-event, and the two items the seventh pass left open.
 
 Everything below is committed and pushed. Five test suites pass, and both CI
-gates hold (accuracy 9.4% of TBA over 253 fitted windows; the Nexus/TBA merge
-gate at 40 canonical rows in schedule order).
+gates hold (the Nexus/TBA merge gate at 40 canonical rows in schedule order,
+scouts within 12.6% of TBA over 249 fitted windows; the solver's own accuracy
+gate at 12.5% median per-match error). Those figures moved in the seventh
+pass and are re-measured here rather than carried forward: robots now fall
+short of their best climb sometimes, which is a different demo event.
 
 This is a working log, not a spec. It exists so the hunt can be picked up
 later without re-deriving what was already looked at.
@@ -269,6 +274,21 @@ could draw neither the contact/camping split nor a per-level climb rate and
 would not have noticed either breaking. Robots fall short of their best level
 sometimes now, which is also what makes our own `climbRate` worth a column.
 
+### Eighth pass - the two feeds, and two items off this list
+
+The sixth pass fuzzed four parsers. These are the two it did not finish: the
+halves of TBA's and Nexus's payloads that were still being taken at face
+value. Both are read off somebody else's server while a competition is
+running, and REBUILT is a game that does not exist yet, so the schema moving
+under us is not a hypothetical - it is how we would find out.
+
+| what was wrong |
+| --- |
+| **Most of TBA's breakdown was never checked.** The sixth pass made the window counts be counts, because a string in one reached `int(total)` and that match never solved. The fields beside them were kept exactly as they arrived - and each is read as its type further in: a tower level is looked up in `rules.tower_points`'s dict and counted in `analytics`'s, `totalPoints` is compared with `>` to decide a win, `rp` is averaged. None of those is a wrong number. Each is an exception out of `event_summary`, which is `/api/analytics` and both CSV exports answering nothing at all, so every dashboard falls back to its cached copy and quietly stops updating - the same failure the fifth pass measured coming from a phone, on the likelier side. Fuzzed at 16 shapes across every field: **36 of 240 raised**, none after |
+| **One row Nexus garbled took the rest of the schedule with it.** `_apply_nexus_event` raised straight out of its match loop - which the poller catches, and that is worse than a crash rather than better: the payload is left HALF applied and everything after the loop is never written at all. `nexusLive` carries the queueing status and the announcements the board leads with. Measured on a 20-match payload with one row holding a list where a status goes: **12 of 20 matches written**, `nexusLive` still empty, and Q14 - the row marked `On field`, the one thing that arms the scouting screen on six phones - in the missing half. It was also its own retry's enemy: `last_nexus_at` advanced BEFORE the loop, so Nexus re-sending the same `dataAsOfTime` read as an update already seen, and the half-written schedule stayed that way until Nexus's clock moved on. A row we cannot read now costs that row alone and says so in the log; the clock advances only once the payload has landed. A NaN `dataAsOfTime` is refused too - it compares False against everything, so storing one would disable the out-of-order guard for the rest of the run. **38 of 176 raised**, none after |
+| **`db.saveScout` stamped writes with the phone's own clock** - Still open #6, closed. The hub resolves two writes to one (match, team, scout) by taking the later `updatedAt`, so a phone running twenty minutes fast won every collision and one twenty minutes slow lost every one, silently, because a rejected write looks exactly like a write that never happened. The skew-corrected clock could not be imported (net.js imports db.js), so it is pushed down instead: `db.setClock()`, handed `serverNow` by net.js at module load. Driven in Chromium against the page's own module instances with the phone set 900s behind the hub: before, stamped `-0s` off its own clock; after, `900s` |
+| **A body the hub refused was read as the next request** - Still open #5, closed, and driven rather than reasoned about. `_body` refuses a Content-Length it cannot parse and one past MAX_BODY, and neither can be drained. This hub speaks HTTP/1.1, so what was left on the socket became the front of the next request. Two requests pipelined on one connection: before, `200 OK` for the POST and then `501 Unsupported method ('{"scout":[]}GET')` for the well-formed GET behind it - which on a flushing phone is `/api/sync` carrying somebody's morning. Refusing a body ends the connection now; an ordinary one keeps its keep-alive, which is the half worth asserting |
+
 ## Checked and clean
 
 Do not re-litigate these without new evidence.
@@ -286,6 +306,16 @@ Do not re-litigate these without new evidence.
   same `times` dict (documented at `store.py:153`). Two consumers, both
   correct.
 - **`/api/ai/` cache keys.**
+- **The ETags across a hub restart.** `BOOT` is already mixed into every tag,
+  so a phone that slept through one cannot hold a tag that matches a different
+  state. Eighth pass, by reading.
+- **TBA's rankings and OPR, and Statbotics' EPA.** The other side tables, fuzzed
+  the same way as the breakdown: 168 combinations, nothing raised. Nothing on
+  the server does arithmetic on them - `_int` and `_round` already guard the
+  way in, and everything past that renders.
+- **`/api/import` and `/api/sync` record fields**, 114 requests including a
+  batch mixing a numeric and a string `matchKey`: every one got an answer. The
+  fifth and sixth passes covered these properly.
 - **`lineup.indexOf(t)` in `allianceCard()` (`web/js/desk.js`).** Looks like a
   duplicate-team bug and is not: `teams` is derived elementwise from `lineup`
   by a pure lookup, so a duplicate resolves to the same object either way.
@@ -319,15 +349,12 @@ Nothing is blocked. These are the threads that were live when the hunt paused.
    rather than a fix, so it is written down rather than done. (It was three
    ways until the seventh pass: `_team_summary` had a third reading of its own,
    which went with the entries-driven `exact` block.)
-5. **`Handler._body()` does not drain a body it refuses.** A bogus or oversized
-   `Content-Length` gets a JSON answer, and then the unread bytes are parsed as
-   the next request on a keep-alive connection. Only reachable by a malformed
-   request, and it costs that one connection.
-6. **`db.saveScout` stamps `updatedAt` from `Date.now()`, not `net.serverNow()`.**
-   Last-write-wins on the hub is decided by that number, and the skew-corrected
-   clock exists three modules away. It only bites when two phones write the same
-   (match, team, scout) — a HAND OVER onto a second phone — and `db.js` cannot
-   import `net.js` without a cycle, so it is a small refactor rather than a line.
+5. **An absent tower level and a garbled one both read as `"None"`** — "stayed
+   on the floor" rather than "we do not know". If TBA renamed the field
+   wholesale, every robot at the event would read as a robot that does not
+   climb. Telling the two apart means deciding what an absent key means in a
+   schema for a game that does not exist yet, so the eighth pass wrote it down
+   rather than guessing at it.
 
 ## The harness is gone
 
