@@ -14,6 +14,7 @@ import shutil
 import sys
 import tempfile
 import threading
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -2629,6 +2630,58 @@ def test_the_webhook_is_shut_without_a_token(L):
     return ok
 
 
+def test_a_refused_body_does_not_eat_the_next_request(L):
+    """This hub speaks HTTP/1.1, so a body it will not read is still on the socket.
+
+    `_body` refuses two kinds outright - a Content-Length it cannot parse, and
+    one past MAX_BODY - and neither can be drained: the first does not say how
+    many bytes to skip, and reading the second is the thing the limit exists to
+    prevent. Left there, the next request down that connection is parsed from
+    the middle of the old body. Driven with two requests pipelined on one
+    socket: the POST was answered 200 and the well-formed GET behind it came
+    back `501 Unsupported method ('{"scout":[]}GET')`. On a phone flushing its
+    queue that second request is /api/sync, carrying somebody's morning.
+    """
+    ok = True
+    body = b'{"scout":[]}'
+
+    def pipelined(headers):
+        s = socket.create_connection(("127.0.0.1", L.port), timeout=5)
+        try:
+            s.sendall(b"POST /api/sync HTTP/1.1\r\nHost: h\r\n"
+                      b"Content-Type: application/json\r\n" + headers + b"\r\n" + body)
+            time.sleep(0.3)
+            s.sendall(b"GET /api/config HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n")
+            buf, s_timeout = b"", 3
+            s.settimeout(s_timeout)
+            try:
+                while True:
+                    c = s.recv(65536)
+                    if not c:
+                        break
+                    buf += c
+            except socket.timeout:
+                pass
+            return buf
+        finally:
+            s.close()
+
+    for label, headers in (("a Content-Length past MAX_BODY",
+                            b"Content-Length: 999999999\r\n"),
+                           ("a Content-Length that is not a number",
+                            b"Content-Length: abc\r\n")):
+        buf = pipelined(headers)
+        ok &= check(f"{label}: the refused body is not read as the next request",
+                    b"501" not in buf and buf.count(b"HTTP/1.1 200") == 1,
+                    f"({buf[:120]!r})")
+
+    # And an ordinary request keeps its keep-alive: two answers, one socket.
+    buf = pipelined(b"Content-Length: " + str(len(body)).encode() + b"\r\n")
+    ok &= check("a well-formed body still leaves the connection open behind it",
+                buf.count(b"HTTP/1.1 200") == 2, f"({buf.count(b'HTTP/1.1 200')} answers)")
+    return ok
+
+
 def test_nobody_elses_format_can_raise(L):
     """Three parsers read something this app did not write.
 
@@ -2775,6 +2828,7 @@ def main():
                    test_a_clock_fix_keeps_what_it_can,
                    test_junk_in_every_answer_field,
                    test_the_webhook_is_shut_without_a_token,
+                   test_a_refused_body_does_not_eat_the_next_request,
                    test_nobody_elses_format_can_raise):
             print(f"\n{fn.__name__.replace('test_', '').replace('_', ' ')}")
             passed &= fn(L)
