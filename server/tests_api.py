@@ -2088,6 +2088,30 @@ def test_write_counters(L):
     return ok
 
 
+def test_the_tutorial_needs_nothing(L):
+    """Practice, for the six people who have to do this on a Saturday.
+
+    It is served like every other page so a scout reaches it from the same QR
+    code, and it must stay a page rather than an app: no API call, no event, no
+    scouting written. A scout running it mid-event - which is exactly when
+    somebody realises they do not understand the pad - must not be able to put
+    a row anywhere near the real data.
+    """
+    ok = True
+    code, body = L.req("/tutorial", raw=True)
+    ok &= check("/tutorial serves", code == 200 and "<html" in body.lower(), f"({code})")
+    ok &= check("it teaches against the same rules file the phone and hub read",
+                "/rules2026.json" in body)
+    ok &= check("and it calls nothing that could write",
+                "/api/sync" not in body and "/api/seat" not in body
+                and "/api/matchstart" not in body)
+    before = len(L.store.scout_entries(EK))
+    L.req("/tutorial", raw=True)
+    ok &= check("serving it writes no scouting", len(L.store.scout_entries(EK)) == before)
+    ok &= check("the join page sends scouts to it", "/tutorial" in L.req("/join", raw=True)[1])
+    return ok
+
+
 def test_static_revalidates(L):
     """Code and markup are no-cache, which is only cheap if there is an ETag."""
     ok = True
@@ -2860,7 +2884,8 @@ def main():
                    test_nexus_tba_one_row, test_legacy_keys_migrate,
                    test_concurrent_writes, test_score_report,
                    test_scout_data_is_lead_only,
-                   test_cheap_polling, test_write_counters, test_static_revalidates,
+                   test_cheap_polling, test_write_counters,
+                   test_the_tutorial_needs_nothing, test_static_revalidates,
                    test_nexus_broadcasts_only_on_change, test_scope_lists_are_complete,
                    test_vendor_backoff_is_remembered,
                    test_collection_path_is_intact,
