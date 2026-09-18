@@ -99,6 +99,21 @@ class Store:
         with self._version_lock:
             self._versions[scope] = self._versions.get(scope, 0) + 1
 
+    def change_token(self):
+        """One number over every scope: "has anything at all been written?".
+
+        `version_for` answers that for scopes a reader names, because a reader
+        knows what it reads. A snapshot copies the whole file and so has no list
+        to name. The counters only ever go up, so their sum is monotonic and two
+        equal readings mean nothing was written in between.
+
+        In memory, so a restart makes this look like a change - which is the
+        right answer: the process that took the last snapshot is gone, and one
+        snapshot per start is cheap.
+        """
+        with self._version_lock:
+            return sum(self._versions.values())
+
     def version_for(self, *scopes):
         """A token for the listed scopes.  Changes iff one of them was written.
 
