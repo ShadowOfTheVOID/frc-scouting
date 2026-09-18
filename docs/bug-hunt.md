@@ -18,6 +18,8 @@ Seventh pass: `claude/lovat-logic-features-c97xih` - the robot nobody watched,
 and the Lovat columns that were being parsed and thrown away.
 Eighth pass: the same branch, over the two feeds a hub reads from somebody
 else's server mid-event, and the two items the seventh pass left open.
+Ninth pass: memory and storage, measured rather than guessed, for a hub laptop
+with 8GB of RAM running Windows 11.
 
 Everything below is committed and pushed. Five test suites pass, and both CI
 gates hold (the Nexus/TBA merge gate at 40 canonical rows in schedule order,
@@ -289,6 +291,47 @@ under us is not a hypothetical - it is how we would find out.
 | **`db.saveScout` stamped writes with the phone's own clock** - Still open #6, closed. The hub resolves two writes to one (match, team, scout) by taking the later `updatedAt`, so a phone running twenty minutes fast won every collision and one twenty minutes slow lost every one, silently, because a rejected write looks exactly like a write that never happened. The skew-corrected clock could not be imported (net.js imports db.js), so it is pushed down instead: `db.setClock()`, handed `serverNow` by net.js at module load. Driven in Chromium against the page's own module instances with the phone set 900s behind the hub: before, stamped `-0s` off its own clock; after, `900s` |
 | **A body the hub refused was read as the next request** - Still open #5, closed, and driven rather than reasoned about. `_body` refuses a Content-Length it cannot parse and one past MAX_BODY, and neither can be drained. This hub speaks HTTP/1.1, so what was left on the socket became the front of the next request. Two requests pipelined on one connection: before, `200 OK` for the POST and then `501 Unsupported method ('{"scout":[]}GET')` for the well-formed GET behind it - which on a flushing phone is `/api/sync` carrying somebody's morning. Refusing a body ends the connection now; an ordinary one keeps its keep-alive, which is the half worth asserting |
 
+### Ninth pass - what this app actually costs a small laptop
+
+The question was where to save memory and storage on an 8GB Windows 11 hub
+laptop. The answer is mostly "not here", and the numbers are written down so
+that nobody spends an afternoon optimising a part of this that is already
+small. Measured on a seeded 40-team, 75-match event with 80 pit photos.
+
+| what | measured |
+| --- | --- |
+| hub at rest, after reconcile | **33.6 MB** |
+| hub under a full crew - nine SSE streams, six phones syncing every 0.4s, three dashboards polling analytics every 0.5s | **62-69 MB**, flat over six minutes |
+| dashboard's own JS heap | **1.4 MB** at first paint, **3.0 MB** after 320 tab switches, flat |
+| dashboard DOM nodes | **2928**, flat over the same 320 |
+| `sources.CACHE`, the global HTTP cache | **0.18 MB** in two entries |
+| WAL, under that same load | **4.2 MB**, stable - it checkpoints |
+| the database itself | **16 MB**, of which 13 MB is pit photos |
+| the same with twelve snapshots | **210 MB** on disk |
+
+The polling rates above are roughly twenty times what the app actually does,
+and it still sat at 65 MB. There is no memory problem in this code.
+
+| what was wrong |
+| --- |
+| **An idle hub spent the night copying a database nobody had touched.** `run_snapshots` took one every ten minutes regardless. A snapshot is the whole file, taken through sqlite's backup API, and a hub carrying a season is most of a hundred megabytes - pit photos live in the database and no event is ever removed. Left running overnight between the two days of a competition that is about eighty full copies of an unchanged database, each pruning the one before it. Measured over twenty-four idle intervals: twenty-four copies before, one after; a hub taking scouting still gets one per interval. `Store.change_token()` answers it off the counters the ETags already keep |
+
+Three hypotheses that did not survive being tested, which is the point of
+testing them:
+
+- **The per-thread sqlite page cache.** `Store.conn()` opens a connection per
+  thread and each carries sqlite's ~2 MB default. Capping it to 256 KiB changed
+  the measured footprint by nothing at all: 47.5 MB kept after three load waves
+  against 46.8 MB before. Not the cause, and not worth the pragma.
+- **A leak under many connections.** RSS does ratchet with the *number of
+  threads* rather than the number of requests - 762 requests cost 13.6 MB over
+  four threads and 44 MB over 762 - which is the allocator keeping per-thread
+  arenas, not this code retaining anything. It also needs a load that does not
+  happen: the scenario I built it from was a phone's 254-host subnet sweep, and
+  a sweep sends one probe to each of 254 DIFFERENT hosts, so the hub receives
+  **one** of them, not 254. A real crew is 12-17 threads.
+- **The global HTTP cache never evicting.** True, and it holds 0.18 MB.
+
 ## Checked and clean
 
 Do not re-litigate these without new evidence.
@@ -306,6 +349,10 @@ Do not re-litigate these without new evidence.
   same `times` dict (documented at `store.py:153`). Two consumers, both
   correct.
 - **`/api/ai/` cache keys.**
+- **Memory, across the hub, the dashboard and the phone.** Ninth pass, with
+  numbers above. The phone's IndexedDB is never pruned and does grow across a
+  season, but a scouting record is a couple of kilobytes and a season is a few
+  hundred of them.
 - **The ETags across a hub restart.** `BOOT` is already mixed into every tag,
   so a phone that slept through one cannot hold a tag that matches a different
   state. Eighth pass, by reading.
