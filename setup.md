@@ -70,6 +70,10 @@ same list answers "what now?" tonight and "did that work?" on the Saturday morni
 | 4 | **Press SAVE & REFRESH** | On a hub that has never had a passing key test, saving also tests: it asks each vendor whether the key really works and prints what each one said. **TEST KEYS** does it again any time. |
 | 5 | **Open it on a phone** | Same wifi, `http://<laptop-ip>:6059/scout` — or open `http://localhost:6059/join` here and let scouts scan the QR code. |
 
+**Train the scouts before the event, not at it.** With the hub running, send them to
+`/tutorial` on their own phones — it is linked from the join screen they scan anyway. Four
+minutes, ends in a practice match that scores how well they held the pad, and writes nothing.
+
 Everything else — The Blue Alliance, FRC Events, Lovat, the AI model, the strategy passcode —
 is behind **THE OPTIONAL ONES** on the same page, folded away until you want it. A first event
 is fine without any of it. [Where each key comes from](#where-each-key-comes-from) is below.
