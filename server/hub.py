@@ -2947,6 +2947,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._file("index.html")
         if p == "/scout":
             return self._file("scout.html")
+        # Practice, for the six people who have to do this on a Saturday. Served
+        # like every other page so a scout reaches it from the same QR code and
+        # on the same wifi - and it talks to no API, so it also works on a phone
+        # that has wandered out of range mid-lesson.
+        if p == "/tutorial":
+            return self._file("tutorial.html")
         if p == "/dashboard":
             return self._file("dashboard.html")
         if p == "/join":

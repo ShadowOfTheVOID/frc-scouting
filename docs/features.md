@@ -17,6 +17,7 @@ One Python process serves all of them. Nothing is installed on any phone.
 | Address | Who opens it | What it is |
 |---|---|---|
 | `/scout` | six scouts, on phones | The match HUD. The only screen a scout ever needs. |
+| `/tutorial` | a new scout, on their own phone | **Practice.** Six steps: what the job is, taking a seat, the two thumbs, an eighty-second practice match to hold along with, a scorecard telling them how close they were and which habit to fix, and what the screens that look broken actually mean. It writes nothing and calls no API, so it is safe to run mid-event. |
 | `/dashboard` | scout lead, strategy | Seven tabs of everything the hub knows. |
 | `/pit` | pit scouts, on phones | The pit map, and a form per robot. |
 | `/` | the hub laptop only | **The admin panel.** Event key, API keys, passcodes, the off-site mirror. Opens read-only and refuses to open at all from a phone. |

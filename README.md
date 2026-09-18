@@ -34,6 +34,15 @@ Python is the only thing this needs. It is free.
 Download this repository as a ZIP (green **Code** button → **Download ZIP**) and unzip it
 somewhere you will find again — the Desktop is fine.
 
+> **Before your first event, send your scouts to the practice page.** Once the hub is running,
+> `http://<the address>/tutorial` — it is linked from the join screen they already scan. Six
+> steps and about four minutes: what the job actually is, taking a seat, the two thumbs, and an
+> eighty-second practice match where a lamp stands in for the robot and they hold the pad along
+> with it. At the end it scores them against what the robot really did — how much of the shooting
+> they covered, how long they held when it was not shooting, whether they set the rate — and
+> names the one habit to fix. It records nothing and touches no real data, so it is safe to run
+> during a competition, which is when somebody usually admits they are not sure.
+
 ### 3. Start it once, to check it works
 
 - **Windows** — open the unzipped folder and double-click **`start-server.bat`**
