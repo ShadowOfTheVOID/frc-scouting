@@ -154,6 +154,7 @@ class Hub:
                        "frcEvents": None, "lovat": None, "mirror": None,
                        "lastUpdate": None}
         self.last_snapshot = None
+        self._snapshot_token = None
         self.started_at = time.time()
         self._recal_lock = threading.Lock()
         self._recal_pending = False
@@ -270,8 +271,13 @@ class Hub:
                     if mst.get("photosPending") else ""))
                 if mrr.ok else "not configured",
                 bool(mrr.ok) and bool(mst.get("error"))),
+            # "last 8h ago" on a hub that has been idle overnight is not a
+            # fault, and must not read as one: it is skipped while nothing is
+            # written, so an old timestamp beside a quiet event is correct.
             svc("snapshots", True,
-                f"last {age(self.last_snapshot)}, keeping {SNAPSHOT_KEEP}"
+                (f"last {age(self.last_snapshot)}, keeping {SNAPSHOT_KEEP}"
+                 + (" (up to date - nothing written since)"
+                    if self.store.change_token() == self._snapshot_token else ""))
                 if self.last_snapshot else f"every {SNAPSHOT_SECONDS // 60}m, none yet"),
         ]
         return {
@@ -1853,13 +1859,31 @@ class Hub:
         day, and /api/export only helps if somebody remembered to click it. A
         snapshot is a whole working database: to recover, stop the hub, copy one
         out of data/snapshots/ over data/scouting.db, and start it again.
+
+        Only when something has been written since the last one. A snapshot is a
+        copy of the ENTIRE file - which on a hub holding a season's events is
+        most of a hundred megabytes, because pit photos live in there and no
+        event is ever removed - and this loop used to take one every ten minutes
+        regardless. A hub left running overnight between the two days of a
+        competition therefore wrote about eighty identical copies of a database
+        nobody had touched, each one pruning the copy before it. Nothing is lost
+        by skipping: if nothing was written, the newest snapshot already IS the
+        current database, which is the whole promise above.
         """
+        last = None
         while not self.stop_flag.is_set():
             self.stop_flag.wait(SNAPSHOT_SECONDS)
             if self.stop_flag.is_set():
                 return
+            token = self.store.change_token()
+            if token == last:
+                continue
             try:
                 dest = self.store.snapshot(keep=SNAPSHOT_KEEP)
+                # After the copy, not before: a write that lands mid-snapshot
+                # then shows as a change next time round, which is the safe way
+                # round to be wrong.
+                last = self._snapshot_token = token
                 self.last_snapshot = time.time()
                 self.note("info", f"snapshot written to {os.path.basename(dest)}")
             except Exception as e:
