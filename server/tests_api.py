@@ -511,6 +511,53 @@ def test_snapshot_and_restore(L):
         back.snapshot(keep=2)
         kept = sorted(f for f in os.listdir(out) if f.endswith(".db"))
         ok &= check("keeping the last N prunes the oldest", len(kept) == 2, f"({kept})")
+
+        # A snapshot is a copy of the WHOLE file, and on a hub holding a
+        # season's events that is most of a hundred megabytes - pit photos live
+        # in there and no event is ever removed. Taking one every ten minutes
+        # regardless meant a hub left running overnight between the two days of
+        # a competition wrote about eighty identical copies of a database
+        # nobody had touched. Nothing is lost by skipping: with no write since,
+        # the newest snapshot already IS the current database.
+        tok = back.change_token()
+        back.teams(EK), back.matches(EK), back.scout_entries(EK)
+        ok &= check("reading the database is not a change",
+                    back.change_token() == tok, f"({tok} -> {back.change_token()})")
+        back.set("anything", 1)
+        ok &= check("and writing to it is", back.change_token() != tok)
+
+        import hub as hub_mod
+        was_secs, was_keep = hub_mod.SNAPSHOT_SECONDS, hub_mod.SNAPSHOT_KEEP
+        hub_mod.SNAPSHOT_SECONDS, hub_mod.SNAPSHOT_KEEP = 0.2, 50
+        try:
+            for f in os.listdir(out):
+                os.remove(os.path.join(out, f))
+            h = hub_mod.Hub(back)
+            th = threading.Thread(target=h.run_snapshots, daemon=True)
+            th.start()
+            time.sleep(1.6)                       # eight intervals, nothing written
+            h.stop_flag.set()
+            th.join(timeout=5)
+            idle = len([f for f in os.listdir(out) if f.endswith(".db")])
+            ok &= check("an idle hub takes one snapshot, not one per interval",
+                        idle == 1, f"({idle} over eight intervals)")
+
+            h2 = hub_mod.Hub(back)
+            th = threading.Thread(target=h2.run_snapshots, daemon=True)
+            th.start()
+            # Spread over whole seconds, because the filename stamp is
+            # per-second (see the retention note above) - a faster loop than
+            # this would overwrite one file rather than accumulate.
+            for i in range(6):
+                back.set("heartbeat", i)
+                time.sleep(0.6)
+            h2.stop_flag.set()
+            th.join(timeout=5)
+            busy = len([f for f in os.listdir(out) if f.endswith(".db")])
+            ok &= check("and a hub taking scouting keeps getting them",
+                        busy >= idle + 2, f"({busy - idle} more while writing)")
+        finally:
+            hub_mod.SNAPSHOT_SECONDS, hub_mod.SNAPSHOT_KEEP = was_secs, was_keep
     finally:
         shutil.rmtree(room, ignore_errors=True)
     return ok

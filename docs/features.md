@@ -649,7 +649,7 @@ the moment the hub is reachable; nobody has to do anything.
 If a phone cannot find the hub at its last known address, it re-scans the local network. A
 scout who is truly stuck can use **SAVE A BACKUP FILE** and hand the file over later.
 
-On the hub: the whole database is snapshotted every ten minutes, keeping the last twelve.
+On the hub: the whole database is snapshotted every ten minutes in which something was written, keeping the last twelve. The skip matters on a hub that holds a season - pit photos live in the database and no event is ever removed, so a snapshot is most of a hundred megabytes, and one left running overnight between the two days of a competition used to write about eighty identical copies of a database nobody had touched. Nothing is lost by skipping: with no write since, the newest snapshot already is the current database. The SERVER tab says so rather than letting an old timestamp read as a fault.
 Recovering is copying one file over another. **JSON export** round-trips through **import**
 under the same last-write-wins rule, so re-importing the same file is a no-op and merging two
 laptops is safe.
