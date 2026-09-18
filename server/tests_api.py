@@ -14,6 +14,7 @@ import shutil
 import sys
 import tempfile
 import threading
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -510,6 +511,53 @@ def test_snapshot_and_restore(L):
         back.snapshot(keep=2)
         kept = sorted(f for f in os.listdir(out) if f.endswith(".db"))
         ok &= check("keeping the last N prunes the oldest", len(kept) == 2, f"({kept})")
+
+        # A snapshot is a copy of the WHOLE file, and on a hub holding a
+        # season's events that is most of a hundred megabytes - pit photos live
+        # in there and no event is ever removed. Taking one every ten minutes
+        # regardless meant a hub left running overnight between the two days of
+        # a competition wrote about eighty identical copies of a database
+        # nobody had touched. Nothing is lost by skipping: with no write since,
+        # the newest snapshot already IS the current database.
+        tok = back.change_token()
+        back.teams(EK), back.matches(EK), back.scout_entries(EK)
+        ok &= check("reading the database is not a change",
+                    back.change_token() == tok, f"({tok} -> {back.change_token()})")
+        back.set("anything", 1)
+        ok &= check("and writing to it is", back.change_token() != tok)
+
+        import hub as hub_mod
+        was_secs, was_keep = hub_mod.SNAPSHOT_SECONDS, hub_mod.SNAPSHOT_KEEP
+        hub_mod.SNAPSHOT_SECONDS, hub_mod.SNAPSHOT_KEEP = 0.2, 50
+        try:
+            for f in os.listdir(out):
+                os.remove(os.path.join(out, f))
+            h = hub_mod.Hub(back)
+            th = threading.Thread(target=h.run_snapshots, daemon=True)
+            th.start()
+            time.sleep(1.6)                       # eight intervals, nothing written
+            h.stop_flag.set()
+            th.join(timeout=5)
+            idle = len([f for f in os.listdir(out) if f.endswith(".db")])
+            ok &= check("an idle hub takes one snapshot, not one per interval",
+                        idle == 1, f"({idle} over eight intervals)")
+
+            h2 = hub_mod.Hub(back)
+            th = threading.Thread(target=h2.run_snapshots, daemon=True)
+            th.start()
+            # Spread over whole seconds, because the filename stamp is
+            # per-second (see the retention note above) - a faster loop than
+            # this would overwrite one file rather than accumulate.
+            for i in range(6):
+                back.set("heartbeat", i)
+                time.sleep(0.6)
+            h2.stop_flag.set()
+            th.join(timeout=5)
+            busy = len([f for f in os.listdir(out) if f.endswith(".db")])
+            ok &= check("and a hub taking scouting keeps getting them",
+                        busy >= idle + 2, f"({busy - idle} more while writing)")
+        finally:
+            hub_mod.SNAPSHOT_SECONDS, hub_mod.SNAPSHOT_KEEP = was_secs, was_keep
     finally:
         shutil.rmtree(room, ignore_errors=True)
     return ok
@@ -2040,6 +2088,30 @@ def test_write_counters(L):
     return ok
 
 
+def test_the_tutorial_needs_nothing(L):
+    """Practice, for the six people who have to do this on a Saturday.
+
+    It is served like every other page so a scout reaches it from the same QR
+    code, and it must stay a page rather than an app: no API call, no event, no
+    scouting written. A scout running it mid-event - which is exactly when
+    somebody realises they do not understand the pad - must not be able to put
+    a row anywhere near the real data.
+    """
+    ok = True
+    code, body = L.req("/tutorial", raw=True)
+    ok &= check("/tutorial serves", code == 200 and "<html" in body.lower(), f"({code})")
+    ok &= check("it teaches against the same rules file the phone and hub read",
+                "/rules2026.json" in body)
+    ok &= check("and it calls nothing that could write",
+                "/api/sync" not in body and "/api/seat" not in body
+                and "/api/matchstart" not in body)
+    before = len(L.store.scout_entries(EK))
+    L.req("/tutorial", raw=True)
+    ok &= check("serving it writes no scouting", len(L.store.scout_entries(EK)) == before)
+    ok &= check("the join page sends scouts to it", "/tutorial" in L.req("/join", raw=True)[1])
+    return ok
+
+
 def test_static_revalidates(L):
     """Code and markup are no-cache, which is only cheap if there is an ETag."""
     ok = True
@@ -2629,6 +2701,58 @@ def test_the_webhook_is_shut_without_a_token(L):
     return ok
 
 
+def test_a_refused_body_does_not_eat_the_next_request(L):
+    """This hub speaks HTTP/1.1, so a body it will not read is still on the socket.
+
+    `_body` refuses two kinds outright - a Content-Length it cannot parse, and
+    one past MAX_BODY - and neither can be drained: the first does not say how
+    many bytes to skip, and reading the second is the thing the limit exists to
+    prevent. Left there, the next request down that connection is parsed from
+    the middle of the old body. Driven with two requests pipelined on one
+    socket: the POST was answered 200 and the well-formed GET behind it came
+    back `501 Unsupported method ('{"scout":[]}GET')`. On a phone flushing its
+    queue that second request is /api/sync, carrying somebody's morning.
+    """
+    ok = True
+    body = b'{"scout":[]}'
+
+    def pipelined(headers):
+        s = socket.create_connection(("127.0.0.1", L.port), timeout=5)
+        try:
+            s.sendall(b"POST /api/sync HTTP/1.1\r\nHost: h\r\n"
+                      b"Content-Type: application/json\r\n" + headers + b"\r\n" + body)
+            time.sleep(0.3)
+            s.sendall(b"GET /api/config HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n")
+            buf, s_timeout = b"", 3
+            s.settimeout(s_timeout)
+            try:
+                while True:
+                    c = s.recv(65536)
+                    if not c:
+                        break
+                    buf += c
+            except socket.timeout:
+                pass
+            return buf
+        finally:
+            s.close()
+
+    for label, headers in (("a Content-Length past MAX_BODY",
+                            b"Content-Length: 999999999\r\n"),
+                           ("a Content-Length that is not a number",
+                            b"Content-Length: abc\r\n")):
+        buf = pipelined(headers)
+        ok &= check(f"{label}: the refused body is not read as the next request",
+                    b"501" not in buf and buf.count(b"HTTP/1.1 200") == 1,
+                    f"({buf[:120]!r})")
+
+    # And an ordinary request keeps its keep-alive: two answers, one socket.
+    buf = pipelined(b"Content-Length: " + str(len(body)).encode() + b"\r\n")
+    ok &= check("a well-formed body still leaves the connection open behind it",
+                buf.count(b"HTTP/1.1 200") == 2, f"({buf.count(b'HTTP/1.1 200')} answers)")
+    return ok
+
+
 def test_nobody_elses_format_can_raise(L):
     """Three parsers read something this app did not write.
 
@@ -2660,6 +2784,69 @@ def test_nobody_elses_format_can_raise(L):
         "blue": {"hubScore": {"autoCount": 10}}}})
     ok &= check("tba: a window count that is not a count is dropped, the real one kept",
                 bd["red"]["windows"] == {"shift2": 30}, f"({bd['red']['windows']})")
+
+    # The rest of the same breakdown, which was kept verbatim while the window
+    # counts beside it were being checked. A tower level is looked up in a dict
+    # and counted in one, `totalPoints` is compared with `>`, and `rp` is
+    # averaged - so a list, an object or a string in any of them is not a wrong
+    # number, it is a TypeError out of every caller of `event_summary`: that is
+    # /api/analytics and both CSV exports dark for the rest of the event.
+    # Fuzzed at 240 shapes across every field, 36 of them raised.
+    bd = sources.parse_breakdown_2026({"score_breakdown": {
+        "red": {"endGameTowerRobot1": ["Level3"], "endGameTowerRobot2": {"l": 2},
+                "endGameTowerRobot3": "Level1", "autoTowerRobot1": 3,
+                "totalPoints": "lots", "rp": [], "totalTowerPoints": float("nan"),
+                "minorFoulCount": "two", "hubScore": {"autoCount": 9}},
+        "blue": {"hubScore": {"autoCount": 4}, "totalPoints": 80, "rp": 2.5,
+                 "endGameTowerRobot1": "None"}}})
+    ok &= check("tba: a tower level that is not a level reads as unknown, and the real one stays",
+                bd["red"]["endgameTower"] == [None, None, "Level1"]
+                and bd["red"]["autoTower"] == [None, None, None],
+                f"({bd['red']['endgameTower']}, {bd['red']['autoTower']})")
+    ok &= check("tba: points, rp and foul counts that are not numbers read as unknown",
+                bd["red"]["totalPoints"] is None and bd["red"]["rp"] is None
+                and bd["red"]["totalTowerPoints"] is None
+                and bd["red"]["fouls"] == {"minor": None, "major": None},
+                f"({bd['red']['totalPoints']}, {bd['red']['rp']}, {bd['red']['fouls']})")
+    ok &= check("tba: and a real answer in the same fields still counts",
+                bd["blue"]["totalPoints"] == 80 and bd["blue"]["rp"] == 2.5
+                and bd["blue"]["endgameTower"][0] == "None"
+                and bd["autoWinner"] == "red",
+                f"({bd['blue']['totalPoints']}, {bd['blue']['rp']}, {bd.get('autoWinner')})")
+
+    # Nexus's live payload, which is the one that rewrites every lineup and
+    # every status. A shape we cannot read used to raise straight out of the
+    # match loop, leaving the payload HALF applied and everything after the
+    # loop - `nexusLive`, which carries the queueing status and the
+    # announcements - never written at all. One bad row cost the eight matches
+    # behind it, and `On field` is what arms the scouting screen on six phones.
+    nek = "2026fuzznx"
+    was = L.store.get("eventKey")
+    L.store.set("eventKey", nek)
+    rows = [{"label": f"Qualification {i}", "status": "Queuing",
+             "redTeams": ["101", "102", "103"], "blueTeams": ["201", "202", "203"]}
+            for i in range(1, 21)]
+    rows[12]["status"] = ["On field"]            # the row Nexus garbled
+    rows[13]["status"] = "On field"              # the row that arms the phones
+    try:
+        L.hub.apply_nexus_event({"eventKey": nek, "dataAsOfTime": L.hub.last_nexus_at + 60000,
+                                 "nowQueuing": "Qualification 14", "matches": rows})
+        raised = None
+    except Exception as e:
+        raised = f"{type(e).__name__}: {e}"
+    got = {m["label"]: m for m in L.store.matches(nek)}
+    ok &= check("nexus: one row in a shape we cannot read costs that row alone",
+                raised is None and len(got) == 19 and "Qualification 13" not in got,
+                f"({raised or len(got)})")
+    ok &= check("nexus: so the match on the field behind it still lands",
+                (got.get("Qualification 14") or {}).get("status") == "On field",
+                f"({(got.get('Qualification 14') or {}).get('status')})")
+    ok &= check("nexus: and everything after the loop is written, not skipped",
+                (L.store.get("nexusLive") or {}).get("nowQueuing") == "Qualification 14",
+                f"({L.store.get('nexusLive')})")
+    ok &= check("nexus: the skipped row is said out loud, not dropped in silence",
+                any("could not read" in e["msg"] for e in L.hub.log))
+    L.store.set("eventKey", was)
 
     r = discover.MDNSResponder("192.168.1.5")
     rng = random.Random(11)
@@ -2697,7 +2884,8 @@ def main():
                    test_nexus_tba_one_row, test_legacy_keys_migrate,
                    test_concurrent_writes, test_score_report,
                    test_scout_data_is_lead_only,
-                   test_cheap_polling, test_write_counters, test_static_revalidates,
+                   test_cheap_polling, test_write_counters,
+                   test_the_tutorial_needs_nothing, test_static_revalidates,
                    test_nexus_broadcasts_only_on_change, test_scope_lists_are_complete,
                    test_vendor_backoff_is_remembered,
                    test_collection_path_is_intact,
@@ -2712,6 +2900,7 @@ def main():
                    test_a_clock_fix_keeps_what_it_can,
                    test_junk_in_every_answer_field,
                    test_the_webhook_is_shut_without_a_token,
+                   test_a_refused_body_does_not_eat_the_next_request,
                    test_nobody_elses_format_can_raise):
             print(f"\n{fn.__name__.replace('test_', '').replace('_', ' ')}")
             passed &= fn(L)

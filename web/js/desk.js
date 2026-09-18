@@ -32,9 +32,17 @@ const RANK_COLS = '56px minmax(120px,1fr) 84px 74px 52px 44px 86px';
 const ALL_COLS  = '62px 56px minmax(160px,1fr) 84px 74px 62px 60px 62px 62px 56px 52px 70px 64px';
 
 // ------------------------------------------------------------------ bits
+/** TBA's climb for one robot, or a dash for one no result has landed for.
+ *
+ * NONE and an empty cell are opposite facts. NONE is the field saying this
+ * robot stayed on the floor in every match it has played; an empty cell is
+ * nobody having told us yet. Rendering the second as the first put a flat
+ * NONE beside every opponent in a match not yet played.
+ */
 function climbCell(t) {
   const best = t.exact.bestClimb;
-  const rate = Math.round(t.exact.climbRate[best] || 0);
+  if (!best) return '<span class="band">—</span>';
+  const rate = Math.round((t.exact.climbRate || {})[best] || 0);
   const cls = { Level3: 'l3', Level2: 'l2', Level1: 'l1' }[best] || 'none';
   return best === 'None'
     ? '<span class="cl none">NONE</span>'
@@ -265,7 +273,7 @@ function sortVal(t, k) {
     case 'team': return t.team; case 'name': return 0;
     case 'fuel': return t.estimated.avgFuel;
     case 'climb': return CLIMB_RANK[t.exact.bestClimb] || 0;
-    case 'tower': return t.exact.avgTowerPoints;
+    case 'tower': return t.exact.avgTowerPoints ?? -1;
     case 'stock': return t.observed.stockpileRate;
     case 'waste': return -(t.observed.wastedFuelPct ?? 999);
     case 'died': return -t.observed.diedRate;
@@ -303,6 +311,65 @@ function kinds(map, skip) {
   return ` <span class="band">${rows.slice(0, 3).map(([k]) => esc(k.toLowerCase().replace(/_/g, ' '))).join(', ')}</span>`;
 }
 
+/** Lovat's auto climb, split into the three outcomes their export separates.
+ *
+ * One percentage cannot tell "never tried" from "tried and fell off", and
+ * those are different robots to put on an alliance: the first has an auto you
+ * can plan around, the second has one that costs it the endgame it started.
+ */
+const AUTO_CLIMB_WORDS = { SUCCEEDED: 'made', FAILED: 'fell', NOT_ATTEMPTED: 'never tried' };
+function autoClimbSplit(map) {
+  const rows = Object.entries(map || {}).sort((a, b) => b[1] - a[1]);
+  if (!rows.length) return '';
+  return ` <span class="band">${rows.map(([k, n]) =>
+    esc(`${AUTO_CLIMB_WORDS[k] || k.toLowerCase().replace(/_/g, ' ')}${n > 1 ? ` \u00d7${n}` : ''}`))
+    .join(' · ')}</span>`;
+}
+
+/** Lovat's climb rate per level, which one "best climb" hides.
+ *
+ * A robot that made L3 in nine matches of ten and a robot that made it once
+ * both read "Level3" on their own, and an alliance captain is choosing
+ * between them.
+ */
+function climbRateLevels(map) {
+  const rows = Object.entries(map || {})
+    .filter(([lvl, pct]) => lvl !== 'None' && pct)
+    .sort((a, b) => b[0].localeCompare(a[0]));
+  if (!rows.length) return '';
+  const [best, ...rest] = rows;
+  return esc(`${best[0].replace('Level', 'L')} ${Math.round(best[1])}%`)
+    + (rest.length ? ` <span class="band">${rest.map(([lvl, pct]) =>
+        esc(`${lvl.replace('Level', 'L')} ${Math.round(pct)}%`)).join(' · ')}</span>` : '');
+}
+
+/** Where the climb clock actually went, level by level.
+ *
+ * "Starts its L3 at 128s" and "starts its L1 at 128s" are different robots -
+ * the first is quick, the second has given up half the endgame - which is why
+ * the parser keeps these apart. Only shown when there is more than one level
+ * in it; with one, the pooled number beside this already said it.
+ */
+function climbStartLevels(map) {
+  const rows = Object.entries(map || {}).sort((a, b) => b[0].localeCompare(a[0]));
+  if (rows.length < 2) return '';
+  return ` <span class="band">${rows.map(([lvl, secs]) =>
+    esc(`${lvl.replace('Level', 'L')} ${Math.round(secs)}s`)).join(' · ')}</span>`;
+}
+
+/** Contact and camping defence, which their export separates and ours cannot.
+ *
+ * Camping is a robot parked in a scoring zone rather than one pushing; an
+ * alliance answers the two differently, and the total alone hides which.
+ */
+function defenceSplit(lv) {
+  // Only when it actually splits. A robot with no camping time has a contact
+  // figure identical to the total beside it, and saying it twice is noise.
+  if (!lv.campingDefenseSecs) return '';
+  return ` <span class="band">${esc(`contact ${lv.contactDefenseSecs ?? '?'}s`
+    + ` · camping ${lv.campingDefenseSecs}s`)}</span>`;
+}
+
 function lovatCell(t) {
   if (!lovatN(t) || t.lovat.avgFuel == null) return '<span class="band">—</span>';
   return `${Math.round(t.lovat.avgFuel)} <span class="band">n${lovatN(t)}</span>`;
@@ -323,7 +390,7 @@ function renderTeams() {
       <span class="num">${t.estimated.avgFuel} <span class="band">±${t.estimated.band}</span></span>
       <span class="num">${climbCell(t)}</span>
       <span class="num">${t.epa.epa ?? '—'}</span>
-      <span class="num">${t.exact.avgTowerPoints}</span>
+      <span class="num">${t.exact.avgTowerPoints ?? '—'}</span>
       <span class="num">${Math.round(t.observed.stockpileRate)}%</span>
       <span class="num">${t.observed.wastedFuelPct == null ? '—' : Math.round(t.observed.wastedFuelPct) + '%'}</span>
       <span class="num">${Math.round(t.observed.diedRate)}%</span>
@@ -1036,16 +1103,24 @@ function normCdf(z) {
 /** Projected points for one alliance, with the spread of a single match. */
 function project(m, side) {
   const lineup = (m && m[side]) || [];
-  const teams = lineup.map((t) => (ANALYTICS && ANALYTICS.teams[t]) || null);
+  // `estimated.matches`, not "is there a row" - the same test analytics.py's
+  // match_projection() uses, and the two are meant to be the same sum. Every
+  // team AT the event has a row (analytics unions store.teams()), so counting
+  // rows meant every robot read as scouted: the tile could never say "2 of 3",
+  // the "not scouted" line below could never fire, and a fuel total quietly
+  // missing a robot was presented as a weak alliance rather than an unknown one.
+  const records = lineup.map((t) => (ANALYTICS && ANALYTICS.teams[t]) || null);
+  const teams = records.map((r) => (r && r.estimated && r.estimated.matches ? r : null));
   const fuel = teams.reduce((a, t) => a + (t ? t.estimated.avgFuel : 0), 0);
   // matchBand, not band: band is how well we know a team's average, this is how
   // much one match swings. Independent robots, so the variances add.
   const spread = Math.sqrt(teams.reduce((a, t) => a + (t ? (t.estimated.matchBand || 0) ** 2 : 0), 0));
   const band = Math.sqrt(teams.reduce((a, t) => a + (t ? t.estimated.band ** 2 : 0), 0));
-  const tower = teams.reduce((a, t) => a + (t ? t.exact.avgTowerPoints : 0), 0);
+  const tower = teams.reduce((a, t) => a + ((t && t.exact.avgTowerPoints) || 0), 0);
   const fp = gameRules().fuelPoints;
   const scouted = teams.filter(Boolean).length;
-  return { teams, lineup, fuel, band, spread, tower, points: fuel * fp + tower, scouted };
+  return { teams, records, lineup, fuel, band, spread, tower,
+           points: fuel * fp + tower, scouted };
 }
 
 /**
@@ -1080,25 +1155,38 @@ function verdictBanner(m, side) {
 
 function allianceCard(m, side) {
   const pr = project(m, side);
-  const { lineup, teams, fuel, tower } = pr;
+  const { lineup, teams, records, fuel, tower } = pr;
   const band = Math.round(pr.band);
   const label = side === 'red' ? 'RED' : 'BLUE';
   const th = rpThresholds((STATE && STATE.event && STATE.event.level) || 'regional');
-  const rows = lineup.map((t) => {
-    const d = teams[lineup.indexOf(t)];
-    if (!d) return `<div class="r" style="grid-template-columns:56px 1fr 90px 80px"><span class="tno">${t}</span>
-      <span class="nm">not scouted</span><span class="num">—</span><span class="num">—</span></div>`;
-    return `<div class="r" style="grid-template-columns:56px 1fr 90px 80px">
-      <span class="tno">${t}</span><span class="nm">${esc(d.name || '')}</span>
-      <span class="num">${d.estimated.avgFuel} <span class="band">±${d.estimated.band}</span></span>
-      <span class="num">${climbCell(d)}</span></div>`;
+  // Two records per robot on purpose. `d` is the one the projection was allowed
+  // to use - our own solved fuel, or null - and `rec` is everything the hub
+  // knows about that team, which exists whether or not a scout of ours ever sat
+  // on it. TBA's climb and Lovat's count come off `rec`, so the robot nobody
+  // watched stops being a blank row. It is the robot you most need something
+  // about, and this is the screen that gets read out loud.
+  const rows = lineup.map((t, i) => {
+    const d = teams[i];
+    const rec = records[i];
+    const fuelCell = d
+      ? `${d.estimated.avgFuel} <span class="band">±${d.estimated.band}</span>`
+      : '<span class="band">not scouted</span>';
+    return `<div class="r" style="grid-template-columns:56px 1fr 90px 80px 78px">
+      <span class="tno">${t}</span><span class="nm">${esc((rec && rec.name) || '')}</span>
+      <span class="num">${fuelCell}</span>
+      <span class="num">${rec ? climbCell(rec) : '<span class="band">—</span>'}</span>
+      <span class="num">${rec ? lovatCell(rec) : '<span class="band">—</span>'}</span></div>`;
   }).join('');
+  // Robots our own scouts have nothing on that Lovat does. Named on the tile
+  // because the tile is what gets read out - and never added to the sum:
+  // somebody else's scouting is a second opinion, not a measurement of ours.
+  const lovatFills = records.filter((r, i) => !teams[i] && lovatN(r || {})).length;
   return `<div style="display:flex;flex-direction:column;gap:14px">
     <div class="eyebrow" style="color:${side === 'red' ? 'var(--red-label)' : 'var(--blue-label)'}">
       ${label} · ${esc((m && m.label) || '')}</div>
     ${verdictBanner(m, side)}
-    ${autoClashNote(teams)}
-    ${defenseNote(m, side, teams)}
+    ${autoClashNote(records)}
+    ${defenseNote(m, side, records)}
     <div class="tiles" style="grid-template-columns:repeat(3,1fr)">
       ${tile('PROJECTED FUEL', Math.round(fuel),
              // A robot nobody has scouted contributes nothing to this sum, so
@@ -1108,6 +1196,8 @@ function allianceCard(m, side) {
              // read out loud.
              pr.scouted < lineup.length
                ? `${pr.scouted} of ${lineup.length} robots scouted — incomplete`
+                 + (lovatFills
+                    ? ` · lovat has ${lovatFills === 1 ? 'another' : lovatFills}` : '')
                : `±${band} · Energized at ${th.energized}`,
              fuel >= th.energized ? '' : 'warn')}
       ${tile('TOWER POINTS', Math.round(tower), `Traversal at ${th.traversal}`,
@@ -1115,8 +1205,9 @@ function allianceCard(m, side) {
       ${tile('SUPERCHARGED', fuel >= th.supercharged ? 'YES' : 'NO', `needs ${th.supercharged}`)}
     </div>
     <div class="tbl">
-      <div class="hd" style="grid-template-columns:56px 1fr 90px 80px">
-        <span>TEAM</span><span>NAME</span><span class="num">FUEL</span><span class="num">CLIMB</span></div>
+      <div class="hd" style="grid-template-columns:56px 1fr 90px 80px 78px">
+        <span>TEAM</span><span>NAME</span><span class="num">FUEL</span><span class="num">CLIMB</span>
+        <span class="num">LOVAT</span></div>
       ${rows || '<div class="empty">No lineup yet.</div>'}
     </div></div>`;
 }
@@ -1277,9 +1368,14 @@ function renderTeamDetail() {
     <div class="tiles" style="grid-template-columns:repeat(3,1fr)">
       ${tile('FUEL / MATCH', es.avgFuel,
              `± ${es.band}${es.cycleRate ? ` · ${es.cycleRate}/s` : ''} · estimated`)}
-      ${tile('BEST CLIMB', e.bestClimb === 'None' ? '—' : e.bestClimb.replace('Level', 'L'),
-             `${Math.round(e.climbRate[e.bestClimb] || 0)}% of matches · exact`)}
-      ${tile('TOWER PTS', e.avgTowerPoints, `auto climb ${e.autoClimbRate ?? 0}%`)}
+      ${tile('BEST CLIMB', !e.bestClimb || e.bestClimb === 'None' ? '—'
+               : e.bestClimb.replace('Level', 'L'),
+             e.matchesWithOfficial
+               ? `${Math.round((e.climbRate || {})[e.bestClimb] || 0)}% of matches · exact`
+               : 'no official result yet')}
+      ${tile('TOWER PTS', e.avgTowerPoints ?? '—',
+             e.autoClimbRate == null ? 'no official result yet'
+               : `auto climb ${e.autoClimbRate}%`)}
       ${tile('RELIABILITY', `${Math.round(100 - o.diedRate - o.noShowRate)}%`,
              `died ${Math.round(o.diedRate)}% · no-show ${Math.round(o.noShowRate)}%`,
              (o.diedRate + o.noShowRate) > 20 ? 'warn' : '')}
@@ -1330,15 +1426,19 @@ function renderTeamDetail() {
         <div class="kv"><span>fuel / match</span><b>${lv.avgFuel ?? '—'}</b></div>
         <div class="kv"><span>fuel / second</span><b>${lv.fuelPerSec ?? '—'}</b></div>
         <div class="kv"><span>accuracy</span><b>${lv.accuracy == null ? '—' : lv.accuracy}</b></div>
-        <div class="kv"><span>best climb seen</span><b>${esc(lv.bestClimb || '—')}${
-          lv.autoClimbRate == null ? '' : ` · auto ${Math.round(lv.autoClimbRate)}%`}</b></div>
+        <div class="kv"><span>best climb seen</span><b>${climbRateLevels(lv.climbRate)
+          || esc((lv.bestClimb || '—').replace('Level', 'L'))}</b></div>
+        <div class="kv"><span>auto climb</span><b>${lv.autoClimbRate == null ? '—'
+          : Math.round(lv.autoClimbRate) + '%'}${autoClimbSplit(lv.autoClimbResults)}</b></div>
         <div class="kv"><span>driver</span><b>${lv.driver ?? '—'}</b></div>
         <div class="kv"><span>feeding</span><b>${lv.feedSecs == null ? '—' : lv.feedSecs + 's/match'}</b></div>
         <div class="kv"><span>defence</span><b>${lv.defenseSecs == null ? '—' : lv.defenseSecs + 's/match'}${
-          lv.defenseEffectiveness == null ? '' : ` · effect ${lv.defenseEffectiveness}`}</b></div>
+          lv.defenseEffectiveness == null ? '' : ` · effect ${lv.defenseEffectiveness}`}${
+          defenceSplit(lv)}</b></div>
         <div class="kv"><span>leaves to climb at</span><b>${lv.climbStartSecs == null ? '—'
           : `${Math.round(lv.climbStartSecs)}s${lv.autoClimbStartSecs == null ? ''
-             : ` · auto ${Math.round(lv.autoClimbStartSecs)}s`}`}</b></div>
+             : ` · auto ${Math.round(lv.autoClimbStartSecs)}s`}`}${
+          climbStartLevels(lv.climbStart)}</b></div>
         <div class="kv"><span>scores while moving</span><b>${lv.scoresWhileMovingRate == null
           ? '—' : Math.round(lv.scoresWhileMovingRate) + '%'}</b></div>
         <div class="kv"><span>crosses the field</span><b>${lv.traversalRate == null
@@ -1352,6 +1452,7 @@ function renderTeamDetail() {
         <div class="kv"><span>outpost intakes</span><b>${lv.outpostIntakes ?? '—'}</b></div>
         <div class="kv"><span>roles</span><b>${teamRoles(lv.roles)}</b></div>
         <div class="kv"><span>intake</span><b>${teamRoles(lv.intakeTypes)}</b></div>
+        <div class="kv"><span>feeds from</span><b>${teamRoles(lv.feederTypes)}</b></div>
         ${(lv.unmatched || []).length ? `<div class="hint" style="margin-top:6px">${
           lv.unmatched.length} row${lv.unmatched.length > 1 ? 's' : ''} we could not place on our
           schedule (${esc(lv.unmatched.join(', '))}) — counted here, not joined to a match.</div>` : ''}
@@ -1660,12 +1761,29 @@ function renderGraphs() {
   });
 
   // ---- the side pane
-  const withLovat = rows.filter((t) => lovatN(t)).length;
   const withEpa = rows.filter((t) => t.epa.epa != null).length;
+  // An empty LOVAT column has three causes that look identical everywhere else
+  // - no key, a 403 backing us off, and nobody having uploaded that robot -
+  // and this is the pane where somebody is already looking at what each source
+  // has. `lovat` in CONFIG.status is the last poll that came back with data,
+  // not the last one we tried, so an hour here means an hour old.
+  const lc = (ANALYTICS && ANALYTICS.lovatCoverage) || null;
+  const lvAt = CONFIG && CONFIG.status && CONFIG.status.lovat;
+  const lvKey = !!(CONFIG && CONFIG.keys && CONFIG.keys.lovat);
   $('#gSources').innerHTML = `
     <div class="kv"><span>teams our scouts have seen</span><b>${rows.filter((t) => t.matchesScouted).length}</b></div>
-    <div class="kv"><span>teams lovat has</span><b>${withLovat || '—'}</b></div>
-    <div class="kv"><span>teams statbotics has</span><b>${withEpa || '—'}</b></div>`;
+    <div class="kv"><span>teams lovat has</span><b>${lc && lc.teams
+      ? `${lc.teams} <span class="band">of ${lc.ofTeams} here</span>` : '—'}</b></div>
+    <div class="kv"><span>teams statbotics has</span><b>${withEpa || '—'}</b></div>
+    <div class="hint" style="margin-top:8px">${lc && lc.rows
+      ? `${lc.rows} row${lc.rows === 1 ? '' : 's'} from their scouts${lvAt
+          ? `, last fetched ${esc(ago(secsSince(lvAt)))}` : ''}${lc.unplaced
+          ? ` · ${lc.unplaced} playoff row${lc.unplaced === 1 ? '' : 's'} counted but not `
+            + 'placed on our schedule' : ''}.`
+      : lvKey
+        ? 'Lovat has nothing for this event yet — nobody there has uploaded it.'
+        : 'No Lovat key on the hub, so their column is blank everywhere — it is not a zero.'
+      }</div>`;
 
   const defenders = rows.filter((t) => t.observed.defenseSecs)
     .sort((a, b) => b.observed.defenseSecs - a.observed.defenseSecs).slice(0, 5);

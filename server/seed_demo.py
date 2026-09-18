@@ -86,6 +86,23 @@ def _extras(rng, endgame_tower):
     return out
 
 
+def _climb_attempt(rng, best):
+    """What a robot managed in ONE match, which is not what it is capable of.
+
+    A robot with an L3 in it does not get an L3 every time - it runs out of
+    endgame, or settles for the level it can still reach. A demo where every
+    climb is either the robot's best or nothing gives every team a single
+    level, so `climbRate` per level and the per-level climb timing Lovat
+    supplies have nothing to draw and nobody notices when they break.
+    """
+    if best == "None" or rng.random() < 0.2:
+        return "None"
+    level = int(best[-1])
+    if level > 1 and rng.random() < 0.25:
+        level -= 1
+    return f"Level{level}"
+
+
 def _lovat_row(rng, team, match_no, profile, fuel, defends, breakdown, alliance, idx):
     """One row of somebody else's scouting for one robot in one match.
 
@@ -101,6 +118,10 @@ def _lovat_row(rng, team, match_no, profile, fuel, defends, breakdown, alliance,
         starts[f"l{climb[-1]}StartTime"] = round(rng.uniform(108, 142), 1)
     defence = round(rng.uniform(6, 25), 1) if defends else (
         round(rng.uniform(3, 12), 1) if rng.random() < 0.08 else 0)
+    # Lovat separates pushing from parking, and our own scouting has no word
+    # for the second. A seed that always writes zero camping means the row on
+    # the team page that splits them can never appear.
+    camping = round(defence * rng.uniform(0.2, 0.6), 1) if defence and rng.random() < 0.3 else 0
     roles = ["Scorer"] + (["Defender"] if defends else []) + (
         ["Feeder"] if rng.random() < 0.2 else [])
     return {
@@ -117,9 +138,9 @@ def _lovat_row(rng, team, match_no, profile, fuel, defends, breakdown, alliance,
         "volleysPerMatch": rng.randint(2, 9),
         **starts,
         "autoClimbStartTime": round(rng.uniform(12, 15), 1) if rng.random() < 0.05 else "",
-        "contactDefenseTime": defence,
+        "contactDefenseTime": round(defence - camping, 1),
         "defenseEffectiveness": rng.randint(0, 5) if defence else 0,
-        "campingDefenseTime": 0,
+        "campingDefenseTime": camping,
         "totalDefenseTime": defence,
         "timeFeeding": round(rng.uniform(0, 20), 1),
         "feedingRate": round(rng.uniform(0, 1.4), 2),
@@ -129,12 +150,22 @@ def _lovat_row(rng, team, match_no, profile, fuel, defends, breakdown, alliance,
         "totalBallsFed": rng.randint(0, 14),
         "outpostIntakes": rng.randint(0, 4) if rng.random() < 0.7 else "",
         "robotRoles": "|".join(roles),
-        "fieldTraversal": "TRUE" if rng.random() < 0.7 else "FALSE",
+        # Three of these are enums in Lovat's schema and only two are booleans.
+        # A seed that writes TRUE/FALSE for all five is a demo that cannot show
+        # the KIND beside the rate - "beached on the bump" is a route you can
+        # send a robot around, "beached 5%" is not - and it is also a demo that
+        # cannot notice the enum reader breaking, which is how `e36147a` lived.
+        "fieldTraversal": (rng.choice(["TRENCH", "BUMP", "BOTH"])
+                           if rng.random() < 0.7 else "NONE"),
         "endgameClimb": climb or "None",
-        "beached": "TRUE" if rng.random() < 0.05 else "FALSE",
+        "beached": (rng.choice(["ON_FUEL", "ON_BUMP", "BOTH"])
+                    if rng.random() < 0.05 else "NEITHER"),
         "scoresWhileMoving": "TRUE" if rng.random() < 0.4 else "FALSE",
         "disrupts": "TRUE" if rng.random() < 0.12 else "FALSE",
-        "autoClimb": "FALSE",
+        # A robot that never tries an auto climb and one that tries and falls
+        # are different robots, and NOT_ATTEMPTED is how Lovat says the first.
+        "autoClimb": ("SUCCEEDED" if rng.random() < 0.04
+                      else "FAILED" if rng.random() < 0.08 else "NOT_ATTEMPTED"),
         "feederTypes": "Human" if rng.random() < 0.5 else "",
         "intakeType": rng.choice(["Ground", "Chute", "Both"]),
         "scouter": rng.choice(LOVAT_SCOUTERS),
@@ -262,7 +293,7 @@ def main():
                 towers = []
                 for t in lineup:
                     p = profiles[t]
-                    towers.append(p["climb"] if rng.random() < 0.8 else "None")
+                    towers.append(_climb_attempt(rng, p["climb"]))
                 breakdown[alliance] = {
                     "windows": windows[alliance],
                     "autoTower": ["None"] * 3,
@@ -373,7 +404,10 @@ def main():
         w = csv.DictWriter(buf, fieldnames=LOVAT_COLUMNS, lineterminator="\n")
         w.writeheader()
         w.writerows(lovat_rows)
-        parsed = lovat_report.parse_report_csv(buf.getvalue(), ek) or {}
+        # With the BOM, because the real export has one: the demo is the only
+        # place this whole path runs without a key, and a seed that skips the
+        # BOM is a seed that cannot catch it nulling every match key again.
+        parsed = lovat_report.parse_report_csv("\ufeff" + buf.getvalue(), ek) or {}
         st.set(f"lovat:{ek}", {str(t): rec for t, rec in parsed.items()})
 
     # ---- pit map: the real example response from frc.nexus/api/v1/docs, with the

@@ -207,9 +207,12 @@
           <div class="f" data-key="lovatKey"><label>LOVAT API KEY<span class="tag"></span></label>
             <input id="lovatKey" placeholder="lvt-…" autocomplete="off">
             <div class="h">Other teams' scouting for this event. Lovat has no page that makes
-              one — it is a curl, and setup.md walks through it for Windows and Mac. Your team
-              email must be verified on Lovat first, which is what their 403 means. It is shown
-              next to our own numbers, never mixed into them. lovat.app</div>
+              one, so the hub has a script for it: copy the <code>profile</code> request from
+              the Lovat dashboard's Network tab, then double-click
+              <code>get-lovat-key.bat</code> (Windows) or <code>get-lovat-key.command</code>
+              (Mac). It reads your clipboard and fills this box in itself. Your team email must be verified on Lovat first, which is what
+              their 403 means. It is shown next to our own numbers, never mixed into
+              them. lovat.app</div>
             <div class="say"></div></div>
           <div class="f"><label>AI MODEL</label>
             <select id="aiModel"></select>

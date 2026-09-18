@@ -154,6 +154,7 @@ class Hub:
                        "frcEvents": None, "lovat": None, "mirror": None,
                        "lastUpdate": None}
         self.last_snapshot = None
+        self._snapshot_token = None
         self.started_at = time.time()
         self._recal_lock = threading.Lock()
         self._recal_pending = False
@@ -270,8 +271,13 @@ class Hub:
                     if mst.get("photosPending") else ""))
                 if mrr.ok else "not configured",
                 bool(mrr.ok) and bool(mst.get("error"))),
+            # "last 8h ago" on a hub that has been idle overnight is not a
+            # fault, and must not read as one: it is skipped while nothing is
+            # written, so an old timestamp beside a quiet event is correct.
             svc("snapshots", True,
-                f"last {age(self.last_snapshot)}, keeping {SNAPSHOT_KEEP}"
+                (f"last {age(self.last_snapshot)}, keeping {SNAPSHOT_KEEP}"
+                 + (" (up to date - nothing written since)"
+                    if self.store.change_token() == self._snapshot_token else ""))
                 if self.last_snapshot else f"every {SNAPSHOT_SECONDS // 60}m, none yet"),
         ]
         return {
@@ -854,24 +860,55 @@ class Hub:
             return self._apply_nexus_event(payload)
 
     def _apply_nexus_event(self, payload):
-        try:
-            as_of = float(payload.get("dataAsOfTime") or 0)
-        except (TypeError, ValueError):
-            as_of = 0.0
-        if as_of and as_of <= self.last_nexus_at:
+        # Somebody else's JSON, over the network, mid-event - and this is the
+        # one that rewrites every lineup and every status. A shape we did not
+        # expect used to raise straight out of the loop below, which is not a
+        # crash (the poller catches it) but is worse than one: the payload is
+        # left HALF applied, and everything after the loop - `nexusLive`, which
+        # carries the queueing status and the announcements, and the freshness
+        # the SERVER tab shows - is never written at all. Measured on a
+        # 20-match payload with one row carrying a list where a status goes:
+        # 12 of 20 matches written, `nexusLive` still empty, and Q14 - the row
+        # marked `On field`, the single thing that arms the scouting screen on
+        # all six phones - in the missing half.
+        if not isinstance(payload, dict):
+            return False
+        as_of = payload.get("dataAsOfTime")
+        as_of = as_of if isinstance(as_of, (int, float)) and not isinstance(as_of, bool) else None
+        # A NaN here compares False against everything, so storing one would
+        # disable the out-of-order guard for the rest of the run.
+        as_of = as_of if as_of is not None and math.isfinite(as_of) else None
+        if as_of is not None and as_of <= self.last_nexus_at:
             return False  # Nexus warns updates can arrive out of order
-        self.last_nexus_at = as_of or time.time()
 
         ek = payload.get("eventKey") or self.event_key()
-        if not ek:
+        if not (ek and isinstance(ek, str)):
             return False
         self.store.put_event(ek)
-        for i, m in enumerate(payload.get("matches") or []):
-            label = m.get("label")
-            if not label:
+        rows = payload.get("matches")
+        skipped = 0
+        for i, m in enumerate(rows if isinstance(rows, list) else []):
+            if not isinstance(m, dict):
+                skipped += 1
                 continue
-            red = [_int(t) for t in (m.get("redTeams") or [])]
-            blue = [_int(t) for t in (m.get("blueTeams") or [])]
+            label = m.get("label")
+            if not (label and isinstance(label, str)):
+                skipped += 1
+                continue
+            # Everything below goes into sqlite or into a regex. A row we
+            # cannot read costs that row and nothing else - the next one is
+            # somebody's lineup, and the one after that may be the match on the
+            # field right now.
+            red_raw, blue_raw = m.get("redTeams"), m.get("blueTeams")
+            status, times = m.get("status"), m.get("times")
+            if not (isinstance(red_raw, (list, tuple, type(None)))
+                    and isinstance(blue_raw, (list, tuple, type(None)))
+                    and isinstance(status, (str, type(None)))
+                    and isinstance(times, (dict, type(None)))):
+                skipped += 1
+                continue
+            red = [_int(t) for t in (red_raw or [])]
+            blue = [_int(t) for t in (blue_raw or [])]
             # A qualification's number IS its place in the schedule. This used
             # to take the index within the payload, which is only the same
             # thing when the payload is the whole schedule - a live feed
@@ -886,12 +923,22 @@ class Hub:
                 ek, resolve_match_key(self.store, ek, label, red, blue),
                 label=label, play_order=int(qual.group(1)) if qual else 10000 + i,
                 red=red, blue=blue,
-                status=m.get("status"), times=m.get("times"))
+                status=status, times=times)
+        if skipped:
+            # Never silently: a schedule quietly one match short is exactly the
+            # kind of thing nobody notices until six scouts watch nothing.
+            self.note("error", f"nexus: {skipped} match row(s) in a shape we could "
+                               f"not read, skipped - the rest of the schedule is applied")
+        # Only once the payload has actually landed. Advancing it before the
+        # loop meant a payload that failed part way through poisoned its own
+        # retry: Nexus re-sends the same `dataAsOfTime`, and that now reads as
+        # an update we have already seen.
+        self.last_nexus_at = as_of if as_of is not None else time.time()
         self.store.set("nexusLive", {
             "nowQueuing": payload.get("nowQueuing"),
             "announcements": payload.get("announcements") or [],
             "partsRequests": payload.get("partsRequests") or [],
-            "dataAsOfTime": as_of,
+            "dataAsOfTime": as_of or 0.0,
         })
         self.status["nexus"] = time.time()
         # Only when something actually moved. `dataAsOfTime` above is Nexus's
@@ -1634,6 +1681,20 @@ class Hub:
             if not robots:
                 continue
             rows = solve.solve_match(info.get("windows") or {}, robots, mult=mult, bootstrap=120)
+            # A robot nobody was sitting on is marked, not averaged. All three
+            # rows stay - the division of the official total has to keep adding
+            # up to it, and the leftover is real fuel this alliance scored that
+            # we cannot attribute - but the row for a robot with no intervals is
+            # not a measurement of that robot. It comes out holding whatever the
+            # division left over, with a bootstrap band of zero because there was
+            # nothing to resample: measured on the demo with one robot's
+            # scouting removed, `2.3 fuel ±1.5` for a robot Lovat's scouts
+            # counted 70.5 on, and indistinguishable on every screen from a
+            # robot watched all day and found useless.
+            watched = {r["team"] for r in robots if r["intervals"]}
+            for r in rows:
+                if r["team"] not in watched:
+                    r["provisional"] = True
             out_rows.extend(rows)
 
             observed = sum(len(r["intervals"]) for r in robots)
@@ -1798,13 +1859,31 @@ class Hub:
         day, and /api/export only helps if somebody remembered to click it. A
         snapshot is a whole working database: to recover, stop the hub, copy one
         out of data/snapshots/ over data/scouting.db, and start it again.
+
+        Only when something has been written since the last one. A snapshot is a
+        copy of the ENTIRE file - which on a hub holding a season's events is
+        most of a hundred megabytes, because pit photos live in there and no
+        event is ever removed - and this loop used to take one every ten minutes
+        regardless. A hub left running overnight between the two days of a
+        competition therefore wrote about eighty identical copies of a database
+        nobody had touched, each one pruning the copy before it. Nothing is lost
+        by skipping: if nothing was written, the newest snapshot already IS the
+        current database, which is the whole promise above.
         """
+        last = None
         while not self.stop_flag.is_set():
             self.stop_flag.wait(SNAPSHOT_SECONDS)
             if self.stop_flag.is_set():
                 return
+            token = self.store.change_token()
+            if token == last:
+                continue
             try:
                 dest = self.store.snapshot(keep=SNAPSHOT_KEEP)
+                # After the copy, not before: a write that lands mid-snapshot
+                # then shows as a change next time round, which is the safe way
+                # round to be wrong.
+                last = self._snapshot_token = token
                 self.last_snapshot = time.time()
                 self.note("info", f"snapshot written to {os.path.basename(dest)}")
             except Exception as e:
@@ -2079,8 +2158,11 @@ def _csv_table(h, ek, table):
                 t["matchesScouted"], e["matchesWithOfficial"],
                 round(sum(deltas) / len(deltas), 1) if deltas else None,
                 es["avgFuel"], es["band"], es["consistency"], e["bestClimb"],
-                round(e["climbRate"].get("Level3", 0), 1), round(e["climbRate"].get("Level2", 0), 1),
-                round(e["climbRate"].get("Level1", 0), 1), e["autoClimbRate"],
+                # An empty climbRate is a robot no official result has landed
+                # for yet. A blank cell says that; a 0 in a spreadsheet column
+                # headed climbL3Pct is read as a robot that does not climb.
+                _pct(e["climbRate"].get("Level3")), _pct(e["climbRate"].get("Level2")),
+                _pct(e["climbRate"].get("Level1")), e["autoClimbRate"],
                 e["avgTowerPoints"], e["avgRP"], o["stockpileRate"], o["wastedFuelPct"],
                 o["feedRate"], o["feedSecs"], o["defenseSecs"],
                 o.get("defenseFacedSecs"), o.get("defenseFacedMatches"),
@@ -2136,16 +2218,22 @@ def _csv_table(h, ek, table):
                   "accuracy", "volleys", "ballsFed", "feedSecs", "feedingRate", "feedsPerMatch",
                   "defenseSecs", "contactDefenseSecs", "campingDefenseSecs",
                   "defenseEffectiveness", "totalPoints", "autoPoints", "teleopPoints",
-                  "driver", "bestClimb", "climbL3Pct", "climbL2Pct", "climbL1Pct",
-                  "autoClimbPct", "climbStartSecs", "autoClimbStartSecs", "beachedPct",
-                  "scoresWhileMovingPct", "disruptPct", "traversalPct", "outpostIntakes",
-                  "roles", "intakeTypes", "unmatchedRows"]
+                  "driver", "bestClimb", "climbsRead", "climbL3Pct", "climbL2Pct", "climbL1Pct",
+                  # Per level as well as pooled: "starts its L3 at 128s" and
+                  # "starts its L1 at 128s" are different robots, which is why
+                  # the parser keeps them apart in the first place.
+                  "climbStartL3Secs", "climbStartL2Secs", "climbStartL1Secs",
+                  "autoClimbPct", "autoClimbResults", "climbStartSecs", "autoClimbStartSecs",
+                  "beachedPct", "beachedKinds",
+                  "scoresWhileMovingPct", "disruptPct", "traversalPct", "traversalKinds",
+                  "outpostIntakes", "roles", "intakeTypes", "feederTypes", "unmatchedRows"]
         rows = []
         for t in sorted(summary["teams"].values(), key=lambda x: x["team"]):
             lv = t.get("lovat") or {}
             if not lv.get("matches"):
                 continue
             cr = lv.get("climbRate") or {}
+            cs = lv.get("climbStart") or {}
             rows.append([
                 t["team"], t.get("name"), lv.get("matches"), lv.get("scouters"),
                 lv.get("avgFuel"), lv.get("fuelPerSec"), lv.get("throughput"),
@@ -2154,12 +2242,17 @@ def _csv_table(h, ek, table):
                 lv.get("defenseSecs"), lv.get("contactDefenseSecs"),
                 lv.get("campingDefenseSecs"), lv.get("defenseEffectiveness"),
                 lv.get("totalPoints"), lv.get("autoPoints"), lv.get("teleopPoints"),
-                lv.get("driver"), lv.get("bestClimb"),
+                lv.get("driver"), lv.get("bestClimb"), lv.get("climbsRead"),
                 cr.get("Level3"), cr.get("Level2"), cr.get("Level1"),
-                lv.get("autoClimbRate"), lv.get("climbStartSecs"), lv.get("autoClimbStartSecs"),
-                lv.get("beachedRate"), lv.get("scoresWhileMovingRate"), lv.get("disruptRate"),
-                lv.get("traversalRate"), lv.get("outpostIntakes"),
+                cs.get("Level3"), cs.get("Level2"), cs.get("Level1"),
+                lv.get("autoClimbRate"), _counts(lv.get("autoClimbResults")),
+                lv.get("climbStartSecs"), lv.get("autoClimbStartSecs"),
+                lv.get("beachedRate"), _counts(lv.get("beachedKinds")),
+                lv.get("scoresWhileMovingRate"), lv.get("disruptRate"),
+                lv.get("traversalRate"), _counts(lv.get("traversalKinds")),
+                lv.get("outpostIntakes"),
                 _counts(lv.get("roles")), _counts(lv.get("intakeTypes")),
+                _counts(lv.get("feederTypes")),
                 " · ".join(lv.get("unmatched") or []) or None,
             ])
         return header, rows
@@ -2177,6 +2270,11 @@ def _csv_table(h, ek, table):
         return header, rows
 
     raise KeyError(table)
+
+
+def _pct(v):
+    """One rate as a CSV cell: rounded, or blank for a rate nobody measured."""
+    return round(v, 1) if v is not None else None
 
 
 def _counts(m):
@@ -2731,15 +2829,43 @@ class Handler(BaseHTTPRequestHandler):
         take the request thread down with an AttributeError - no response at
         all, the phone seeing a dropped connection rather than an answer. A
         malformed Content-Length did the same before the read even started.
+
+        A body we REFUSE is a body still sitting on the socket, and this hub
+        speaks HTTP/1.1, so the next request down that connection is parsed
+        starting from the middle of it. Driven with two requests pipelined on
+        one socket: the POST was answered 200, and the leftover `{"scout":[]}`
+        was then glued onto the next request line and came back
+        `501 Unsupported method ('{"scout":[]}GET')`. The malformed request
+        costs the well-formed one behind it - and on a phone flushing its queue
+        that is /api/sync, which is carrying somebody's morning.
+
+        So refusing a body also ends the connection. It cannot be drained: the
+        two cases are a length we could not read, where we do not know how many
+        bytes to skip, and a length past MAX_BODY, where reading them is the
+        thing the limit exists to prevent. The client pays one reconnect.
         """
         try:
             n = int(self.headers.get("Content-Length") or 0)
         except (TypeError, ValueError):
+            self.close_connection = True
             return {}
-        if n <= 0 or n > self.MAX_BODY:
+        if n == 0:
+            return {}
+        if n < 0 or n > self.MAX_BODY:
+            self.close_connection = True
             return {}
         try:
-            v = json.loads(self.rfile.read(n).decode("utf-8"))
+            raw = self.rfile.read(n)
+        except Exception:
+            self.close_connection = True
+            return {}
+        # Short read: the client hung up mid-body, so whatever is left of it is
+        # not a request either.
+        if len(raw) != n:
+            self.close_connection = True
+            return {}
+        try:
+            v = json.loads(raw.decode("utf-8"))
         except Exception:
             return {}
         return v if isinstance(v, dict) else {}
@@ -2821,6 +2947,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._file("index.html")
         if p == "/scout":
             return self._file("scout.html")
+        # Practice, for the six people who have to do this on a Saturday. Served
+        # like every other page so a scout reaches it from the same QR code and
+        # on the same wifi - and it talks to no API, so it also works on a phone
+        # that has wandered out of range mid-lesson.
+        if p == "/tutorial":
+            return self._file("tutorial.html")
         if p == "/dashboard":
             return self._file("dashboard.html")
         if p == "/join":

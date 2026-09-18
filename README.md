@@ -34,6 +34,15 @@ Python is the only thing this needs. It is free.
 Download this repository as a ZIP (green **Code** button → **Download ZIP**) and unzip it
 somewhere you will find again — the Desktop is fine.
 
+> **Before your first event, send your scouts to the practice page.** Once the hub is running,
+> `http://<the address>/tutorial` — it is linked from the join screen they already scan. Six
+> steps and about four minutes: what the job actually is, taking a seat, the two thumbs, and an
+> eighty-second practice match where a lamp stands in for the robot and they hold the pad along
+> with it. At the end it scores them against what the robot really did — how much of the shooting
+> they covered, how long they held when it was not shooting, whether they set the rate — and
+> names the one habit to fix. It records nothing and touches no real data, so it is safe to run
+> during a competition, which is when somebody usually admits they are not sure.
+
 ### 3. Start it once, to check it works
 
 - **Windows** — open the unzipped folder and double-click **`start-server.bat`**
@@ -219,35 +228,20 @@ returns 403 and no amount of retrying changes it.
 3. **That link expires in twenty minutes.** It going quietly stale is the usual reason this step
    never completes and nobody can say why.
 
-##### Step 2 — check you have curl
-
-- **Windows** — open **Command Prompt** (not PowerShell, see the warning below) and type
-  `curl --version`. Windows 10 and 11 ship it, so a version number means you are done. If it is
-  missing: `winget install cURL.cURL`, or install
-  [Git for Windows](https://git-scm.com/download/win), which bundles it, or take the binary from
-  [curl.se/windows](https://curl.se/windows/) and unzip it somewhere on your PATH.
-- **Mac** — `curl --version` in Terminal. It is part of macOS; there is nothing to install.
-
-> **Windows: do not use PowerShell for this.** In Windows PowerShell, `curl` is an *alias* for
-> `Invoke-WebRequest`, which does not understand `-X` or `-H` and fails with a parameter error
-> that looks like a problem with the command. Use **Command Prompt**, or in PowerShell spell it
-> `curl.exe` so you get the real thing.
-
-##### Step 3 — read your sign-in token out of the browser
+##### Step 2 — read your sign-in token out of the browser
 
 The key is minted with your own signed-in credential, and the only place to get one is a request
 the dashboard has already made. Use Chrome or Edge; Safari's inspector has no *Copy as cURL*.
 
-4. Signed in to the dashboard, press **F12** (Mac: **⌥⌘I**) and open the **Network** tab.
-5. Tick **Preserve log**, click **Fetch/XHR**, and type `api.lovat.app` in the filter box.
-6. Reload, then **wait for the dashboard to finish drawing**. It is a Flutter app: the first
+1. Signed in to the dashboard, press **F12** (Mac: **⌥⌘I**) and open the **Network** tab.
+2. Tick **Preserve log**, click **Fetch/XHR**, and type `api.lovat.app` in the filter box.
+3. Reload, then **wait for the dashboard to finish drawing**. It is a Flutter app: the first
    half-second is only `flutter.js` and `canvaskit.wasm`, and the API calls come seconds later.
    Stop watching too early and you will conclude, wrongly, that it never calls its own API.
-7. Click the row named **`profile`** whose Type is **fetch** — *not* the one below it whose Type
+4. Click the row named **`profile`** whose Type is **fetch** — *not* the one below it whose Type
    is `preflight`, which carries no credential. A `304` is fine; you want the request, not the
    response.
-8. Right-click it → **Copy** → **Copy as cURL**, and paste that into your terminal. Do not run
-   it yet.
+5. Right-click it → **Copy** → **Copy as cURL**.
 
 > **What you have just copied is a password.** It is a full Auth0 credential for your Lovat
 > account, it lasts **72 hours**, and nothing — not logging out, not changing your password —
@@ -255,10 +249,68 @@ the dashboard has already made. Use Chrome or Edge; Safari's inspector has no *C
 > a chat, an issue, a commit or a screenshot. If it does escape, the only remedy is to wait out
 > the 72 hours.
 
-##### Step 4 — mint the key
+##### Step 3 — run the key script
 
-The command you pasted is a `GET` of `/v1/manager/profile`, which returns your team name and
-number. Change **two** things and nothing else — keep your token exactly as it was copied:
+**Windows** — double-click **`get-lovat-key.bat`**. **Mac** — double-click
+**`get-lovat-key.command`**. From a terminal it is `python3 server/lovat_key.py`, or `python` on
+Windows. It needs no curl and does not care which shell you are in.
+
+**Copying in step 2 is all it needs**: it reads the clipboard itself, so there is nothing to
+paste and nothing to type. If it cannot read one — no desktop session, or a Linux box with none
+of `wl-paste`, `xclip` or `xsel` — it prints the steps above and asks for a paste instead, and
+**the whole command is fine**, as is just the `authorization:` line or the token alone. Press
+Enter twice when the paste is in. `--from-file token.txt` is there for anything else, and
+`--paste` skips the clipboard for anyone who would rather it did not look.
+
+That is the whole job. What it is doing for you, and why each part of it used to go wrong:
+
+- **It never needs a long paste into a console.** Pasting several kilobytes into Command Prompt
+  is the worst part of doing this on Windows, and reading the clipboard skips it entirely.
+- **It finds the token inside whatever you gave it.** Chrome on a Mac copies a `\`-continued
+  command in single quotes, Command Prompt gets `^` and double quotes, and `Copy as fetch` is
+  JavaScript. It reads all of them, so "copy the value after `Bearer `, not the whole line" —
+  the usual cause of a `401` on a token that works — stops being something to get right.
+- **It reads the token's own expiry before asking Lovat anything.** A stale token and a wrong
+  one are the same `401`. This says `token read, 46 hours left`, or refuses outright with
+  `that token expired 4 hours ago` and tells you to go and copy a fresh one.
+- **It asks `/profile` first, then `/apikey`.** That is the only way to tell Lovat's two 403s
+  apart: `/profile` checks that you are signed in, `/apikey` also checks that your team has been
+  verified. A 403 after a successful profile is step 1, and the script says so rather than
+  leaving you to mint a second token that fails identically.
+- **It writes the key into `.env` itself** — base64-encoded, `0600`, exactly where and how the
+  admin panel writes it, with any hand-typed `LOVAT_API_KEY=` line removed in the same pass. So
+  the `lvt-…` never has to be caught out of a terminal before it scrolls away, which matters
+  because only a hash of it is stored and that response is the one and only place it exists.
+
+Then restart the hub so it picks the key up, set the event key at http://localhost:6059/ , and
+press **TEST KEYS**. The **SERVER** tab's `lovat` service goes green and the **GRAPHS** tab
+starts counting teams under `teams lovat has`.
+
+The `lvt-` key does not expire, so this is a once-a-season job — and once it is in the hub, the
+72-hour browser token stops mattering. The same script answers two other questions:
+
+```
+python3 server/lovat_key.py --list            # what keys this team already has
+python3 server/lovat_key.py --revoke <uuid>   # remove one
+```
+
+Listing shows a name and a date and **not the key**, by design rather than as a fault.
+
+<details>
+<summary><b>Doing it by hand with curl</b> — everything the script does, if you would rather</summary>
+
+You need curl. On **Windows**, `curl --version` in **Command Prompt**: 10 and 11 ship it, and if
+it is missing, `winget install cURL.cURL`, or
+[Git for Windows](https://git-scm.com/download/win), which bundles it, or the binary from
+[curl.se/windows](https://curl.se/windows/). On a **Mac** it is part of macOS.
+
+> **Windows: do not use PowerShell for this.** There, `curl` is an *alias* for
+> `Invoke-WebRequest`, which does not understand `-X` or `-H` and fails with a parameter error
+> that looks like a problem with the command. Use **Command Prompt**, or spell it `curl.exe`.
+
+Paste the copied command into your terminal but do not run it. It is a `GET` of
+`/v1/manager/profile`. Change **two** things and nothing else — keep your token exactly as it
+was copied:
 
 - the path `profile` becomes `apikey?name=6059%20scouting%20hub`
 - add `-X POST`
@@ -268,33 +320,25 @@ curl -X POST --url "https://api.lovat.app/v1/manager/apikey?name=6059%20scouting
   -H "authorization: Bearer eyJhbGciOi…"
 ```
 
-On **Windows Command Prompt**, put it on one line, or end continued lines with `^` rather
-than `\`. Every other header from the copied command can be deleted; only `authorization`
-matters.
-
+On **Windows Command Prompt**, put it on one line, or end continued lines with `^` rather than
+`\`. Every other header from the copied command can be deleted; only `authorization` matters.
 Change only one of the two and you get either your profile again or a `404` — which is what
 "there is no API key in the response" nearly always turns out to be.
 
-9. It answers `{"apiKey":"lvt-…"}`. **Copy that immediately.** Only a SHA-256 hash of it is
-   stored, so this response is the one and only place the key will ever exist. Listing your keys
-   afterwards shows a name and a date and **not the key** — by design, not as a fault.
-10. Paste it into the **Lovat** box at http://localhost:6059/ on the hub laptop, set the event
-    key beside it, and click **SAVE & REFRESH**. Then **TEST KEYS**.
-11. Check it worked on the dashboard's **SERVER** tab: the `lovat` service goes green, and the
-    **GRAPHS** tab starts counting teams under `teams lovat has`.
-
-The `lvt-` key does not expire, so this is a once-a-season job — and once it is in the hub, the
-72-hour browser token stops mattering. To see what you already have, or to revoke one, the same
-address answers `GET` and `DELETE`:
+It answers `{"apiKey":"lvt-…"}`. **Copy that immediately**, and paste it into the **Lovat** box
+at http://localhost:6059/ on the hub laptop. The same address answers `GET` and `DELETE`:
 
 ```bash
-curl "https://api.lovat.app/v1/manager/apikey" -H "authorization: Bearer lvt-…"
+curl "https://api.lovat.app/v1/manager/apikey" -H "authorization: Bearer eyJhbGciOi…"
 curl -X DELETE "https://api.lovat.app/v1/manager/apikey?uuid=…" -H "authorization: Bearer eyJhbGciOi…"
 ```
 
-> **What the failures mean.** A `401` on a token that worked a moment ago is a stale copy — the
-> likeliest cause is copying the whole header *line* (`authorization: Bearer eyJ…`) instead of
-> just the value after `Bearer `. `401 No team` is an account that has not joined a team.
+</details>
+
+> **What the failures mean.** The script translates all of these; they are here for the manual
+> route. A `401` on a token that worked a moment ago is a stale copy — the likeliest cause is
+> copying the whole header *line* (`authorization: Bearer eyJ…`) instead of just the value after
+> `Bearer `. `401 No team` is an account that has not joined a team.
 > `403 Your team has not been verified yet` is step 1, not you — and a successful `/profile`
 > call does not rule it out, because `/profile` checks only that you are signed in while
 > `/apikey` also checks the team. `403 Cannot create API key using an API key` means an `lvt-`
@@ -314,7 +358,9 @@ curl -X DELETE "https://api.lovat.app/v1/manager/apikey?uuid=…" -H "authorizat
 - The hub asks once every five minutes. Lovat rate-limits a key to one request every three
   seconds, so this leaves that limit completely alone.
 - A blank Lovat column means **nobody at this event uploaded that robot**. It is not a zero, it
-  is not a bad robot, and nothing here will treat it as one.
+  is not a bad robot, and nothing here will treat it as one. The GRAPHS side pane says how many
+  of this event's teams they have and when anything last arrived, so "no key", "they have
+  nothing" and "they are backing us off" do not look the same.
 - Playoff rows cannot be joined onto our qualification schedule, so they are counted in the
   totals and listed separately rather than being quietly attached to the wrong match.
 
@@ -631,7 +677,10 @@ uncertainty shaded around the fuel line and Lovat's count of the same robot draw
 ## Reading a match before it happens
 
 The **MATCH** tab puts both alliances side by side: projected fuel and points, win probability
-with the margin it came from, and each robot's fuel and climb. It follows the field by default;
+with the margin it came from, and each robot's fuel, climb and what Lovat's scouts made of it.
+A robot nobody on our crew has watched says **not scouted** rather than showing a number — and
+still carries the official climb, because that comes from the field rather than from us, and
+Lovat's count beside it. The projected fuel says how many of the three robots we actually have. It follows the field by default;
 pick any match from the dropdown to look ahead or back. Two warnings fire on their own — two
 partners who both start in the same auto zone, and an opponent with a logged history of
 defending someone in this lineup.
@@ -670,12 +719,12 @@ the fuel column.
 | Phones cannot connect at all | Windows Firewall blocked it | Restart the server, click **Allow access** on **Private networks** |
 | A phone says it cannot reach the hub | out of range, or the laptop moved networks | Walk back toward the laptop. Data is safe; it sends itself |
 | An AI panel says "the model could not be reached" | no internet, or the key is wrong | it is safe to ignore — nothing else depends on it. Re-check the key at http://localhost:6059/ |
-| The LOVAT column is empty | no Lovat key, or nobody uploaded that robot | not a fault: blank means nobody scouted it there, which is not a zero. If you never got a key, Lovat has no page for it — see *Getting a Lovat key* above |
+| The LOVAT column is empty | no Lovat key, nobody uploaded that robot, or Lovat is backing us off | not a fault: blank means nobody scouted it there, which is not a zero. The **GRAPHS** tab's side pane says which of the three it is — how many of this event's teams Lovat has, and how long ago anything arrived. If you never got a key, Lovat has no page for it — see *Getting a Lovat key* above |
 | Scouts see an old event's teams | event key not changed | http://localhost:6059/ on the laptop, set the new event key |
 | Fuel numbers look wrong for one team | a scout was on their own clock, or missed matches | Check the **HEALTH** tab — flagged matches are listed with the reason |
 | Every team's fuel looks too high, or too low | scouts are calling shooting harder or softer than it scores | **HEALTH** tab, ACCURACY panel — it says `running N% hot` or `cold`. Worth a word about the rate ladder; the solver corrects for it either way |
 | Nothing at all loads | the black window got closed | Double-click the launcher again |
-| The database is damaged, or a whole day looks wrong | anything from a bad shutdown to a full disk | Stop the server. Copy the newest file out of `data/snapshots/` over `data/scouting.db`, delete `data/scouting.db-wal` and `-shm` if they are there, and start it again. The hub writes a snapshot every ten minutes and keeps the last twelve |
+| The database is damaged, or a whole day looks wrong | anything from a bad shutdown to a full disk | Stop the server. Copy the newest file out of `data/snapshots/` over `data/scouting.db`, delete `data/scouting.db-wal` and `-shm` if they are there, and start it again. The hub writes a snapshot every ten minutes that something changed - an idle hub does not keep copying a database nobody has touched - and keeps the last twelve |
 | The QR code will not scan | screen too dim, or too far | Turn brightness up; hold the phone about a foot away |
 | SERVER tab says `off-site mirror RETRYING` | the mirror is unreachable, or the push key is wrong | **TEST KEYS** in the admin panel says which of the two it is. Nothing at the venue is affected either way |
 | The admin panel will not let you type into anything | it opens read-only, on purpose | Press **UNLOCK** at the top. It re-locks after ten minutes and on every reload |

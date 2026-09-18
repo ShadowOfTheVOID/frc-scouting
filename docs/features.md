@@ -17,10 +17,11 @@ One Python process serves all of them. Nothing is installed on any phone.
 | Address | Who opens it | What it is |
 |---|---|---|
 | `/scout` | six scouts, on phones | The match HUD. The only screen a scout ever needs. |
+| `/tutorial` | a new scout, on their own phone | **Practice.** Six steps: what the job is, taking a seat, the two thumbs, an eighty-second practice match to hold along with, a scorecard telling them how close they were and which habit to fix, and what the screens that look broken actually mean. It writes nothing and calls no API, so it is safe to run mid-event. |
 | `/dashboard` | scout lead, strategy | Seven tabs of everything the hub knows. |
 | `/pit` | pit scouts, on phones | The pit map, and a form per robot. |
 | `/` | the hub laptop only | **The admin panel.** Event key, API keys, passcodes, the off-site mirror. Opens read-only and refuses to open at all from a phone. |
-| `/join` | the hub laptop screen | A QR code per network address. Scouts point a camera at it. |
+| `/join` | the hub laptop screen | **One** QR code — the address this laptop reaches the network through, which is the one the phones are on. Scouts point a camera at it. A laptop with a second adapter (Ethernet as well as wifi, or a virtual one from VirtualBox, Docker or a VPN) keeps the others behind a fold, because two equal codes under a heading that says *this* is half the crew scanning an address their phone cannot reach. |
 | `/picklist/print` | the hub laptop | Paper fallback for alliance selection. |
 
 And one that is not this process at all: the **off-site mirror**, a separate website on a host
@@ -287,7 +288,11 @@ so the legend never re-shuffles under the reader.
   relationship. A team far off the agreement line is one the two sets of scouts read
   differently — usually a robot one of them has seen fewer times.
 
-The side pane counts how many teams each source has anything for, lists the busiest defenders
+The side pane counts how many teams each source has anything for — Lovat's as `N of M here`,
+with how many rows arrived, how long ago they were fetched, and how many playoff rows were
+counted but could not be placed on our schedule. An empty LOVAT column has three causes that
+look identical everywhere else (no key, a 403 backing us off, nobody having uploaded that robot)
+and this is the line that tells them apart. It also lists the busiest defenders
 and the most-defended robots, and — from Lovat only — how many seconds into a match each robot
 leaves to go and climb. Our own scouting cannot produce that number: a scout with two thumbs
 cannot time a climb.
@@ -377,7 +382,7 @@ Nothing at the venue degrades when it is red.
 ### MATCH
 
 Both alliances side by side: projected fuel and points, win probability with the margin it came
-from, and each robot's fuel and climb. It follows the field — on-field, then queuing, then the
+from, and each robot's fuel, climb and **what Lovat's scouts counted on it**. It follows the field — on-field, then queuing, then the
 next unplayed match — until you pick a specific match from the dropdown, after which it holds
 still so a refresh does not move it while you are reading.
 
@@ -386,6 +391,12 @@ Two warnings fire here:
 - **AUTO** — two robots on the same alliance that habitually start in the same zone. Worth
   asking about before the match rather than watching it happen.
 - **EXPECT DEFENCE** — an opponent with a logged history of defending someone in this lineup.
+
+This is the screen where a robot our own crew has never watched turns up most often, and the one
+where somebody else's scouting is most use. Its row reads **not scouted** rather than a number,
+carries TBA's climb for it anyway, and carries Lovat's count beside that. The PROJECTED FUEL
+tile says how many of the three we actually have — and that Lovat has one of the others, when it
+does. Lovat never enters the projection: the sum is ours, and theirs sits next to it.
 
 **HOW TO PLAY IT** is generated (see [AI](#ai)) and only appears with a model configured. Four
 labelled lines: how the alliances compare, the one opposing robot that decides the match, who
@@ -433,7 +444,7 @@ confidently wrong. `server/analytics.py` enforces the split.
 
 | Block | Source | Trust |
 |---|---|---|
-| `exact` | The Blue Alliance | Exact. Rank, record, ranking points, OPR, per-robot climb per match, auto climb, tower points. |
+| `exact` | The Blue Alliance | Exact. Rank, record, ranking points, OPR, per-robot climb per match, auto climb, tower points. Taken off the **schedule**, not off our own scouting, so it is there for every robot at the event whether or not one of our scouts sat on it — which is the robot you most want it for. Blank until an official result lands, never a zero. |
 | `estimated` | our solver | Estimated, **always** carries a band. Fuel per match, consistency, cycle rate. |
 | `observed` | the scouts | Reliable in kind, not in magnitude — yes/no answers, ratings, counts. |
 | `epa` | Statbotics | An independent outside read, which is why it earns a place beside a number we produced ourselves. |
@@ -456,11 +467,12 @@ pits about.
 |---|---|
 | fuel, throughput, fuel per second, accuracy, volleys | their scouts' count of the same robot, next to ours |
 | feeding — seconds, rate, feeds per match, balls fed | |
-| defence — total, contact, camping, effectiveness | |
-| **climb start time**, per level, and auto climb start | the second the robot left to go and climb. Theirs is a timer and ours is the CLIMB button's own timestamp, so the two sit in different blocks — but ours is no longer blank |
-| climbs and climb rate per level, best climb | `L2`, `Level 2` and `2` all normalise onto our vocabulary; a label we cannot read is unknown, never a failed climb |
+| defence — total, contact, camping, effectiveness | contact and camping shown apart where they differ: pushing and parking are answered differently, and our own scouting has no word for the second |
+| **climb start time**, per level, and auto climb start | the second the robot left to go and climb. Theirs is a timer and ours is the CLIMB button's own timestamp, so the two sit in different blocks — but ours is no longer blank. Drawn per level as well as pooled: leaving at 128s for an L3 is quick, leaving at 128s for an L1 is a robot that gave up half the endgame |
+| climbs and climb rate per level, best climb | `L2`, `Level 2` and `2` all normalise onto our vocabulary; a label we cannot read is unknown, never a failed climb. Shown per level, because "best climb L2" is the same line for a robot that made one in nine matches of ten and one that made it once |
+| **auto climb, split three ways** | `SUCCEEDED` / `FAILED` / `NOT_ATTEMPTED`. One percentage cannot tell "never tried" from "tried and fell off", and those are different robots to put on an alliance |
 | points — total, auto, teleop — and driver ability | |
-| beached, scores-while-moving, disrupts, field traversal | booleans, counted as a rate over the rows that answered |
+| beached, scores-while-moving, disrupts, field traversal | a rate over the rows that answered. Three of these are enums in Lovat's schema and were booleans in an older export, so both spellings are read — and only the enum carries a *kind* beside the rate, which is what the panel shows |
 | outpost intakes, robot roles, feeder types, intake type | |
 | scouter names and free-text notes | notes are shown beside ours, tagged `· lovat` |
 
@@ -638,7 +650,7 @@ the moment the hub is reachable; nobody has to do anything.
 If a phone cannot find the hub at its last known address, it re-scans the local network. A
 scout who is truly stuck can use **SAVE A BACKUP FILE** and hand the file over later.
 
-On the hub: the whole database is snapshotted every ten minutes, keeping the last twelve.
+On the hub: the whole database is snapshotted every ten minutes in which something was written, keeping the last twelve. The skip matters on a hub that holds a season - pit photos live in the database and no event is ever removed, so a snapshot is most of a hundred megabytes, and one left running overnight between the two days of a competition used to write about eighty identical copies of a database nobody had touched. Nothing is lost by skipping: with no write since, the newest snapshot already is the current database. The SERVER tab says so rather than letting an old timestamp read as a fault.
 Recovering is copying one file over another. **JSON export** round-trips through **import**
 under the same last-write-wins rule, so re-importing the same file is a no-op and merging two
 laptops is safe.
@@ -696,7 +708,7 @@ are the only settings a new competition needs.
 | **Nexus** — required | Live queueing and match status, pit map, pit addresses, inspection, alliance selection. Its `On field` is what arms the match screen on the phones; without it every scout has to tap **THEY'RE ON THE FIELD** by hand, six times an hour. |
 | **Nexus webhook token** | Only if you registered a push webhook. |
 | **FRC Events** | The official result a few minutes before TBA posts it. Does not feed the solver. A username and a token: the token is a UUID (`8-4-4-4-12` hex digits) and does not expire, and the box warns — never refuses — when what was pasted is not that shape. Pasting the joined `username:token`, or the base64 `Basic` blob out of their documentation, fills in both boxes: that blob is only `base64("username:token")`, which is what the API actually sends. |
-| **Lovat API key** | Other teams' scouting for this event. It starts `lvt-`, and there is no screen anywhere in Lovat that makes one — the endpoints are on their server and nothing in their own apps calls them, so it is a `POST /v1/manager/apikey` carrying the `Authorization` header off a signed-in dashboard request (setup.md has the steps). Your team email has to be verified on Lovat first, which is what their 403 means. Polled once every five minutes — Lovat allows one request every three seconds per key, so the hub stays well inside it. The export is scoped to what your Lovat account is allowed to see, so a short list is a setting on their side, not a failure on ours. |
+| **Lovat API key** | Other teams' scouting for this event. It starts `lvt-`, and there is no screen anywhere in Lovat that makes one — the endpoints are on their server and nothing in their own apps calls them, so it is a `POST /v1/manager/apikey` carrying the `Authorization` header off a signed-in dashboard request. `python3 server/lovat_key.py` does that exchange: paste the `profile` request out of the browser's Network tab in any form the browser offers, and it extracts the credential, checks its expiry locally before spending a request, mints the key, writes it into `.env` base64-encoded, and separates Lovat's two 403s — the one that means your team is not verified yet from the one that means you pasted a key where the token goes. `--list` and `--revoke` use the same credential. setup.md has the browser steps and the by-hand curl. Your team email has to be verified on Lovat first, which is what their 403 means. Polled once every five minutes — Lovat allows one request every three seconds per key, so the hub stays well inside it. The export is scoped to what your Lovat account is allowed to see, so a short list is a setting on their side, not a failure on ours. |
 | **AI model** | One list, grouped Claude / Gemini / OpenAI / OpenRouter, each option priced per million tokens. Picking a model picks who it is sent to, so there is no provider field to get wrong. Starts on **Claude Opus 5**, so pasting a key is enough — you never have to touch the list. *none* turns the three panels below off entirely, and stays off even with a key in the box. **other** takes a typed model id for anything released after this list was written; the name decides where it is sent. |
 | **OpenRouter** | The fourth group, and not a model-maker: one key and one bill in front of everybody else's models, including the open-weight ones nobody else sells. Its ids name the maker first — `anthropic/claude-opus-5` — and a slash in the id is the whole routing rule, so the same model bought direct and bought through OpenRouter stay two different choices with two different keys. The list shows three; **other** takes any of the hundreds it carries. Prices are the makers' own; OpenRouter takes its cut when the credit is bought. |
 | **AI key** | The key for whoever the model above goes to. A key from any of the others is refused here rather than saved: that mismatch has no symptom anywhere except every AI answer reading *the model could not be reached*. The pair worth naming is an `sk-or-` key under `claude-opus-5` rather than `anthropic/claude-opus-5` — the two read the same and only one of them takes it. |
@@ -888,6 +900,23 @@ online will ask about whatever event key it holds, and for an event that does no
 demo, a restored snapshot under a placeholder key — it gets a truthful "nothing" back and stores
 that over what was there. The hub notes in its log when polling is off, because a source that is
 silent and a source that is down must not look the same.
+
+```
+python3 server/lovat_key.py [--name "6059 scouting hub"] [--list] [--revoke UUID]
+                            [--show] [--no-save]
+```
+
+Mints a Lovat API key and writes it into `.env`. Copy the `profile` request out of a signed-in
+dashboard's Network tab and run it: it reads the clipboard itself (`Get-Clipboard` on Windows,
+`pbpaste` on macOS, `wl-paste`/`xclip`/`xsel` on Linux — all things the system already has), and
+falls back to asking for a paste, which is what `--paste` forces and what a headless machine
+gets. `--from-file PATH` is the third route. Whichever it is, the token is found inside whatever
+form the browser copied: the whole `curl` command, the `fetch` version, the `authorization:`
+line, or the token alone. A pasted credential is read off stdin rather than taken as an
+argument, because it is a password for 72 hours and an argument would be in the shell's history
+and in the process list. `--no-save` prints the key instead of writing it; `--show` does both.
+Nothing here needs `curl`, or a particular shell. `get-lovat-key.bat` and
+`get-lovat-key.command` are double-click wrappers, beside the two for the hub itself.
 
 ```
 python3 server/seed_demo.py [--db data/demo.db] [--event 2026demo] [--teams 31] [--matches 40] [--via-nexus]
