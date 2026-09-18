@@ -30,6 +30,10 @@
     background: transparent; color: var(--t1); cursor: pointer;
     font: 800 10.5px Barlow, sans-serif; letter-spacing: .12em; }
   .tbtn.go { background: var(--red); border-color: var(--red); color: #fff; }
+  /* Quieter than BACK and NEXT: always available, never the thing being
+     suggested. Somebody who has done this before should not have to hunt. */
+  #tSkip { border-color: transparent; color: var(--t5); padding-left: 8px; padding-right: 8px; }
+  #tSkip:hover { color: var(--t1); }
   .tbtn:disabled { opacity: .4; cursor: default; }
   .stage { flex: 1; min-height: 0; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
   .say { max-width: 760px; }
@@ -106,6 +110,7 @@
     <span class="ttl" id="tTitle">WHAT YOU ARE ACTUALLY DOING</span>
     <span class="sp"></span>
     <span class="pips" id="tPips"></span>
+    <button class="tbtn" id="tSkip" title="Leave the tutorial and open the real scouting screen">SKIP</button>
     <button class="tbtn" id="tBack">BACK</button>
     <button class="tbtn go" id="tNext">NEXT</button>
   </div>
@@ -291,6 +296,7 @@ const mmss = (t) => Math.floor(t / 60) + ':' + String(Math.floor(t % 60)).padSta
 // ═══════════════════════════════════════════════════════════════ steps ═══
 const STEPS = [
 {
+  id: 'why',
   title: 'WHAT YOU ARE ACTUALLY DOING',
   next: 'SHOW ME THE SEAT',
   build(stage) {
@@ -316,6 +322,7 @@ const STEPS = [
   },
 },
 {
+  id: 'seat',
   title: 'TAKE A SEAT',
   next: 'NOW THE TWO THUMBS',
   build(stage) {
@@ -363,11 +370,13 @@ const STEPS = [
       your seat. There is no field map here on purpose: nothing to mirror, nothing to get
       backwards. A station already taken shows the other scout's initials; tapping it anyway
       takes the chair from them, and their phone says so immediately.</div></div>`));
-    function tick() { $('#tNext').disabled = !(seat.scout && seat.station); }
-    tick();
+    // Deliberately not gated. Trying it is the lesson; being held here is not,
+    // and there is a SKIP in the bar for anyone who does not need the lesson.
+    function tick() {}
   },
 },
 {
+  id: 'thumbs',
   title: 'THE TWO THUMBS',
   next: 'I HAVE THE IDEA',
   build(stage) {
@@ -390,8 +399,10 @@ const STEPS = [
   },
 },
 {
+  id: 'match',
   title: 'A PRACTICE MATCH',
   next: 'SEE HOW I DID',
+  skipTo: 'rest',
   build(stage) {
     held = [];
     let t = 0, running = false, done = false, raf = 0, t0 = 0;
@@ -456,7 +467,7 @@ const STEPS = [
       robot.classList.remove('shooting');
       $('[data-w]', robot).textContent = 'MATCH OVER';
       $('[data-h]', robot).textContent = '';
-      $('#tNext').disabled = false;
+      $('#tNext').textContent = 'SEE HOW I DID';
       buzz([20, 60, 20]);
     }
     $('[data-start]', bar).onclick = () => {
@@ -468,8 +479,12 @@ const STEPS = [
       frame();
     };
     $('[data-undo]', bar).onclick = () => { held.pop(); repaint(); buzz(8); };
-    $('#tNext').disabled = true;
-    $('[data-tip]', bar).textContent = 'the NEXT button unlocks when the match ends';
+    // Eighty seconds is a long time to be unable to leave a page. NEXT stays
+    // live and simply means something else until a match has been run: there is
+    // no scorecard to show without one, so it goes past it rather than to a
+    // wall of zeros.
+    $('#tNext').textContent = 'SKIP THE PRACTICE';
+    $('[data-tip]', bar).textContent = 'or press SKIP THE PRACTICE to move on';
     repaint();
     return () => {
       running = false;
@@ -479,9 +494,21 @@ const STEPS = [
   },
 },
 {
+  id: 'score',
   title: 'HOW YOU DID',
   next: 'AND AFTER THE BUZZER',
   build(stage) {
+    if (!held.length) {
+      stage.appendChild(el(`<div class="say">
+        <h2>Nothing to score yet.</h2>
+        <p>You have not run the practice match, so there is nothing to compare. It is eighty
+           seconds and it is the only part of this that needs a hand rather than a memory.</p>
+      </div>`));
+      const b = el(`<div><button class="tbtn go" style="padding:11px 20px">RUN THE PRACTICE MATCH</button></div>`);
+      b.firstChild.onclick = () => go(index('match'));
+      stage.appendChild(b);
+      return;
+    }
     // Overlap against the script, in match seconds. `covered` is the half that
     // decides a robot's number; `wrong` is the half that quietly inflates it.
     const step = 0.1;
@@ -568,11 +595,12 @@ const STEPS = [
       stage.appendChild(el(`<div class="coach"><div class="h">${h}</div><div class="b">${b}</div></div>`));
     }
     const again = el(`<div><button class="tbtn" style="padding:10px 18px">RUN IT AGAIN</button></div>`);
-    again.firstChild.onclick = () => go(3);
+    again.firstChild.onclick = () => go(index('match'));
     stage.appendChild(again);
   },
 },
 {
+  id: 'rest',
   title: 'AFTER THE BUZZER, AND WHEN THINGS GO WRONG',
   next: 'DONE',
   build(stage) {
@@ -610,6 +638,8 @@ const STEPS = [
 ];
 
 // ═══════════════════════════════════════════════════════════════ shell ═══
+const index = (id) => STEPS.findIndex((s) => s.id === id);
+
 let teardown = null;
 function go(n) {
   if (teardown) { try { teardown(); } catch (e) {} teardown = null; }
@@ -623,13 +653,22 @@ function go(n) {
   $('#tPips').innerHTML = STEPS.map((_, i) =>
     `<i class="${i === step ? 'on' : i < step ? 'did' : ''}"></i>`).join('');
   $('#tBack').disabled = step === 0;
-  $('#tNext').disabled = false;
   $('#tNext').textContent = step === STEPS.length - 1 ? 'START OVER' : (s.next || 'NEXT');
   teardown = s.build(stage) || null;
   try { localStorage.setItem('tutorialStep', String(step)); } catch (e) {}
 }
-$('#tNext').onclick = () => go(step === STEPS.length - 1 ? 0 : step + 1);
+$('#tNext').onclick = () => {
+  // A step may know somewhere better to go than the next one - the practice
+  // match sends a scout who skipped it past a scorecard that would be all
+  // zeros.
+  const to = STEPS[step].skipTo && !held.length ? index(STEPS[step].skipTo) : -1;
+  go(to >= 0 ? to : (step === STEPS.length - 1 ? 0 : step + 1));
+};
 $('#tBack').onclick = () => go(step - 1);
+// Out, to the thing this is a tutorial for. Not a confirm: it is a tutorial,
+// and asking somebody whether they are sure they want to stop being taught is
+// the kind of politeness that reads as being trapped.
+$('#tSkip').onclick = () => { location.href = '/scout'; };
 go(0);
 })();
 </script>
