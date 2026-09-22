@@ -475,7 +475,18 @@ function openTeam(team) {
       ${cell('START ZONE', esc(ob.startZone ? ob.startZone + (ob.startLane ? ` · ${ob.startLane}` : '') : '—'))}
       ${cell('CLIMB LEAVES AT', ob.climbStartSecs == null ? '—' : `${num(ob.climbStartSecs, 0)}<small>s</small>`)}
       ${cell('LOVAT FUEL', t.lovat?.matches ? num(t.lovat.avgFuel, 0) : '—')}
+      ${cell('ALLIANCE FUEL · VIDEO', t.vision?.avgAllianceFuel == null ? '&mdash;'
+        : `${num(t.vision.avgAllianceFuel, 0)}<small> all three</small>`)}
     </div>
+    ${t.vision?.matchesSeen ? `<div class="who" style="margin-top:10px">
+      ALLIANCE FUEL · VIDEO is read off the broadcast score banner and is all
+      three robots together — the banner never says which of them scored.
+      ${t.vision.matchesSeen} match(es) of footage${
+        t.vision.matchesSeen > (t.vision.matches || 0)
+          ? `, ${t.vision.matchesSeen - (t.vision.matches || 0)} of them unreadable`
+          : ''}${t.vision.matchesElsewhere
+          ? `, ${t.vision.matchesElsewhere} from another event` : ''}.
+      </div>` : ''}
     ${pit ? pitBlock(pit) : ''}
     ${shots.length ? `<div class="eyebrow" style="margin-top:16px">PIT PHOTOS</div>
       <div class="shots">${shots.map((p) =>

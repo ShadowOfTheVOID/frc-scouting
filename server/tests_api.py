@@ -1941,9 +1941,16 @@ def test_scope_lists_are_complete(L):
          lambda: analytics._event_summary(st, EK, include_scouts=True)),
         ("CREW_SCOPES", hub.CREW_SCOPES, {"scout_entries"}, lambda: h.crew()),
         ("SEATLOG_SCOPES", hub.SEATLOG_SCOPES, set(), lambda: h.seat_history()),
+        # The cache has to be dropped first, and this is not a detail: the
+        # bundle reaches analytics through the MEMOIZED event_summary, so a
+        # warm cache means the spy sees none of the kv rows it reads and any
+        # scope missing from this list passes unnoticed. That is not
+        # hypothetical - `kv:vision` was absent from BUNDLE_SCOPES and this
+        # check stayed green, which meant new footage never triggered a push.
         ("BUNDLE_SCOPES", offsite.BUNDLE_SCOPES,
          {"events", "teams", "matches", "flags", "scout_entries", "pit_entries",
-          "photos", "solved"}, lambda: offsite.build_bundle(h, EK)),
+          "photos", "solved"},
+         lambda: (analytics._caches.clear(), offsite.build_bundle(h, EK))),
     ]
     try:
         Store.get, Store.mutate = spy_get, spy_mutate

@@ -469,6 +469,14 @@ match anybody filmed, including events this team never attended.
 | `GET /api/vision?match=<key>` | one match's scoring curve, fetched live |
 | `GET /api/analytics` | per-team totals, in each team's `vision` block |
 
+On the mirror too: the `vision` block rides in the bundle, so the broadcast
+numbers are readable off-site with the hub laptop closed. The mirror does not
+poll the harvest itself — it "never opens a connection of its own" — and for
+this source that costs nothing, because harvesting video happens between
+events rather than during a match, so the last pushed copy and the live one
+are the same numbers. Taking the harvest *API* off a laptop is the part worth
+doing, and it is a systemd unit in the harvest repo.
+
 Three states, not two, and the dashboard needs all three: **no harvest configured** (the
 normal case — it is a separate tool on somebody's laptop), **a harvest with no footage of
 anybody here**, and **a harvest with some**. The first two are identical in the per-team

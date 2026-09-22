@@ -694,6 +694,14 @@ python3 run.py db sync           # build its database
 python3 serve.py                 # 127.0.0.1:8781
 ```
 
+**For anything beyond trying it out, don't run that last line on a laptop.** It
+stops when the lid closes, and this app then shows an empty column that looks exactly like
+*the harvest has no footage of these robots* — a different problem with a different fix. The
+harvest repo has a systemd unit and a `deploy/HOSTING.md` for putting the API on a host,
+alongside the off-site mirror if you run one. There are no keys to set: that API is read-only
+and GET-only. Then the address below points at the host, and the only thing that still has to
+be running is this hub — which is running anyway, because it is what the phones talk to.
+
 Then paste that address into **VIDEO HARVEST** on the admin panel and press SAVE & REFRESH.
 There is no key — the API is read-only and GET-only. **TEST KEYS** checks it like the rest, and
 can tell *nothing is listening* apart from *running, but no video pulled yet*, which look the
@@ -708,7 +716,10 @@ is the one thing in this app that no other source can produce.
 
 `GET /api/vision` gives what it has on this event's robots, and
 `GET /api/vision?match=2026casj_qm42` gives one match's curve. Per-team numbers arrive on
-`/api/analytics` in a `vision` block beside `lovat`.
+`/api/analytics` in a `vision` block beside `lovat`, and ride to the mirror in the bundle — so
+the broadcast numbers are readable off-site with the laptop closed. The mirror does not fetch
+them itself; see [mirror/README.md](mirror/README.md) for why that is deliberate, and why it
+does not matter for this source.
 
 ### What it is not
 

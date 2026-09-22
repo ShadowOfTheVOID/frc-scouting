@@ -25,6 +25,26 @@ connection of its own. Two kinds of thing arrive from the hub — a bundle, and
 the pit photos it does not already have — and everything else is reading those
 back out.
 
+### What that means for the video harvest
+
+The bundle carries the `vision` block, so the broadcast numbers are on the
+mirror and readable with the hub laptop closed.
+
+The mirror does **not** fetch them itself, and that is the "never opens a
+connection of its own" rule above rather than an omission. The hub is what
+polls the harvest API and folds the numbers into the bundle it pushes, so with
+the hub off the mirror keeps serving the last copy it was pushed — which is the
+right answer here, because this source barely moves. Harvesting video is
+something you do between events, not during a match, so "as of the last push"
+and "now" are the same numbers.
+
+What *is* worth taking off a laptop is the harvest API itself, so nobody has to
+start it. It runs under systemd on the same host as this mirror; see
+`deploy/HOSTING.md` in the harvest repo. Then the hub's **VIDEO HARVEST**
+address points at the host instead of somebody's laptop, and the only thing
+left that has to be running is the hub — which is running anyway, because it is
+the thing the phones talk to.
+
 ---
 
 ## Set it up

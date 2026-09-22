@@ -89,7 +89,8 @@ def _digest(bundle):
 # event and hashing it, once a minute, forever, to discover nothing had moved.
 BUNDLE_SCOPES = ("events", "teams", "matches", "flags", "scout_entries",
                  "pit_entries", "photos", "solved",
-                 "kv:rankings", "kv:epa", "kv:lovat", "kv:alliances", "kv:pits",
+                 "kv:rankings", "kv:epa", "kv:lovat", "kv:vision",
+                 "kv:alliances", "kv:pits",
                  "kv:pitMap", "kv:inspection", "kv:matchClocks", "kv:clockFixes",
                  "kv:multipliers", "kv:multipliersFittedFrom", "kv:picklist",
                  "kv:ourTeam", "kv:hubId")
