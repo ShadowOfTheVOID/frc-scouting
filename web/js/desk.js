@@ -29,7 +29,7 @@ const activeWeights = () => (PICK_MODE === 'first' ? WEIGHTS : WEIGHTS2);
 const CLIMB_RANK = { Level3: 3, Level2: 2, Level1: 1, None: 0 };
 
 const RANK_COLS = '56px minmax(120px,1fr) 84px 74px 52px 44px 86px';
-const ALL_COLS  = '62px 56px minmax(160px,1fr) 84px 74px 62px 60px 62px 62px 56px 52px 70px 64px';
+const ALL_COLS  = '62px 56px minmax(160px,1fr) 84px 74px 62px 60px 62px 62px 56px 52px 70px 84px 64px';
 
 // ------------------------------------------------------------------ bits
 /** TBA's climb for one robot, or a dash for one no result has landed for.
@@ -263,7 +263,7 @@ const ALL_HEAD = [
   ['rank', 'RANK', 2], ['team', 'TEAM', 0], ['name', 'NAME', 0], ['fuel', 'FUEL/MATCH', 1],
   ['climb', 'CLIMB', 1], ['epa', 'EPA', 1], ['tower', 'TOWER', 1], ['stock', 'STOCK', 1],
   ['waste', 'WASTED', 1], ['died', 'DIED', 1], ['drv', 'DRIVER', 1],
-  ['lovat', 'LOVAT', 1], ['n', 'MATCHES', 1],
+  ['lovat', 'LOVAT', 1], ['vision', 'ALLIANCE·VID', 1], ['n', 'MATCHES', 1],
 ];
 function sortVal(t, k) {
   switch (k) {
@@ -279,6 +279,7 @@ function sortVal(t, k) {
     case 'died': return -t.observed.diedRate;
     case 'drv': return t.observed.driver ?? 0;
     case 'lovat': return (t.lovat && t.lovat.avgFuel) ?? -1;
+    case 'vision': return (t.vision && t.vision.avgAllianceFuel) ?? -1;
     case 'n': return t.matchesScouted;
     default: return 0;
   }
@@ -375,9 +376,67 @@ function lovatCell(t) {
   return `${Math.round(t.lovat.avgFuel)} <span class="band">n${lovatN(t)}</span>`;
 }
 
+/**
+ * Fuel read off the broadcast score banner — for this robot's ALLIANCE.
+ *
+ * The column is called ALLIANCE·VID and not anything shorter on purpose. This
+ * number sits four columns along from FUEL/MATCH and is roughly three times
+ * it, because it is what all three robots put up together; a header that did
+ * not say so would be read as this robot having a very good event. The banner
+ * says an alliance scored and never which of its three did.
+ *
+ * `n` is matches whose banner read cleanly, which is what the average is over.
+ * A dash is no footage, which is the normal case and is not a zero.
+ */
+function visionN(t) { return (t.vision && t.vision.matches) || 0; }
+
+/**
+ * The ALLIANCE·VID column has three empty states and they are not the same.
+ *
+ * No harvest configured is the normal one - it is a separate tool on
+ * somebody's laptop and most hubs will never have one. A harvest that is
+ * running with no footage of anybody here is a different thing, and a harvest
+ * that answered for some teams and then stopped is a third. All three look
+ * like an empty column, and only one of them is worth doing anything about.
+ */
+function visionNote(vc, at) {
+  if (!vc || !vc.configured) {
+    return 'No video harvest set up, so the ALLIANCE·VID column is blank '
+         + 'everywhere — it is not a zero. It is a separate tool; most hubs '
+         + 'never have one.';
+  }
+  const counts = vc.counts || {};
+  const when = at ? `, last read ${esc(ago(secsSince(at)))}` : '';
+  if (!vc.covered) {
+    return counts.matches
+      ? `The harvest holds ${counts.matches} match${counts.matches === 1 ? '' : 'es'} `
+        + `and none of them are these robots${when}.`
+      : `The harvest is running but has no video in it yet${when} — `
+        + 'somebody has to pull some on that machine.';
+  }
+  return `${vc.covered} robot${vc.covered === 1 ? '' : 's'} here have footage${when}`
+       + (vc.unreadable
+          ? ` · ${vc.unreadable} match${vc.unreadable === 1 ? '' : 'es'} filmed whose `
+            + 'score banner would not read — counted as seen, never averaged'
+          : '')
+       + (vc.complete === false
+          ? ' · the last read ran short and stopped early, so this is a floor'
+          : '') + '.';
+}
+function visionCell(t) {
+  const v = t.vision || {};
+  if (v.avgAllianceFuel == null) return '<span class="band">—</span>';
+  // Dimmed, like every other number on this page that is not ours.
+  return `<span style="opacity:.8">${Math.round(v.avgAllianceFuel)}</span>`
+       + ` <span class="band">n${visionN(t)}</span>`;
+}
+
 function renderTeams() {
   if (!ANALYTICS) return;
-  const rows = Object.values(ANALYTICS.teams).filter((t) => t.matchesScouted || lovatN(t));
+  // A robot the harvest has footage of is worth a row even with no scouting and
+  // nothing from Lovat: it is the case where the broadcast is all there is.
+  const rows = Object.values(ANALYTICS.teams)
+    .filter((t) => t.matchesScouted || lovatN(t) || visionN(t));
   rows.sort((a, b) => (sortVal(a, sortKey) - sortVal(b, sortKey)) * sortDir);
   $('#allHead').style.gridTemplateColumns = ALL_COLS;
   $('#allHead').innerHTML = ALL_HEAD.map(([k, l, n]) =>
@@ -396,6 +455,7 @@ function renderTeams() {
       <span class="num">${Math.round(t.observed.diedRate)}%</span>
       <span class="num">${t.observed.driver ?? '—'}</span>
       <span class="num">${lovatCell(t)}</span>
+      <span class="num">${visionCell(t)}</span>
       <span class="num">${t.matchesScouted}</span>
     </div>`).join('') || '<div class="empty">No scouted teams yet.</div>';
 
@@ -1333,10 +1393,37 @@ function teamCharts(t) {
   if (faced.some((v) => v)) defSeries.push({ label: 'faced', color: 'var(--s2)', values: faced });
   if (lovatDef.some((v) => v)) defSeries.push({ label: 'played (lovat)', color: 'var(--s3)', values: lovatDef });
 
+  // Deliberately its own chart, and NOT a third series on the one above.
+  //
+  // An alliance total is about three times a robot's, so drawn on that axis it
+  // would either sit far above every other line or flatten ours into the floor
+  // - and a reader who took it for this robot's number would be reading it
+  // exactly as the block is designed not to be read. Its own axis, its own
+  // x (the harvest has footage from other events, which are not on our
+  // schedule), and a caption that says whose number it is.
+  const vis = (t.vision || {}).perMatch || [];
+  const visRows = vis.filter((r) => r.allianceFuel != null);
+  const visChart = visRows.length ? chart.line({
+    x: visRows.map((r) => ({ key: r.matchKey, label: r.matchKey,
+                             short: shortCode(matchLabel(r.matchKey)) })),
+    series: [{ label: 'alliance', color: 'var(--s4)',
+               values: visRows.map((r) => r.allianceFuel) }],
+    unit: 'fuel this robot’s ALLIANCE put up',
+    caption: 'Read off the broadcast score banner. This is all three robots '
+           + 'together — the banner never says which of them scored. Matches '
+           + 'whose banner did not read are left out rather than drawn as zero.',
+    height: 170,
+  }) : '';
+
   return `
     <div class="tbl"><div class="cap"><span class="t">FUEL BY MATCH</span>
       <span class="n">estimated — one point per match this robot played</span></div>
       <div style="padding:12px 16px 16px">${fuel}</div></div>
+    ${visChart ? `
+    <div class="tbl"><div class="cap"><span class="t">ALLIANCE FUEL BY MATCH — FROM VIDEO</span>
+      <span class="n">alliance-level, not this robot — ${visRows.length} match${
+        visRows.length === 1 ? '' : 'es'} of footage</span></div>
+      <div style="padding:12px 16px 16px">${visChart}</div></div>` : ''}
     ${defSeries.length ? `
     <div class="tbl"><div class="cap"><span class="t">DEFENCE BY MATCH</span>
       <span class="n">seconds of contact — played, and taken from the other alliance</span></div>
@@ -1359,6 +1446,7 @@ function renderTeamDetail() {
   const pit = ((STATE && STATE.pitEntries) || []).find((p) => p.team === openTeam);
   const o = t.observed, e = t.exact, es = t.estimated;
   const lv = t.lovat || {}, lvN = lovatN(t);
+  const vs = t.vision || {}, vsN = visionN(t);
   $('#tdMain').innerHTML = `
     <div style="display:flex;align-items:flex-end;gap:14px">
       <div style="font:700 54px/.9 'Barlow Condensed',sans-serif">${t.team}</div>
@@ -1456,6 +1544,26 @@ function renderTeamDetail() {
         ${(lv.unmatched || []).length ? `<div class="hint" style="margin-top:6px">${
           lv.unmatched.length} row${lv.unmatched.length > 1 ? 's' : ''} we could not place on our
           schedule (${esc(lv.unmatched.join(', '))}) — counted here, not joined to a match.</div>` : ''}
+      </div></div>` : ''}
+    ${vsN ? `
+    <div class="tbl"><div class="cap"><span class="t">FROM THE BROADCAST</span>
+      <span class="n">read off the score banner — this robot’s alliance, not this robot</span></div>
+      <div style="padding:6px 16px 12px">
+        <div class="kv"><span>alliance fuel / match</span><b>${
+          vs.avgAllianceFuel ?? '—'} <span class="band">all three robots</span></b></div>
+        <div class="kv"><span>matches read cleanly</span><b>${vsN}${
+          vs.matchesSeen > vsN
+            ? ` <span class="band">of ${vs.matchesSeen} filmed — ${
+                vs.matchesSeen - vsN} unreadable</span>` : ''}</b></div>
+        <div class="kv"><span>where the footage is from</span><b>${
+          [vs.matchesHere ? `${vs.matchesHere} here` : '',
+           vs.matchesElsewhere ? `${vs.matchesElsewhere} at other events` : '']
+            .filter(Boolean).join(' · ') || '—'}</b></div>
+        <div class="hint" style="margin-top:6px">Feeds nothing. The solver divides an
+          official alliance total between three robots, so a third of a banner reading is
+          not a measurement of one of them${vs.matchesElsewhere
+            ? ' — but footage from an event we were not at is the only look we have at this robot before it lines up against us'
+            : ''}.</div>
       </div></div>` : ''}
     <div class="tbl"><div class="cap"><span class="t">WHAT THE NOTES ADD UP TO</span>
       <span class="n">generated — a reading of the notes below, not a measurement</span></div>
@@ -1770,11 +1878,18 @@ function renderGraphs() {
   const lc = (ANALYTICS && ANALYTICS.lovatCoverage) || null;
   const lvAt = CONFIG && CONFIG.status && CONFIG.status.lovat;
   const lvKey = !!(CONFIG && CONFIG.keys && CONFIG.keys.lovat);
+  const vc = (ANALYTICS && ANALYTICS.vision) || null;
+  const vsAt = CONFIG && CONFIG.status && CONFIG.status.vision;
   $('#gSources').innerHTML = `
     <div class="kv"><span>teams our scouts have seen</span><b>${rows.filter((t) => t.matchesScouted).length}</b></div>
     <div class="kv"><span>teams lovat has</span><b>${lc && lc.teams
       ? `${lc.teams} <span class="band">of ${lc.ofTeams} here</span>` : '—'}</b></div>
     <div class="kv"><span>teams statbotics has</span><b>${withEpa || '—'}</b></div>
+    <div class="kv"><span>teams with footage</span><b>${vc && vc.configured
+      ? (vc.covered
+          ? `${vc.covered} <span class="band">of ${vc.teams} here</span>`
+          : '<span class="band">none yet</span>')
+      : '—'}</b></div>
     <div class="hint" style="margin-top:8px">${lc && lc.rows
       ? `${lc.rows} row${lc.rows === 1 ? '' : 's'} from their scouts${lvAt
           ? `, last fetched ${esc(ago(secsSince(lvAt)))}` : ''}${lc.unplaced
@@ -1783,7 +1898,8 @@ function renderGraphs() {
       : lvKey
         ? 'Lovat has nothing for this event yet — nobody there has uploaded it.'
         : 'No Lovat key on the hub, so their column is blank everywhere — it is not a zero.'
-      }</div>`;
+      }</div>
+    <div class="hint" style="margin-top:8px">${visionNote(vc, vsAt)}</div>`;
 
   const defenders = rows.filter((t) => t.observed.defenseSecs)
     .sort((a, b) => b.observed.defenseSecs - a.observed.defenseSecs).slice(0, 5);
