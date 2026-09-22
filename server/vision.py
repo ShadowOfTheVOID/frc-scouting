@@ -264,7 +264,15 @@ def team_record(detail, our_event=""):
         avg = sum(clean) / len(clean)
 
     return {
-        "matches": _int(summary.get("matches_played")) or len(clean),
+        # `matches`, which is what the harvest's `team_summary` view calls it.
+        # This read `matches_played` first -- a name that view has never had --
+        # so it was always None and always fell through to the count below.
+        # That fallback agrees most of the time, which is why it went unnoticed:
+        # the view counts rows with scoreboard_ok=1 and this counts rows that
+        # also parsed to a number, so a clean read with a null total is counted
+        # by one and not the other. The test fixture had invented the same
+        # wrong name, so nothing caught it.
+        "matches": _int(summary.get("matches")) or len(clean),
         "matchesSeen": len(per_match),
         "avgAllianceFuel": round(avg, 1) if avg is not None else None,
         "totalAllianceFuel": _int(summary.get("total_alliance_fuel")),

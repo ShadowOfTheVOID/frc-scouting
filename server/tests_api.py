@@ -2919,7 +2919,14 @@ def test_vision(L):
                 "/teams": {"teams": [{"team": 101}, {"team": 102}, {"team": 999}]},
                 "/teams/101": {
                     "team": 101,
-                    "summary": {"matches_played": 2, "total_alliance_fuel": 300,
+                    # Exactly the columns the harvest's `team_summary` view
+                    # has: team, matches, total_alliance_fuel,
+                    # avg_alliance_fuel. A fixture that invents a name tests
+                    # nothing -- this said `matches_played`, which that view
+                    # has never had, so it agreed with a client reading the
+                    # same wrong name and the bug survived both.
+                    "summary": {"team": 101, "matches": 2,
+                                "total_alliance_fuel": 300,
                                 "avg_alliance_fuel": 150.0},
                     "matches": [
                         {"match_key": "2026test_qm1", "alliance": "red",
