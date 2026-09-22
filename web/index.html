@@ -292,6 +292,37 @@
       </div>
     </div>
   </div>
+
+  <div class="cols" style="grid-template-columns:1fr">
+    <div class="pane mid" id="visionPane">
+      <div class="eyebrow">VIDEO HARVEST</div>
+      <div class="hint">Optional, and almost certainly not set up — it is a second tool, on
+        somebody's laptop, that pulls match video from the links TBA carries and reads each
+        alliance's fuel counter off the broadcast score banner. If nobody on your team runs it,
+        leave this blank and nothing here changes.</div>
+      <div class="hint">What it adds that nothing else has is <b>when</b> fuel went in: TBA
+        publishes the totals per window, and the harvest read the counter five times a second,
+        so it has the scoring curve inside a match — for any match anybody filmed, including
+        events we were never at, played by robots we are about to play.</div>
+      <div class="hint"><b>It is alliance-level.</b> The scoreboard says an alliance scored and
+        never which of its three robots did, so every number it gives is an alliance total. It
+        is shown beside ours for comparison and <b>feeds nothing</b> — not the solver, not the
+        picklist — the same rule Lovat's numbers get, and for a plainer reason.</div>
+      <div class="form">
+        <div class="f"><label>HARVEST ADDRESS</label>
+          <input id="visionUrl" placeholder="http://127.0.0.1:8781" autocomplete="off"
+            autocapitalize="off" autocorrect="off" spellcheck="false">
+          <div class="h">Whatever <code>python3 serve.py</code> printed in the harvest
+            checkout. A bare <code>127.0.0.1:8781</code>, a trailing slash or a pasted
+            <code>/health</code> are all fine — they get trimmed. There is no key: that API
+            is read-only and GET-only. <b>TEST KEYS</b> above checks this too, and can tell
+            "nothing is listening" apart from "running, but no video pulled yet".</div></div>
+        <div class="btns" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <span class="hint" id="visionStatus"></span>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script type="module">
@@ -539,6 +570,7 @@ async function reload() {
   $('#sub').textContent = bits.join(' · ');
   showSaved(c.saved || {});
   showMirror(c);
+  showVision(c);
   adminSet = !!(c.admin || {}).set;
   showPassword(c.admin || {});
   // The hub is the authority on whether this tab is still past the lock: an
@@ -678,6 +710,26 @@ for (const r of rows) {
  * the venue keeps working - so if it is not said here it is not said anywhere
  * until somebody opens the dashboard's SERVER tab.
  */
+/**
+ * What the last harvest poll found, in one line.
+ *
+ * Three states and not two, because "no harvest configured" and "a harvest
+ * with no footage of anybody here" look identical on the dashboard - both are
+ * simply an absent block - and have completely different fixes.
+ */
+function showVision(c) {
+  const v = c.vision || {};
+  $('#visionUrl').value = v.url || '';
+  const el = $('#visionStatus');
+  if (!v.ok) { el.textContent = 'Not configured — no video is read.'; return; }
+  if (!v.lastPoll) { el.textContent = 'Address saved. Not polled yet.'; return; }
+  const mins = Math.round((Date.now() / 1000 - v.lastPoll) / 60);
+  const when = mins < 1 ? 'just now' : mins + 'm ago';
+  el.textContent = v.teams
+    ? `Read ${when} — footage of ${v.teams} team(s) at this event.`
+    : `Read ${when} — the harvest has no footage of anybody here yet.`;
+}
+
 function showMirror(c) {
   const m = c.mirror || {};
   $('#mirrorUrl').value = m.url || '';
@@ -778,6 +830,9 @@ function typed() {
   // mirroring" rather than "leave it alone" - which is the only way to turn it
   // off from this page.
   body.mirrorUrl = $('#mirrorUrl').value.trim();
+  // Same as the mirror address above: a setting, so a blank box means "stop
+  // reading the harvest" rather than "leave it alone".
+  body.visionUrl = $('#visionUrl').value.trim();
   const picked = $('#aiModel').value;
   body.aiModel = picked === 'other' ? $('#aiOther').value.trim() : picked;
   return body;

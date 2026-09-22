@@ -120,7 +120,7 @@ Short answer: **the keys are a once-ever job, the event key is the per-event one
 |---|---|---|
 | Every API key on this page | never — until you revoke it | No key here is per-event or per-season. Nexus, TBA, FRC Events, Lovat and the AI keys all keep working at the next competition and the next season. |
 | **EVENT KEY**, **EVENT LEVEL** | every competition | The one thing to change on the Friday. Two boxes, ten seconds. Old events stay in the database behind their own key. |
-| **OUR TEAM**, strategy passcode, admin password, mirror settings | when you decide to | Not touched by moving to a new event. |
+| **OUR TEAM**, strategy passcode, admin password, mirror settings, harvest address | when you decide to | Not touched by moving to a new event. |
 | The Lovat *browser token* | every 72 hours | Not a key and not stored anywhere — it is only used to mint the `lvt-` key once, and that key does not expire. |
 
 So: set the keys at home before your first event, back up `.env`, and at every event after that
@@ -287,6 +287,12 @@ A hub set up by an older build had its keys in the database, or on plain lines; 
 into the encoded form the next time it starts and says so in the black window. A plain line you
 type in yourself keeps working until then, and a `_B64` line that will not decode is called out
 by name on the panel rather than being sent to a vendor as mangled bytes.
+
+**The harvest address is not a key**, so it is not in that file. **VIDEO HARVEST** on the admin
+panel takes an address and nothing else — the video harvest's API is read-only and GET-only and
+has nothing to authenticate to — so it is a setting, kept in the database beside the mirror
+address rather than in `.env`. Leave it blank unless somebody on your team actually runs that
+tool; see **Reading the broadcast** in the README.
 
 ---
 

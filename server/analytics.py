@@ -4,15 +4,19 @@ Deliberately separates EXACT fields (straight from TBA, no estimation) from
 ESTIMATED ones (solver output, always carrying a band).  The picklist leans on
 the exact side; fuel volume only breaks ties.
 
-Five blocks per team: `exact` (TBA), `estimated` (our solver), `observed`
-(scout yes/no answers), `epa` (Statbotics) and `lovat` (other teams' scouts,
-pulled from lovat.app).  The last two are the ones from outside, which is
-exactly why they earn a place next to a number we produced ourselves - and
-exactly why they stay in their own blocks.  `lovat` in particular is somebody
-else's scouting, unverified and collected to somebody else's standard: it is
-shown for comparison and feeds nothing.  Neither the solver nor the picklist
-reads it.  Every block is null-safe: a missing source reads as unknown, never
-as zero.
+Six blocks per team: `exact` (TBA), `estimated` (our solver), `observed`
+(scout yes/no answers), `epa` (Statbotics), `lovat` (other teams' scouts,
+pulled from lovat.app) and `vision` (fuel read off the broadcast scoreboard by
+the video harvest).  The last three are the ones from outside, which is exactly
+why they earn a place next to a number we produced ourselves - and exactly why
+they stay in their own blocks.  `lovat` in particular is somebody else's
+scouting, unverified and collected to somebody else's standard: it is shown for
+comparison and feeds nothing.  Neither the solver nor the picklist reads it.
+`vision` feeds nothing for a different and simpler reason: it is
+ALLIANCE-level.  The broadcast scoreboard says an alliance scored and never
+says which of its three robots did, so a per-robot number from it would be an
+alliance total with a robot's name on it - see `vision.py`.  Every block is
+null-safe: a missing source reads as unknown, never as zero.
 """
 import math
 import statistics as st
@@ -25,7 +29,7 @@ import solve
 # What event_summary reads.  Kept here, beside the reads themselves, and mirrored
 # by ANALYTICS_SCOPES in hub.py for the matching ETag.
 SCOPES = ("matches", "teams", "scout_entries", "solved",
-          "kv:rankings", "kv:epa", "kv:lovat", "kv:multipliers")
+          "kv:rankings", "kv:epa", "kv:lovat", "kv:vision", "kv:multipliers")
 
 # Per store, not global: a snapshot restore opens a second Store over the
 # restored file, and a fresh one starts every counter at zero - so a global
@@ -83,6 +87,10 @@ def _event_summary(store, event_key, include_scouts=False):
     rankings = store.get(f"rankings:{event_key}") or {}
     epa = store.get(f"epa:{event_key}") or {}
     lovat_rows = store.get(f"lovat:{event_key}") or {}
+    # `{"teams": {...}, "counts": ...}` rather than a bare map: the harvest's
+    # own row counts ride along so the dashboard can say "there is no footage"
+    # differently from "there is no harvest".
+    vision_rows = (store.get(f"vision:{event_key}") or {}).get("teams") or {}
     entries = store.scout_entries(event_key)
     solved = store.solved(event_key)
     teams = {t["team"]: t for t in store.teams(event_key)}
@@ -145,7 +153,8 @@ def _event_summary(store, event_key, include_scouts=False):
                                   defended_by.get(team) or {},
                                   _lookup(lovat_rows, team),
                                   faced_secs.get(team) or {},
-                                  matches_by_team.get(team) or [])
+                                  matches_by_team.get(team) or [],
+                                  _lookup(vision_rows, team))
         # Kept beside the averages rather than folded into them: an average
         # says how good a robot is, a series says whether it is getting better,
         # and a picklist meeting the night before eliminations wants both.
@@ -159,6 +168,7 @@ def _event_summary(store, event_key, include_scouts=False):
         "teams": out,
         "coverage": _coverage(matches, entries),
         "lovatCoverage": _lovat_coverage(lovat_rows, teams),
+        "vision": _vision_coverage(store, event_key, vision_rows, teams),
         "scoreReport": score_report(store, event_key, matches, entries),
         **({"scouts": _scout_reliability(entries, by_match, solved)} if include_scouts else {}),
     }
@@ -270,6 +280,43 @@ def _start(iv):
 def _interval_secs(intervals):
     return sum(rules.interval_secs(iv)
                for iv in (intervals or []))
+
+
+def _vision_coverage(store, event_key, vision_rows, teams):
+    """Whether there is a harvest at all, and how much of this event it has seen.
+
+    Three states, not two, and the dashboard needs all three: no harvest
+    configured (the normal case - it is a separate tool on somebody's laptop),
+    a harvest with no footage of anybody here, and a harvest with some.  The
+    first two look identical in the per-team blocks, where both are simply
+    absent, and they have completely different fixes.
+    """
+    raw = store.get(f"vision:{event_key}")
+    if raw is None:
+        return {"configured": False, "teams": 0, "covered": 0, "pct": None}
+    recs = [r for r in vision_rows.values() if isinstance(r, dict)]
+    covered = sum(1 for r in recs if r.get("matchesSeen"))
+    n = len(teams) or 0
+    return {
+        "configured": True,
+        # What the harvest holds for this event's robots, against the roster.
+        "teams": n,
+        "covered": covered,
+        "pct": round(covered / n * 100.0, 1) if n else None,
+        # Its own row counts, so "the harvest is empty" reads differently from
+        # "the harvest has plenty and none of it is these robots".
+        "counts": raw.get("counts") or {},
+        "asked": raw.get("asked"),
+        # A pass that ran out of budget, or a harvest that stopped answering
+        # halfway, is a different thing from one that found nothing - and the
+        # difference is invisible in the counts above.
+        "complete": raw.get("complete", True),
+        # Matches whose scoreboard the harvest could not read are not averaged
+        # in anywhere, so the gap is worth showing rather than leaving to be
+        # inferred from two numbers that do not add up.
+        "unreadable": sum(max(0, (r.get("matchesSeen") or 0) - (r.get("matches") or 0))
+                          for r in recs),
+    }
 
 
 def _lovat_coverage(lovat_rows, teams):
@@ -463,11 +510,13 @@ def _int(v):
 
 
 def _team_summary(team, meta, entries, solved, by_match, ranking=None, epa=None,
-                  defended_by=None, lovat=None, faced_secs=None, official=None):
+                  defended_by=None, lovat=None, faced_secs=None, official=None,
+                  vision=None):
     ranking, epa = ranking or {}, epa or {}
     defended_by = defended_by or {}
     faced_secs = faced_secs or {}
     lovat = lovat or {}
+    vision = vision or {}
     # (match, alliance) for every match this robot played that has an official
     # breakdown.  Off the schedule, not off our entries - see event_summary.
     official = official or []
@@ -774,6 +823,21 @@ def _team_summary(team, meta, entries, solved, by_match, ranking=None, epa=None,
             "beachedKinds", "traversalKinds", "autoClimbResults",
             "climbsRead",
             "scouters", "notes", "unmatched")},
+        # A sixth kind of number, and the third from outside: fuel read off the
+        # broadcast score banner by the video harvest.  Every field here is
+        # ALLIANCE-level and named so, because the scoreboard says an alliance
+        # scored and never which of its three robots did.  Nothing in solve.py
+        # or the picklist reads it, and a field called `fuel` in this block
+        # would be a per-robot claim this source cannot make - see vision.py.
+        #
+        # Absent means the harvest has no footage of this robot, which is not
+        # the same as a zero, and is the normal case for most of an event.
+        "vision": {k: vision.get(k) for k in (
+            "matches", "matchesSeen", "avgAllianceFuel", "totalAllianceFuel",
+            # Footage from this event is a cross-check against numbers we
+            # already have exactly; footage from an earlier one is the reason
+            # to care at all.  A single count could not tell them apart.
+            "matchesHere", "matchesElsewhere", "perMatch")},
         "notes": sorted(notes, key=lambda x: -(x.get("at") or 0)),
     }
 

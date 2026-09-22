@@ -439,7 +439,7 @@ whose scout wrote a line.
 
 ## Where the numbers come from
 
-Five sources, kept deliberately separate, because mixing them is how a picklist ends up
+Six sources, kept deliberately separate, because mixing them is how a picklist ends up
 confidently wrong. `server/analytics.py` enforces the split.
 
 | Block | Source | Trust |
@@ -449,12 +449,39 @@ confidently wrong. `server/analytics.py` enforces the split.
 | `observed` | the scouts | Reliable in kind, not in magnitude — yes/no answers, ratings, counts. |
 | `epa` | Statbotics | An independent outside read, which is why it earns a place beside a number we produced ourselves. |
 | `lovat` | other teams' scouts, via [lovat.app](https://lovat.app) | Somebody else's scouting, unverified, collected to somebody else's standard. Shown for comparison and **fed into nothing** — not the solver, not the picklist, not any other block. |
+| `vision` | fuel read off the broadcast score banner by the video harvest | **Alliance-level, never per-robot** — the banner says an alliance scored and never which of its three did. Also OCR off somebody's video overlay, which fails outright on ~40% of events; a row that did not read cleanly is counted as *seen* and never averaged. Shown for comparison and **fed into nothing**. Absent for most robots, which is not a zero. |
 
 A missing source reads as **unknown**, never as zero. No API key means a blank column, not a
 row of noughts.
 
 Fuel is the only estimated number, and it is never shown as a bare integer. The picklist leads
 with exact fields and uses fuel to break ties.
+
+### What the video harvest actually gives us
+
+One thing nothing else can: **when** fuel went in. TBA publishes totals per scoring window;
+the harvest read the counter five times a second, so it has the curve inside a match — for any
+match anybody filmed, including events this team never attended.
+
+| Route | What it answers |
+|---|---|
+| `GET /api/vision` | what the harvest has on this event's robots, and whether there is a harvest at all |
+| `GET /api/vision?match=<key>` | one match's scoring curve, fetched live |
+| `GET /api/analytics` | per-team totals, in each team's `vision` block |
+
+Three states, not two, and the dashboard needs all three: **no harvest configured** (the
+normal case — it is a separate tool on somebody's laptop), **a harvest with no footage of
+anybody here**, and **a harvest with some**. The first two are identical in the per-team
+blocks, where both are simply absent, and they have entirely different fixes — so
+`analytics.event_summary` reports them apart under `vision`.
+
+Footage from *this* event and footage from *another* one are counted apart for the same reason.
+Footage from this event cross-checks numbers we already have exactly from TBA; footage from a
+robot's earlier event is the whole reason to care.
+
+The timeline's clock is the **broadcast's**, not the match's: `tSource` is seconds from the
+start of the video, which begins before the buzzer by however long the director felt like.
+Nothing converts it to match time, because no offset has been measured.
 
 ### What Lovat actually gives us
 

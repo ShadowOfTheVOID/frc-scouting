@@ -173,11 +173,13 @@ runs without them, just with less live data.
 | **The Blue Alliance** | official match results, per-robot climb | [thebluealliance.com/account](https://www.thebluealliance.com/account) |
 | **FRC Events** | the official result a few minutes before TBA posts it | [frc-events.firstinspires.org](https://frc-events.firstinspires.org/services/API) |
 | **Lovat** | what other teams' scouts recorded about the same robots | [lovat.app](https://lovat.app) — see below |
+| Video harvest | fuel read off the broadcast score banner, and *when* it went in | nothing to buy — a second tool you run yourself, see below |
 | **AI model** | summaries of your scout notes, and a read of the next match | Claude, Gemini, OpenAI or OpenRouter — see below |
 | Statbotics | EPA next to your own numbers | nothing to do — no key needed |
 
 The fuel numbers always come from The Blue Alliance, whichever other keys you set. FRC Events
-only gets you the result sooner.
+only gets you the result sooner, and the video harvest never feeds them at all — see
+[Reading the broadcast](#reading-the-broadcast).
 
 **Unlock, paste the key, press SAVE & REFRESH, then press TEST KEYS.** Three things about that
 page are worth knowing before the Saturday:
@@ -674,6 +676,64 @@ opposite facts.
 Each team's own page has the same two charts for that robot alone, with the solver's
 uncertainty shaded around the fuel line and Lovat's count of the same robot drawn beside it.
 
+## Reading the broadcast
+
+Optional, and almost certainly not set up. This is the one source here that is not a website
+with a key: it is a **second tool you run yourself**
+([TBACroppedOutVid](https://github.com/ShadowOfTheVOID/YOLOv26-FRC-Model)) that pulls match
+video from the links TBA carries, crops the burned-in graphics off it, and reads each
+alliance's fuel counter off the score banner before throwing the banner away. What it leaves
+behind is a database and a read-only API over it.
+
+If nobody on your team runs it, leave the box blank and nothing in the app changes.
+
+```bash
+# in the harvest checkout, on whoever's laptop has the video
+python3 run.py pull -n 20        # harvest some matches
+python3 run.py db sync           # build its database
+python3 serve.py                 # 127.0.0.1:8781
+```
+
+Then paste that address into **VIDEO HARVEST** on the admin panel and press SAVE & REFRESH.
+There is no key — the API is read-only and GET-only. **TEST KEYS** checks it like the rest, and
+can tell *nothing is listening* apart from *running, but no video pulled yet*, which look the
+same from here and have different fixes.
+
+### What it adds
+
+**When fuel went in.** TBA publishes the totals per scoring window; the harvest read the
+counter five times a second, so it has the scoring curve *inside* a match — for any match
+anybody filmed, including events we were never at, played by robots we are about to play. That
+is the one thing in this app that no other source can produce.
+
+`GET /api/vision` gives what it has on this event's robots, and
+`GET /api/vision?match=2026casj_qm42` gives one match's curve. Per-team numbers arrive on
+`/api/analytics` in a `vision` block beside `lovat`.
+
+### What it is not
+
+**It is alliance-level, and it feeds nothing.** The score banner says an *alliance* scored and
+never which of its three robots did, so every number it produces is an alliance total — which
+is why nothing in it is called `fuel`, and why the solver and the picklist do not read it. Any
+one of three reasons would be enough on its own:
+
+- the solver's entire job is dividing an alliance total between three robots, so handing it a
+  third of a broadcast reading as though it were a measurement of one robot is exactly the
+  mistake the rest of this app is built to avoid;
+- it is OCR off somebody's video overlay, and the harvest reports the read failing outright on
+  roughly 40% of events. Every row carries whether the banner read cleanly, and a row that did
+  not is counted as *seen* but never averaged;
+- the solver already reconciles against TBA's official totals — the same quantity, measured by
+  the field itself. A second, worse reading of a number we have exactly is a cross-check, not
+  an input. Cross-checks are worth having; that is a different job.
+
+It is shown for comparison, the same rule Lovat's numbers get, for a plainer reason.
+
+One more honest limit: the timeline's clock is the **broadcast's**, not the match's. The
+harvest counts seconds from the start of the video, which begins before the buzzer by however
+long the director felt like, so nothing lines it up against match time without an offset
+somebody has actually measured.
+
 ## Reading a match before it happens
 
 The **MATCH** tab puts both alliances side by side: projected fuel and points, win probability
@@ -807,6 +867,7 @@ start-server.bat / .command   double-click these
 .env                          your API keys and the admin password — back this up, never share it
 .env.example                  what goes in that file, line by line
 server/                       the hub — Python, no dependencies to install
+server/vision.py              reads the optional video harvest — see Reading the broadcast
 web/                          what phones and laptops actually open
 mirror/                       the optional off-site copy — a separate website, run elsewhere
 design/                       the UI specification the screens were built to

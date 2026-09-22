@@ -43,6 +43,7 @@ import offsite
 import rules
 import solve
 import sources
+import vision as vision_api
 from store import Store
 
 WEB_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
@@ -78,6 +79,11 @@ TBA_POLL_SECONDS = 45
 STATBOTICS_POLL_SECONDS = 600
 # Only ever used to fill in matches TBA has not posted yet, so it can be slow.
 FRC_EVENTS_POLL_SECONDS = 60
+# The broadcast harvest is a dataset somebody builds between events, not a live
+# feed: nothing in it changes during a match. Five minutes is already far more
+# often than it can have anything new to say, and it is on localhost, so the
+# cost of being wrong in this direction is a few hundred bytes.
+VISION_POLL_SECONDS = 300
 # Lovat rate-limits an API key to one request every three seconds. One request
 # every five minutes pulls the whole tournament and leaves that limit alone
 # even when a config save fires _poll_all at the same moment.
@@ -108,8 +114,12 @@ STATE_SCOPES = ("events", "teams", "matches", "flags", "pit_entries",
                 "kv:alliances", "kv:seats", "kv:matchClocks", "kv:clockFixes",
                 "kv:rankings", "kv:epa", "kv:earlyScores")
 ANALYTICS_SCOPES = ("matches", "teams", "scout_entries", "solved",
-                    "kv:rankings", "kv:epa", "kv:lovat", "kv:multipliers")
+                    "kv:rankings", "kv:epa", "kv:lovat", "kv:vision",
+                    "kv:multipliers")
 SEATLOG_SCOPES = ("kv:seatLog",)
+# `kv:visionUrl` as well as the rows: /api/vision reports `configured` off the
+# address, so saving one and being handed a 304 would answer with the old one.
+VISION_SCOPES = ("kv:vision", "kv:visionUrl", "kv:eventKey")
 # `connected` on a crew row is read from the live SSE subscriber set, which no
 # store write touches - hence the subscriber generation mixed in at the call.
 # `kv:eventKey` because crew() reads it to find the entries to scan. Every tag
@@ -152,7 +162,7 @@ class Hub:
         self.port = PORT
         self.status = {"nexus": None, "tba": None, "statbotics": None,
                        "frcEvents": None, "lovat": None, "mirror": None,
-                       "lastUpdate": None}
+                       "vision": None, "lastUpdate": None}
         self.last_snapshot = None
         self._snapshot_token = None
         self.started_at = time.time()
@@ -437,6 +447,17 @@ class Hub:
         key = self.cfg("lovatKey")
         return self._client("lovat", key, lambda: sources.Lovat(key))
 
+    def vision(self):
+        """The broadcast harvest's read-only API. An address, and no key.
+
+        There is nothing to authenticate to: the harvest serves GET only, over
+        localhost or the bench switch, from a database that is rebuildable from
+        its own manifest. So this is a setting rather than a credential, and it
+        lives in the settings table beside `mirrorUrl` rather than in `.env`.
+        """
+        url = self.cfg("visionUrl")
+        return self._client("vision", url, lambda: vision_api.Vision(url))
+
     def ai(self):
         sig = (self.cfg("aiProvider"), self.cfg("aiKey"), self.cfg("aiModel"))
         return self._client("ai", sig, lambda: ai.client(self.cfg))
@@ -465,6 +486,10 @@ class Hub:
             "frcEvents": lambda: self.frc_events().verify(int(season) if season else 2026),
             "lovat": lambda: self.lovat().verify(ek),
             "ai": lambda: self.ai().verify(),
+            # Not a key, but the same question and the same screen: an address
+            # that answers nothing looks identical to one nobody set, and only
+            # this button can tell a lead which of the two they have.
+            "vision": lambda: self.vision().verify(),
             # The mirror is the only one of these that sends anything out
             # rather than fetching, so "does the key work" is worth knowing
             # before an event rather than after one - a push that is failing
@@ -1143,6 +1168,39 @@ class Hub:
         if self.store.get(cache) != out:
             self.store.set(cache, out)
             self.broadcast("lovat", {"teams": len(out)})
+
+    def poll_vision(self):
+        """What the broadcast harvest has on the robots in this building.
+
+        Scoped to our own roster on purpose. The harvest is a season-wide
+        dataset - a thousand events, nearly all of them nothing to do with this
+        competition - and asking it about every team it holds would be a
+        thousand requests to find out that thirty of them matter.
+
+        An empty answer is still written, for the same reason Lovat's is: "the
+        harvest has no footage of anybody here" is an answer, and it must not
+        leave yesterday's rows on screen after somebody switches events.
+
+        A harvest that is not running is not a failure and is not logged as
+        one. It is a separate tool on somebody's laptop, most hubs will never
+        have one, and `collect` returning None is the same "we do not know"
+        every other source here returns.
+        """
+        ek = self.event_key()
+        client = self.vision()
+        if not (ek and client.ok):
+            return
+        roster = [t["team"] for t in self.store.teams(ek) if t.get("team")]
+        if not roster:
+            return
+        got = vision_api.collect(client, ek, roster)
+        if got is None:
+            return
+        self.status["vision"] = time.time()
+        cache = f"vision:{ek}"
+        if self.store.get(cache) != got:
+            self.store.set(cache, got)
+            self.broadcast("vision", {"teams": len(got["teams"])})
 
     def poll_frc_events(self):
         """Post the official result before TBA has caught up.
@@ -1907,6 +1965,7 @@ class Hub:
                  (self.poll_frc_events, FRC_EVENTS_POLL_SECONDS),
                  (self.poll_statbotics, STATBOTICS_POLL_SECONDS),
                  (self.poll_lovat, LOVAT_POLL_SECONDS),
+                 (self.poll_vision, VISION_POLL_SECONDS),
                  (self.poll_mirror, MIRROR_PUSH_SECONDS))
         due = [0.0] * len(every)
         while not self.stop_flag.is_set():
@@ -2975,7 +3034,11 @@ class Handler(BaseHTTPRequestHandler):
                 "eventLevel": (h.store.event(ek) or {}).get("level", "regional") if ek else "regional",
                 "keys": {"tba": bool(h.cfg("tbaKey")), "nexus": bool(h.cfg("nexusKey")),
                          "frcEvents": frc.ok, "lovat": bool(h.cfg("lovatKey")),
-                         "ai": aic.ok, "mirror": mir.ok},
+                         "ai": aic.ok, "mirror": mir.ok,
+                         # Not a key - an address. It sits here because this is
+                         # what every page reads to find out which sources are
+                         # set up, and "is there a harvest" is that question.
+                         "vision": h.vision().ok},
                 # Which boxes have something in them, box by box, so the Setup
                 # page can say SAVED beside each one and offer to forget it.
                 # Whether, never what: no key value leaves the hub, and this
@@ -2986,6 +3049,15 @@ class Handler(BaseHTTPRequestHandler):
                 "mirror": {"url": h.cfg("mirrorUrl") or None, "ok": mir.ok,
                            **{k: v for k, v in (h.store.get("mirrorState") or {}).items()
                               if k != "digest"}},
+                # Also an address and also no secret. `teams` is what the last
+                # poll actually found, because "configured" and "has footage of
+                # anybody here" are different states and the second is the one
+                # worth showing on the page that just set it.
+                "vision": {"url": h.cfg("visionUrl") or None,
+                           "ok": h.vision().ok,
+                           "lastPoll": h.status.get("vision"),
+                           "teams": len(((h.store.get(f"vision:{ek}") or {})
+                                         .get("teams") or {})) if ek else 0},
                 # The provider and model are settings, not secrets - the panel
                 # that shows generated text has to be able to name what wrote it.
                 # The effective model, not the stored one: a hub that has
@@ -3108,6 +3180,34 @@ class Handler(BaseHTTPRequestHandler):
             if self._not_modified(etag):
                 return None
             return self._json(h.seat_history(), etag=etag)
+        if p == "/api/vision":
+            # The per-team blocks are already on /api/analytics; this is the
+            # part that could not go there - one match's scoring curve, which
+            # is the only thing this source has that nothing else does, and is
+            # far too much data to attach to every team on every poll.
+            ek = (q.get("event") or [h.event_key()])[0]
+            mk = (q.get("match") or [None])[0]
+            if mk:
+                # Fetched live rather than cached: a timeline is only ever
+                # wanted for the one match somebody has open, and the harvest
+                # is a local read-only API that will not notice.  None back
+                # means the key was not a match key, or the harvest is not
+                # there - both of which are "we do not know", not an error.
+                got = vision_api.timeline(h.vision().match(mk))
+                if got is None:
+                    return self._json({"error": "no timeline for that match",
+                                       "matchKey": mk}, 404)
+                return self._json(got)
+            etag = self._etag(*VISION_SCOPES)
+            if self._not_modified(etag):
+                return None
+            stored = h.store.get(f"vision:{ek}") if ek else None
+            return self._json({
+                "eventKey": ek,
+                "configured": bool(h.vision().ok),
+                "lastPoll": h.status.get("vision"),
+                **(stored or {"teams": {}, "counts": {}}),
+            }, etag=etag)
         if p == "/api/diag":
             return self._json(h.diag())
         if p == "/api/export":
@@ -3216,6 +3316,12 @@ class Handler(BaseHTTPRequestHandler):
             # plain text box.
             if "mirrorUrl" in body:
                 h.store.set("mirrorUrl", _mirror_url(body["mirrorUrl"]))
+            # Same reasoning as the mirror address above, and the same text
+            # box: a bare `127.0.0.1:8781`, a trailing slash, or the
+            # `/health` somebody copied out of their browser all mean the one
+            # thing, and none of them work as typed.
+            if "visionUrl" in body:
+                h.store.set("visionUrl", vision_api.normalise_url(body["visionUrl"]))
             # The Setup page sends one value for both, as "provider:model", so
             # the two can never be saved disagreeing with each other. A bare id
             # typed by hand still resolves.

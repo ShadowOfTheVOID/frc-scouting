@@ -906,7 +906,8 @@ def test_config_scope(L):
     code, c = L.req("/api/config")
     ok &= check("config reports which keys are set",
                 code == 200 and c["keys"] == {"tba": False, "nexus": False, "frcEvents": False,
-                                              "lovat": False, "ai": False, "mirror": False},
+                                              "lovat": False, "ai": False, "mirror": False,
+                                              "vision": False},
                 f"({c['keys']})")
     L.req("/api/config", {"frcEventsUser": "someone", "frcEventsToken": "secret"})
     code, c = L.req("/api/config")
@@ -2863,6 +2864,171 @@ def test_nobody_elses_format_can_raise(L):
     return ok
 
 
+def test_vision(L):
+    """The broadcast harvest, as a source and as a thing that is usually absent."""
+    import vision as vision_api
+    ok = True
+
+    # A hub with no harvest is the normal case, and it must read as "nobody set
+    # one up" rather than as a harvest with nothing in it. Those have different
+    # fixes and looked identical before `configured`.
+    L.store.set("visionUrl", "")
+    code, v = L.req("/api/vision")
+    ok &= check("with no harvest, the endpoint says so rather than erroring",
+                code == 200 and v["configured"] is False and v["teams"] == {}, f"({v})")
+
+    # A bare host, a trailing slash and a copied `/health` are all what somebody
+    # means by "the harvest address", and none of them work as typed.
+    for raw, want in (("127.0.0.1:8781", "http://127.0.0.1:8781"),
+                      ("http://127.0.0.1:8781/", "http://127.0.0.1:8781"),
+                      ("http://127.0.0.1:8781/health?x=1", "http://127.0.0.1:8781"),
+                      ("ftp://nope", ""), ("", ""), (None, "")):
+        ok &= check(f"address {raw!r} normalises to {want!r}",
+                    vision_api.normalise_url(raw) == want,
+                    f"({vision_api.normalise_url(raw)!r})")
+
+    # `/api/vision?match=` is the one route whose path comes from a caller, and
+    # it is reachable by anything on the venue wifi. A key with a slash in it is
+    # a request for some other route on the harvest.
+    probe = vision_api.Vision("http://127.0.0.1:1")
+    ok &= check("a match key that is not one never reaches the harvest",
+                all(probe.match(bad) is None for bad in
+                    ("../health", "2026test_qm1/../teams", "2026test_qm1?x=1",
+                     "", None, "a" * 400)))
+
+    # A stub harvest, serving the shape the real one serves.
+    import http.server
+    import threading as _th
+    calls = []
+
+    class Harvest(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            calls.append(self.path)
+            body = {
+                "/health": {"ok": True, "counts": {"matches": 3, "frames": 120}},
+                "/teams": {"teams": [{"team": 101}, {"team": 102}, {"team": 999}]},
+                "/teams/101": {
+                    "team": 101,
+                    "summary": {"matches_played": 2, "total_alliance_fuel": 300,
+                                "avg_alliance_fuel": 150.0},
+                    "matches": [
+                        {"match_key": "2026test_qm1", "alliance": "red",
+                         "alliance_fuel": 140, "scoreboard_ok": 1},
+                        {"match_key": "2026other_qm7", "alliance": "blue",
+                         "alliance_fuel": 160, "scoreboard_ok": 1},
+                        # The harvest could not read this one's banner. It must
+                        # stay unknown, not become a zero that drags the average.
+                        {"match_key": "2026other_qm9", "alliance": "blue",
+                         "alliance_fuel": None, "scoreboard_ok": 0},
+                    ]},
+                "/teams/102": {"team": 102, "summary": {}, "matches": []},
+                "/matches/2026test_qm1": {
+                    "match": {"match_key": "2026test_qm1", "event_key": "2026test",
+                              "scoreboard_ok": 1, "blue_fuel": 90, "red_fuel": 140},
+                    "teams": [{"alliance": "red", "station": 1, "team": 101}],
+                    "score_events": [
+                        {"t_source": 40.5, "alliance": "red", "balls": 3, "total": 3},
+                        {"t_source": 12.25, "alliance": "red", "balls": 2, "total": 2},
+                    ]},
+            }.get(self.path)
+            if body is None:
+                self.send_error(404)
+                return
+            raw = json.dumps(body).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Harvest)
+    _th.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    try:
+        # Saved through the API, so normalisation is on the path a person uses.
+        L.req("/api/config", {"visionUrl": f"{base}/"})
+        ok &= check("the address is stored normalised",
+                    L.store.get("visionUrl") == base, f"({L.store.get('visionUrl')})")
+
+        client = L.hub.vision()
+        ok &= check("a running harvest with matches verifies ok",
+                    client.verify()["state"] == "ok", f"({client.verify()})")
+
+        L.hub.poll_vision()
+        got = L.store.get(f"vision:{EK}")
+        ok &= check("the poll writes what the harvest has", bool(got and got["teams"]),
+                    f"({got})")
+
+        # 999 is in the harvest and not at this event. The harvest is a
+        # season-wide dataset and the hub only has a use for this building.
+        ok &= check("only teams on our roster are asked about",
+                    set(got["teams"]) == {"101"} and "/teams/999" not in calls,
+                    f"({sorted(got['teams'])})")
+
+        rec = got["teams"]["101"]
+        ok &= check("the clean matches are counted and averaged",
+                    rec["matches"] == 2 and rec["avgAllianceFuel"] == 150.0, f"({rec})")
+        # The gap between these two is how much of the footage was unreadable.
+        ok &= check("an unreadable banner is seen but not counted",
+                    rec["matchesSeen"] == 3, f"({rec['matchesSeen']})")
+        ok &= check("...and stays unknown rather than becoming a zero",
+                    [r["allianceFuel"] for r in rec["perMatch"]
+                     if r["matchKey"] == "2026other_qm9"] == [None])
+        # Footage from this event cross-checks a number we already have
+        # exactly; footage from another event is the reason to care at all.
+        ok &= check("footage here and elsewhere are counted apart",
+                    rec["matchesHere"] == 1 and rec["matchesElsewhere"] == 2, f"({rec})")
+
+        # This is the whole reason `vision` is its own block. The scoreboard
+        # says an ALLIANCE scored and never which of its three robots did, so a
+        # per-robot key here would be a claim this source cannot make.
+        ok &= check("nothing in the block claims to be one robot's fuel",
+                    not any(k in rec for k in ("fuel", "avgFuel", "teamFuel")),
+                    f"({sorted(rec)})")
+
+        code, summary = L.req(f"/api/analytics?event={EK}")
+        block = summary["teams"]["101"]["vision"]
+        ok &= check("the block reaches the dashboard through analytics",
+                    code == 200 and block["avgAllianceFuel"] == 150.0, f"({block})")
+        ok &= check("a team the harvest has never seen reads as unknown, not zero",
+                    summary["teams"]["103"]["vision"]["avgAllianceFuel"] is None
+                    and summary["teams"]["103"]["vision"]["matches"] is None,
+                    f"({summary['teams']['103']['vision']})")
+        cov = summary["vision"]
+        ok &= check("coverage separates no-harvest from no-footage",
+                    cov["configured"] is True and cov["covered"] == 1
+                    and cov["unreadable"] == 1, f"({cov})")
+
+        # The one thing this source has that nothing else does: when fuel went
+        # in. Sorted, because the harvest reads the counter as it decodes and
+        # nothing guarantees the rows come back in time order.
+        code, tl = L.req(f"/api/vision?match={EK}_qm1")
+        ok &= check("a match timeline comes back in time order",
+                    code == 200 and [e["tSource"] for e in tl["events"]] == [12.25, 40.5],
+                    f"({tl.get('events')})")
+        ok &= check("the timeline is honest that its clock is the broadcast's",
+                    all("tSource" in e and "t" not in e for e in tl["events"]))
+        code, _ = L.req("/api/vision?match=2026test_qm999")
+        ok &= check("a match the harvest does not have is a 404, not a 500",
+                    code == 404, f"({code})")
+    finally:
+        srv.shutdown()
+
+    # A harvest that has been switched off is not a failure - it is a separate
+    # tool on somebody's laptop, and every source here treats unreachable as
+    # "we do not know". The rows it last wrote must not be mistaken for fresh.
+    ok &= check("an unreachable harvest returns no answer rather than an empty one",
+                vision_api.collect(vision_api.Vision(base), EK, [101]) is None)
+    ok &= check("...and says which of the two states it is in",
+                vision_api.Vision(base).verify()["state"] == "down",
+                f"({vision_api.Vision(base).verify()})")
+    L.store.set("visionUrl", "")
+    return ok
+
+
 def main():
     L = Live()
     try:
@@ -2901,7 +3067,8 @@ def main():
                    test_junk_in_every_answer_field,
                    test_the_webhook_is_shut_without_a_token,
                    test_a_refused_body_does_not_eat_the_next_request,
-                   test_nobody_elses_format_can_raise):
+                   test_nobody_elses_format_can_raise,
+                   test_vision):
             print(f"\n{fn.__name__.replace('test_', '').replace('_', ' ')}")
             passed &= fn(L)
         print()
