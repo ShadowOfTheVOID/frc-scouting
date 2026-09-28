@@ -19,7 +19,7 @@ scouting - annoying. If they were the same string, they could overwrite it.
 
 There is no TLS here on purpose: put it behind a reverse proxy that already
 has a certificate. `deploy/` has a Caddyfile and a systemd unit that do exactly
-that for scouting.systemoverload.org.
+that for core.systemoverload.org.
 """
 import argparse
 import base64

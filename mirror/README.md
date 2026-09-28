@@ -86,10 +86,10 @@ which is what makes the mirror believe `X-Forwarded-For` — without it every
 request looks like it came from `127.0.0.1` and one wrong passcode would
 throttle the whole internet.
 
-Point the DNS at the host and open `https://scouting.systemoverload.org`.
+Point the DNS at the host and open `https://core.systemoverload.org`.
 
 `systemoverload.org` itself is a Wix site, and Wix cannot run this, so the
-mirror lives on its own host under a subdomain: one A record for `scouting` in
+mirror lives on its own host under a subdomain: one A record for `core` in
 Wix's **Manage DNS Records**, and the Wix site is untouched. Step by step, CAA
 and all, in [setup.md](../setup.md#if-the-domain-is-on-wix).
 
@@ -99,7 +99,7 @@ On the hub laptop, in the admin panel at `http://localhost:6059/` — press
 **UNLOCK** at the top of that page first, it opens read-only — in
 **OFF-SITE MIRROR**:
 
-- **Mirror address** — `https://scouting.systemoverload.org`. A trailing slash
+- **Mirror address** — `https://core.systemoverload.org`. A trailing slash
   or a pasted `/api/push` is fine; it gets trimmed.
 - **Mirror push key** — `MIRROR_PUSH_KEY`.
 
