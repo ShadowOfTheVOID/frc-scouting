@@ -8,7 +8,7 @@
 #   sudo cp mirror/deploy/Caddyfile /etc/caddy/Caddyfile
 #   sudo systemctl reload caddy
 
-core.systemoverload.org {
+scouting.systemoverload.org {
 	encode gzip
 
 	# The mirror sets its own Content-Security-Policy, X-Content-Type-Options

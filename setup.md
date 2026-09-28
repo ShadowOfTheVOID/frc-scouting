@@ -353,15 +353,15 @@ told that one subdomain lives somewhere else. Nothing about the Wix site changes
 
 1. On the host, `curl -4 ifconfig.me` — that is the address to point at.
 2. Wix → **Domains** → the domain → **⋯** → **Manage DNS Records**.
-3. Under **A (Host)**, **+ Add Record**: Host name `core`, Value the address from step 1,
+3. Under **A (Host)**, **+ Add Record**: Host name `scouting`, Value the address from step 1,
    TTL 1 hour. **Save**. Leave the existing records alone — those are the Wix site.
 4. If the page has a **CAA** section with anything in it, add `0 issue "letsencrypt.org"`,
    or Caddy is refused a certificate.
-5. Wait — usually minutes, occasionally an hour. `nslookup core.systemoverload.org` on
+5. Wait — usually minutes, occasionally an hour. `nslookup scouting.systemoverload.org` on
    any laptop prints the host's address when it has arrived. Caddy retries by itself until it
    does; there is nothing to restart.
 
-The address is then `https://core.systemoverload.org`, which is the hostname the
+The address is then `https://scouting.systemoverload.org`, which is the hostname the
 Caddyfile already has. Not the bare `systemoverload.org` — that is the Wix site, and a push to
 it comes back 404.
 
@@ -423,7 +423,7 @@ anything already there, so it is safe to run twice. The mirror keeps the last 60
 | A key box says SAVED but the panel says the line cannot be read | a `_B64` line was hand-edited into something that is not base64. Paste the key into the box again, or write it as a plain `NEXUS_API_KEY=` line and restart |
 | **FIND MY EVENTS** comes back with nothing | no internet on the laptop, or the schedule is not published yet. Type the event key in by hand |
 | `could not be reached` on the mirror line | laptop has no internet, or the address is wrong |
-| `404` on the mirror line, or the address opens the team website | the address is the Wix root, not the `core.` subdomain |
+| `404` on the mirror line, or the address opens the team website | the address is the Wix root, not the `scouting.` subdomain |
 | `rejected the push key` | `systemctl show frc-mirror -p Environment` on the host |
 | Mirror header amber / red | nothing has arrived for 5 minutes / an hour — everything on screen is that old |
 | `too many attempts` on the mirror | eight wrong passcodes from one address; it clears itself |
