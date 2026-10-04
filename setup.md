@@ -310,6 +310,48 @@ python3 -c "import secrets; print(secrets.token_urlsafe(32))"    # MIRROR_PUSH_K
 
 ### 2. Put it on the host
 
+#### No host yet? Oracle Cloud's free tier
+
+The mirror is small, uses only the standard library, and fits Oracle's Always Free tier
+without paying anything.
+
+1. Sign up at [oracle.com/cloud/free](https://www.oracle.com/cloud/free/). It asks for a card
+   to check you are a person; the free tier does not charge it. The **home region** you pick
+   cannot be changed later, so pick the one nearest you.
+2. **Compute → Instances → Create instance.**
+   - **Image:** Canonical **Ubuntu 24.04**.
+   - **Shape:** `VM.Standard.E2.1.Micro` (AMD, Always Free) is plenty. `VM.Standard.A1.Flex`
+     (Ampere, also Always Free) is roomier but often says *out of capacity*. Either works.
+   - **Networking:** leave **Assign a public IPv4 address** on.
+   - **SSH keys:** **Save private key**, and keep that file — it is the only way in.
+3. Open ports 80 and 443 **in Oracle's network**: the instance page → its subnet →
+   **Security Lists** → the default list → **Add Ingress Rules**: source `0.0.0.0/0`, TCP,
+   destination port `80,443`.
+4. SSH in (`ssh -i the-key-file ubuntu@<public IP>`) and open the same ports **on the
+   machine**. Oracle's Ubuntu image ships a firewall that refuses everything but SSH, and
+   step 3 alone is not enough — this is the step everybody misses:
+
+   ```
+   sudo iptables -I INPUT -p tcp -m multiport --dports 80,443 -m state --state NEW -j ACCEPT
+   sudo netfilter-persistent save
+   ```
+
+5. Install what the rest of this page uses:
+
+   ```
+   sudo apt update && sudo apt install -y python3 git caddy
+   ```
+
+6. Point the DNS at the instance's **public IP** — on Wix, the record below in
+   [If the domain is on Wix](#if-the-domain-is-on-wix).
+
+Then carry on from here. Two things to know about the free tier: Oracle may reclaim an Always
+Free instance that sits nearly idle for a week, and this one mostly does between events —
+upgrading the account to **Pay As You Go** stops that, and Always Free resources stay free on it.
+Updating later is `sudo git -C /opt/frc-scouting pull && sudo systemctl restart frc-mirror`.
+
+#### On the host
+
 ```
 sudo useradd --system --home /opt/frc-scouting frcmirror
 sudo git clone https://github.com/ShadowOfTheVOID/frc-scouting /opt/frc-scouting
