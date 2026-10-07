@@ -345,9 +345,27 @@ without paying anything.
 6. Point the DNS at the instance's **public IP** — on Wix, the record below in
    [If the domain is on Wix](#if-the-domain-is-on-wix).
 
-Then carry on from here. Two things to know about the free tier: Oracle may reclaim an Always
-Free instance that sits nearly idle for a week, and this one mostly does between events —
-upgrading the account to **Pay As You Go** stops that, and Always Free resources stay free on it.
+If the console says **out of capacity** for both free shapes, which San Jose often does, let
+Cloud Shell (the `>_` icon, top right) keep asking once a minute instead of clicking **Create**
+by hand — it stops with the public IP as soon as one is free:
+
+```
+curl -fsSL https://raw.githubusercontent.com/ShadowOfTheVOID/frc-scouting/main/mirror/deploy/oracle-retry.sh | bash
+```
+
+Then carry on from here. One more thing about the free tier: Oracle stops an Always Free
+instance whose CPU, network and memory all sit under 20% for a week, and a mirror between events
+does. Once the mirror is installed (step 2 below), keep it above the line — this uses only the
+cycles nothing else wants, so the mirror never waits on it:
+
+```
+sudo cp /opt/frc-scouting/mirror/deploy/frc-keepawake.service /etc/systemd/system/
+sudo systemctl enable --now frc-keepawake
+```
+
+A day later, the instance's **Metrics → CPU utilization** graph should sit above 20%. Upgrading
+the account to **Pay As You Go** also stops the reclaiming, and Always Free resources stay free on
+it — but it makes the card chargeable, which this avoids.
 Updating later is `sudo git -C /opt/frc-scouting pull && sudo systemctl restart frc-mirror`.
 
 #### On the host

@@ -1,0 +1,43 @@
+# Keeps an Oracle Always Free server from being stopped as idle.
+#
+# Oracle stops an Always Free instance when, over seven days, its CPU (95th
+# percentile), its network, and on A1 shapes its memory are ALL under 20%. A
+# mirror between events is under all three. Holding any one of them above the
+# line is enough, and CPU is the only one that costs nothing to hold: network
+# would mean ~100 Mbps around the clock.
+#
+# So this spins one thread at a capped rate, under SCHED_IDLE and nice 19: the
+# kernel gives it only the cycles nothing else wants, so the mirror, Caddy and
+# sshd never wait on it. Not for any host other than Oracle's free tier, and
+# not needed at all on a Pay As You Go account, which is never reclaimed.
+#
+#   sudo cp mirror/deploy/frc-keepawake.service /etc/systemd/system/
+#   sudo systemctl enable --now frc-keepawake
+#
+# Check a day later: Compute > Instances > the instance > Metrics > CPU
+# utilization should sit above 20%. If it does not, raise CPUQuota below
+# (systemctl edit frc-keepawake) - the percentage is of one thread, and the
+# graph is of the whole instance.
+
+[Unit]
+Description=Keep an Oracle Always Free instance above the idle line
+
+[Service]
+Type=simple
+DynamicUser=yes
+ExecStart=/bin/sh -c 'while :; do :; done'
+CPUQuota=60%
+Nice=19
+CPUSchedulingPolicy=idle
+Restart=always
+RestartSec=30
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateNetwork=true
+MemoryMax=16M
+
+[Install]
+WantedBy=multi-user.target
