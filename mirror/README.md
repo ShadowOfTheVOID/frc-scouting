@@ -88,6 +88,11 @@ throttle the whole internet.
 
 Point the DNS at the host and open `https://scouting.systemoverload.org`.
 
+`systemoverload.org` itself is a Wix site, and Wix cannot run this, so the
+mirror lives on its own host under a subdomain: one A record for `scouting` in
+Wix's **Manage DNS Records**, and the Wix site is untouched. Step by step, CAA
+and all, in [setup.md](../setup.md#if-the-domain-is-on-wix).
+
 ### 4. Tell the hub about it
 
 On the hub laptop, in the admin panel at `http://localhost:6059/` — press

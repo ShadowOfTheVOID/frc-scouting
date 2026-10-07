@@ -310,6 +310,66 @@ python3 -c "import secrets; print(secrets.token_urlsafe(32))"    # MIRROR_PUSH_K
 
 ### 2. Put it on the host
 
+#### No host yet? Oracle Cloud's free tier
+
+The mirror is small, uses only the standard library, and fits Oracle's Always Free tier
+without paying anything.
+
+1. Sign up at [oracle.com/cloud/free](https://www.oracle.com/cloud/free/). It asks for a card
+   to check you are a person; the free tier does not charge it. The **home region** you pick
+   cannot be changed later, so pick the one nearest you.
+2. **Compute → Instances → Create instance.**
+   - **Image:** Canonical **Ubuntu 24.04**.
+   - **Shape:** `VM.Standard.E2.1.Micro` (AMD, Always Free) is plenty. `VM.Standard.A1.Flex`
+     (Ampere, also Always Free) is roomier but often says *out of capacity*. Either works.
+   - **Networking:** leave **Assign a public IPv4 address** on.
+   - **SSH keys:** **Save private key**, and keep that file — it is the only way in.
+3. Open ports 80 and 443 **in Oracle's network**: the instance page → its subnet →
+   **Security Lists** → the default list → **Add Ingress Rules**: source `0.0.0.0/0`, TCP,
+   destination port `80,443`.
+4. SSH in (`ssh -i the-key-file ubuntu@<public IP>`) and open the same ports **on the
+   machine**. Oracle's Ubuntu image ships a firewall that refuses everything but SSH, and
+   step 3 alone is not enough — this is the step everybody misses:
+
+   ```
+   sudo iptables -I INPUT -p tcp -m multiport --dports 80,443 -m state --state NEW -j ACCEPT
+   sudo netfilter-persistent save
+   ```
+
+5. Install what the rest of this page uses:
+
+   ```
+   sudo apt update && sudo apt install -y python3 git caddy
+   ```
+
+6. Point the DNS at the instance's **public IP** — on Wix, the record below in
+   [If the domain is on Wix](#if-the-domain-is-on-wix).
+
+If the console says **out of capacity** for both free shapes, which San Jose often does, let
+Cloud Shell (the `>_` icon, top right) keep asking once a minute instead of clicking **Create**
+by hand — it stops with the public IP as soon as one is free:
+
+```
+curl -fsSL https://raw.githubusercontent.com/ShadowOfTheVOID/frc-scouting/main/mirror/deploy/oracle-retry.sh | bash
+```
+
+Then carry on from here. One more thing about the free tier: Oracle stops an Always Free
+instance whose CPU, network and memory all sit under 20% for a week, and a mirror between events
+does. Once the mirror is installed (step 2 below), keep it above the line — this uses only the
+cycles nothing else wants, so the mirror never waits on it:
+
+```
+sudo cp /opt/frc-scouting/mirror/deploy/frc-keepawake.service /etc/systemd/system/
+sudo systemctl enable --now frc-keepawake
+```
+
+A day later, the instance's **Metrics → CPU utilization** graph should sit above 20%. Upgrading
+the account to **Pay As You Go** also stops the reclaiming, and Always Free resources stay free on
+it — but it makes the card chargeable, which this avoids.
+Updating later is `sudo git -C /opt/frc-scouting pull && sudo systemctl restart frc-mirror`.
+
+#### On the host
+
 ```
 sudo useradd --system --home /opt/frc-scouting frcmirror
 sudo git clone https://github.com/ShadowOfTheVOID/frc-scouting /opt/frc-scouting
@@ -344,6 +404,29 @@ sudo systemctl reload caddy
 
 Point the domain's A record at the host. Caddy gets and renews the certificate itself. Open
 `https://your-hostname` and you should get the passcode prompt.
+
+#### If the domain is on Wix
+
+Wix can hold the name but cannot run the mirror — it is a Python server, and Wix hosts only
+Wix sites. So the team website stays on Wix, the mirror runs on the host from step 2, and Wix is
+told that one subdomain lives somewhere else. Nothing about the Wix site changes.
+
+1. On the host, `curl -4 ifconfig.me` — that is the address to point at.
+2. Wix → **Domains** → the domain → **⋯** → **Manage DNS Records**.
+3. Under **A (Host)**, **+ Add Record**: Host name `scouting`, Value the address from step 1,
+   TTL 1 hour. **Save**. Leave the existing records alone — those are the Wix site.
+4. If the page has a **CAA** section with anything in it, add `0 issue "letsencrypt.org"`,
+   or Caddy is refused a certificate.
+5. Wait — usually minutes, occasionally an hour. `nslookup scouting.systemoverload.org` on
+   any laptop prints the host's address when it has arrived. Caddy retries by itself until it
+   does; there is nothing to restart.
+
+The address is then `https://scouting.systemoverload.org`, which is the hostname the
+Caddyfile already has. Not the bare `systemoverload.org` — that is the Wix site, and a push to
+it comes back 404.
+
+If **Manage DNS Records** is not there, the domain was *pointed* to Wix from another registrar
+rather than bought from or transferred to it: add the same A record at that registrar instead.
 
 ### 4. Tell the hub about it
 
@@ -400,6 +483,7 @@ anything already there, so it is safe to run twice. The mirror keeps the last 60
 | A key box says SAVED but the panel says the line cannot be read | a `_B64` line was hand-edited into something that is not base64. Paste the key into the box again, or write it as a plain `NEXUS_API_KEY=` line and restart |
 | **FIND MY EVENTS** comes back with nothing | no internet on the laptop, or the schedule is not published yet. Type the event key in by hand |
 | `could not be reached` on the mirror line | laptop has no internet, or the address is wrong |
+| `404` on the mirror line, or the address opens the team website | the address is the Wix root, not the `scouting.` subdomain |
 | `rejected the push key` | `systemctl show frc-mirror -p Environment` on the host |
 | Mirror header amber / red | nothing has arrived for 5 minutes / an hour — everything on screen is that old |
 | `too many attempts` on the mirror | eight wrong passcodes from one address; it clears itself |
