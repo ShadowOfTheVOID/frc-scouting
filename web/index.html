@@ -219,6 +219,12 @@
               their 403 means. It is shown next to our own numbers, never mixed into
               them. lovat.app</div>
             <div class="say"></div></div>
+          <div class="f" data-key="tpwKey"><label>PURPLE WAREHOUSE API KEY<span class="tag"></span></label>
+            <input id="tpwKey" placeholder="TPW key" autocomplete="off">
+            <div class="h">Other teams' scouting shared through The Purple Standard. Sign in at
+              thepurplewarehouse.com and generate a key under Scouting; a team without access
+              asks on their Discord. Pulled every five minutes, kept beside our own numbers.</div>
+            <div class="say"></div></div>
           <div class="f"><label>AI MODEL</label>
             <select id="aiModel"></select>
             <div class="h">Summarises scout notes, explains the picklist and answers questions
@@ -535,6 +541,7 @@ async function reload() {
   const bits = [c.keys.tba ? 'TBA SET' : 'NO TBA KEY', c.keys.nexus ? 'NEXUS SET' : 'NO NEXUS KEY'];
   if (c.keys.frcEvents) bits.push('FRC EVENTS SET');
   if (c.keys.lovat) bits.push('LOVAT SET');
+  if (c.keys.tpw) bits.push('PURPLE WAREHOUSE SET');
   bits.push(c.keys.ai ? `AI · ${(c.ai && c.ai.label) || 'ON'}` : 'NO AI');
   buildModelPicker(c.ai || {});
   bits.push(c.multipliersFittedFrom ? `CALIBRATED · ${c.multipliersFittedFrom} WINDOWS` : 'PRIORS ONLY');
@@ -559,7 +566,7 @@ async function reload() {
 // The eight optional boxes stay folded on a hub that has never used one, and
 // open on a hub that has - a lead who set a Lovat key last week must not have to
 // go hunting for the box it is in. A hand on the fold wins over both.
-const OPTIONAL = ['tbaKey', 'nexusToken', 'frcEventsUser', 'frcEventsToken', 'lovatKey',
+const OPTIONAL = ['tbaKey', 'nexusToken', 'frcEventsUser', 'frcEventsToken', 'lovatKey', 'tpwKey',
                   'aiKey', 'strategyPin'];
 let foldTouched = false;
 $('#moreKeys').querySelector('summary').addEventListener('click', () => { foldTouched = true; });
@@ -769,7 +776,7 @@ function buildModelPicker(ai) {
 }
 
 const SECRETS = ['tbaKey','nexusKey','nexusToken','frcEventsUser','frcEventsToken',
-                'lovatKey','aiKey','strategyPin','mirrorKey'];
+                'lovatKey','tpwKey','aiKey','strategyPin','mirrorKey'];
 
 /** What the boxes currently say, as the hub wants it. */
 function typed() {
@@ -947,7 +954,7 @@ async function testKeys() {
                  warn: ['!', 'var(--amber)'], down: ['?', 'var(--t4)'],
                  unset: ['·', 'var(--t6)'] };
   const NAME = { tba: 'The Blue Alliance', nexus: 'Nexus', frcEvents: 'FRC Events',
-                 lovat: 'Lovat', ai: 'AI model', mirror: 'Off-site mirror' };
+                 lovat: 'Lovat', tpw: 'The Purple Warehouse', ai: 'AI model', mirror: 'Off-site mirror' };
   try {
     const res = await admin('/api/keytest', { method: 'POST', body: '{}' });
     const out = $('#testOut');

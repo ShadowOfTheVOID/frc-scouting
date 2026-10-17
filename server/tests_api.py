@@ -907,7 +907,7 @@ def test_config_scope(L):
     code, c = L.req("/api/config")
     ok &= check("config reports which keys are set",
                 code == 200 and c["keys"] == {"tba": False, "nexus": False, "frcEvents": False,
-                                              "lovat": False, "ai": False, "mirror": False},
+                                              "lovat": False, "tpw": False, "ai": False, "mirror": False},
                 f"({c['keys']})")
     L.req("/api/config", {"frcEventsUser": "someone", "frcEventsToken": "secret"})
     code, c = L.req("/api/config")
@@ -2816,6 +2816,47 @@ def test_hub_counter_reaches_the_board(L):
     return ok
 
 
+def test_purple_warehouse_key(L):
+    """The Purple Warehouse key: saved to .env, sent as ?key=, entries stored.
+
+    The network is stubbed at PurpleWarehouse._get, so this fixes our half -
+    the URL, the parse, the cache and what a refusal does - not TPW's.
+    """
+    ok = True
+    seen = []
+    real = sources.PurpleWarehouse._get
+    def fake(self, path):
+        seen.append((self.key, path))
+        if self.key == "bad":
+            return {"success": False, "error": "invalid key"}, 401
+        return {"success": True, "body": {"entries": [
+            {"entry": {"metadata": {"scouter": {"team": 254}}}, "hash": "abc"}, "junk"]}}, 200
+    sources.PurpleWarehouse._get = fake
+    try:
+        code, _ = L.req("/api/config", {"tpwKey": " tpw-key-1 "})
+        ok &= check("tpw: the key saves", code == 200, f"({code})")
+        ok &= check("tpw: it lives in .env, not the database",
+                    L.hub.cfg("tpwKey") == "tpw-key-1" and not L.hub.store.get("tpwKey"))
+        _, cfg = L.req("/api/config")
+        ok &= check("tpw: the setup page is told it is set", cfg["keys"].get("tpw") is True)
+        L.hub.store.set("eventKey", "2026tpw")
+        L.hub.poll_tpw()
+        ok &= check("tpw: entries for the event are asked for with our key",
+                    seen[-1] == ("tpw-key-1", "/entry/list/event/2026tpw"), str(seen[-1:]))
+        _, got = L.req("/api/tpw")
+        ok &= check("tpw: entries are kept, junk rows dropped",
+                    [e["hash"] for e in got["entries"]] == ["abc"], str(got))
+        ok &= check("tpw: the key test answers", L.hub.tpw().verify("2026tpw")["state"] == "ok")
+        bad = sources.PurpleWarehouse("bad")
+        ok &= check("tpw: a refused key backs off rather than retrying",
+                    bad.entries("2026tpw") is None and bad.down_until > time.time())
+        ok &= check("tpw: and the key test says why", bad.verify("2026tpw")["state"] == "bad")
+    finally:
+        sources.PurpleWarehouse._get = real
+        L.req("/api/config", {"forget": ["tpwKey"]})
+    return ok
+
+
 def test_nobody_elses_format_can_raise(L):
     """Three parsers read something this app did not write.
 
@@ -2965,7 +3006,8 @@ def main():
                    test_the_webhook_is_shut_without_a_token,
                    test_a_refused_body_does_not_eat_the_next_request,
                    test_nobody_elses_format_can_raise,
-                   test_hub_counter_reaches_the_board):
+                   test_hub_counter_reaches_the_board,
+                   test_purple_warehouse_key):
             print(f"\n{fn.__name__.replace('test_', '').replace('_', ' ')}")
             passed &= fn(L)
         print()

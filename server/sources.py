@@ -21,6 +21,7 @@ STATBOTICS_BASE = "https://api.statbotics.io/v3"
 NEXUS_BASE = "https://frc.nexus/api/v1"
 FRC_EVENTS_BASE = "https://frc-api.firstinspires.org/v3.0"
 LOVAT_BASE = "https://api.lovat.app/v1"
+TPS_BASE = "https://api.thepurplestandard.com/v1"
 
 USER_AGENT = "frc-rebuilt-scouting/1.0 (+https://frc.nexus)"
 _ctx = ssl.create_default_context()
@@ -408,6 +409,60 @@ class FRCEvents:
 
 
 # --------------------------------------------------------------- Lovat
+
+class PurpleWarehouse:
+    """Other teams' scouting, from The Purple Warehouse (The Purple Standard API).
+
+    The key is minted at thepurplewarehouse.com/scouting/auth/generate/ and,
+    per the TPS README, rides on the query string as `?key=` - not a header.
+    `GET /entry/list/event/:event` returns every entry shared for an event as
+    `{success, body: {entries: [{entry, hash}]}}`; entries are free-form per
+    app (abilities / counters / data / metadata / ratings / timers), so they
+    are kept as given rather than mapped onto our own fields.
+    """
+
+    BACKOFF_SECONDS = 300
+
+    def __init__(self, key):
+        self.key = (key or "").strip()
+        self.down_until = 0.0
+
+    @property
+    def ok(self):
+        return bool(self.key)
+
+    def _get(self, path):
+        q = urllib.parse.urlencode({"key": self.key})
+        return _request(f"{TPS_BASE}{path}?{q}", {"Accept": "application/json"}, timeout=20)
+
+    def entries(self, event_key):
+        """[{entry, hash}] for one event, or None for "we do not know"."""
+        if not (self.ok and event_key) or time.time() < self.down_until:
+            return None
+        body, status = self._get(f"/entry/list/event/{urllib.parse.quote(event_key)}")
+        if not isinstance(body, dict) or not body.get("success"):
+            if status in (401, 403, 429):
+                self.down_until = time.time() + self.BACKOFF_SECONDS
+            return None
+        rows = (body.get("body") or {}).get("entries")
+        return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+
+    def verify(self, event_key=None):
+        if not self.ok:
+            return verdict("unset")
+        if not event_key:
+            return verdict("warn", "set the event key first - entries are listed per event")
+        body, status = self._get(f"/entry/list/event/{urllib.parse.quote(event_key)}")
+        if isinstance(body, dict) and body.get("success"):
+            n = len((body.get("body") or {}).get("entries") or [])
+            if n:
+                return verdict("ok", f"key accepted, {n} entr{'y' if n == 1 else 'ies'} for {event_key}")
+            return verdict("warn", f"the key works, but nobody has shared entries for {event_key} yet")
+        if isinstance(body, dict):
+            return verdict("bad", "The Purple Warehouse refused it: "
+                                  + str(body.get("error") or body.get("message") or "no reason given")[:120])
+        return _rejection(status, "The Purple Warehouse")
+
 
 class Lovat:
     """Other teams' scouting, from https://lovat.app.

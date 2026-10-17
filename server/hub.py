@@ -83,6 +83,7 @@ FRC_EVENTS_POLL_SECONDS = 60
 # every five minutes pulls the whole tournament and leaves that limit alone
 # even when a config save fires _poll_all at the same moment.
 LOVAT_POLL_SECONDS = 300
+TPW_POLL_SECONDS = 300
 # Outbound, to a site the team hosts - see server/offsite.py. Nothing is sent
 # when the bundle has not changed, so this is a ceiling on how often the hub
 # *could* speak, not on how much it says.
@@ -152,7 +153,7 @@ class Hub:
         self.stop_flag = threading.Event()
         self.port = PORT
         self.status = {"nexus": None, "tba": None, "statbotics": None,
-                       "frcEvents": None, "lovat": None, "mirror": None,
+                       "frcEvents": None, "lovat": None, "tpw": None, "mirror": None,
                        "lastUpdate": None}
         self.last_snapshot = None
         self._snapshot_token = None
@@ -294,6 +295,10 @@ class Hub:
                 ("rate limited, backing off" if lv.down_until > now
                  else age(self.status["lovat"])) if lv.ok else "no api key",
                 bool(lv.ok) and not self.status["lovat"]),
+            svc("purple warehouse", bool(self.tpw().ok),
+                ("rejected, backing off" if self.tpw().down_until > now
+                 else age(self.status["tpw"])) if self.tpw().ok else "no api key",
+                bool(self.tpw().ok) and not self.status["tpw"]),
             svc("ai", ai_c.ok, f"{ai_c.provider} · {ai_c.model} · {self.ai_calls()}"
                 f"/{self.ai_ceiling()} answers this event" if ai_c.ok else "no provider set"),
             svc("hub counter", self.hubcount.state()["status"] == "live",
@@ -479,6 +484,10 @@ class Hub:
         key = self.cfg("lovatKey")
         return self._client("lovat", key, lambda: sources.Lovat(key))
 
+    def tpw(self):
+        key = self.cfg("tpwKey")
+        return self._client("tpw", key, lambda: sources.PurpleWarehouse(key))
+
     def ai(self):
         sig = (self.cfg("aiProvider"), self.cfg("aiKey"), self.cfg("aiModel"))
         return self._client("ai", sig, lambda: ai.client(self.cfg))
@@ -506,6 +515,7 @@ class Hub:
             "nexus": lambda: self.nexus().verify(ek),
             "frcEvents": lambda: self.frc_events().verify(int(season) if season else 2026),
             "lovat": lambda: self.lovat().verify(ek),
+            "tpw": lambda: self.tpw().verify(ek),
             "ai": lambda: self.ai().verify(),
             # The mirror is the only one of these that sends anything out
             # rather than fetching, so "does the key work" is worth knowing
@@ -1185,6 +1195,25 @@ class Hub:
         if self.store.get(cache) != out:
             self.store.set(cache, out)
             self.broadcast("lovat", {"teams": len(out)})
+
+    def poll_tpw(self):
+        """Other teams' entries from The Purple Warehouse, kept as shared.
+
+        An empty list is written too: "nothing shared for this event" must not
+        leave another event's entries on screen.
+        """
+        ek = self.event_key()
+        tp = self.tpw()
+        if not (ek and tp.ok):
+            return
+        rows = tp.entries(ek)
+        if rows is None:
+            return
+        self.status["tpw"] = time.time()
+        cache = f"tpw:{ek}"
+        if self.store.get(cache) != rows:
+            self.store.set(cache, rows)
+            self.broadcast("tpw", {"entries": len(rows)})
 
     def poll_frc_events(self):
         """Post the official result before TBA has caught up.
@@ -1949,6 +1978,7 @@ class Hub:
                  (self.poll_frc_events, FRC_EVENTS_POLL_SECONDS),
                  (self.poll_statbotics, STATBOTICS_POLL_SECONDS),
                  (self.poll_lovat, LOVAT_POLL_SECONDS),
+                 (self.poll_tpw, TPW_POLL_SECONDS),
                  (self.poll_mirror, MIRROR_PUSH_SECONDS))
         due = [0.0] * len(every)
         while not self.stop_flag.is_set():
@@ -3016,7 +3046,7 @@ class Handler(BaseHTTPRequestHandler):
                 "eventKey": ek,
                 "eventLevel": (h.store.event(ek) or {}).get("level", "regional") if ek else "regional",
                 "keys": {"tba": bool(h.cfg("tbaKey")), "nexus": bool(h.cfg("nexusKey")),
-                         "frcEvents": frc.ok, "lovat": bool(h.cfg("lovatKey")),
+                         "frcEvents": frc.ok, "lovat": bool(h.cfg("lovatKey")), "tpw": bool(h.cfg("tpwKey")),
                          "ai": aic.ok, "mirror": mir.ok},
                 # Which boxes have something in them, box by box, so the Setup
                 # page can say SAVED beside each one and offer to forget it.
@@ -3153,6 +3183,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(h.seat_history(), etag=etag)
         if p == "/api/diag":
             return self._json(h.diag())
+        if p == "/api/tpw":
+            ek = (q.get("event") or [h.event_key()])[0]
+            return self._json({"eventKey": ek, "entries": (h.store.get(f"tpw:{ek}") or []) if ek else []})
         if p == "/api/hubcount":
             return self._json(h.hubcount_view())
         if p == "/api/export":

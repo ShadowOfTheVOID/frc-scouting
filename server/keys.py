@@ -132,6 +132,7 @@ FIELDS = {
     "lovatKey": Field(
         "Lovat", "the LOVAT API KEY box",
         re.compile(r"^lvt-\S+$"), "Lovat keys start with `lvt-`"),
+    "tpwKey": Field("The Purple Warehouse", "the PURPLE WAREHOUSE API KEY box"),
     "aiKey": Field("AI", "the AI KEY box"),
     "mirrorKey": Field("mirror push key", "the MIRROR PUSH KEY box"),
     #: Not a key, and not checked like one - but a passcode with a space on the

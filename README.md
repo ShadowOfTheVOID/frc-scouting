@@ -520,6 +520,15 @@ alone rather than corrupting it — see [how it works](docs/how-it-works.md#the-
 
 ---
 
+## The Purple Warehouse
+
+Paste a key from The Purple Warehouse (sign in at thepurplewarehouse.com,
+Scouting, generate a key; teams without access ask on its Discord) into
+**PURPLE WAREHOUSE API KEY**. Every five minutes the hub pulls the entries
+other teams have shared for this event through The Purple Standard API and keeps
+them at `/api/tpw`. **TEST KEYS** checks it, and the server tab shows when it
+last answered. Like the other keys it is kept in `.env`, never in the database.
+
 ## The camera hub counter
 
 If the team runs the camera FUEL counter (the Hub Counter or Watchtower app, or
