@@ -29,6 +29,7 @@ import offsite  # noqa: E402
 import rules  # noqa: E402
 import lovat as lovat_report  # noqa: E402
 import discover  # noqa: E402
+import hubcounter  # noqa: E402
 import random  # noqa: E402
 import sources  # noqa: E402
 from store import Store  # noqa: E402
@@ -2753,6 +2754,68 @@ def test_a_refused_body_does_not_eat_the_next_request(L):
     return ok
 
 
+def test_hub_counter_reaches_the_board(L):
+    """The camera counter's /api/board, read through to /api/hubcount.
+
+    Served by a stand-in counter on a real socket, so the address the setup
+    page saves, the fetch and the per-match record are all the real path. Only
+    a bioarena-linked board has a match to record against; a counter's own
+    running total must never land in the per-match list.
+    """
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    board = {"source": "bioarena", "score": {"red": 0, "blue": 0},
+             "match_state": "PRE_MATCH", "running": True, "linked": True}
+
+    class Fake(BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = json.dumps(board).encode() if self.path == "/api/board" else b"{}"
+            self.send_response(200 if self.path == "/api/board" else 404)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), Fake)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    ok = True
+    try:
+        code, _ = L.req("/api/config", {"hubCounterUrl": "127.0.0.1:%d/board" % srv.server_address[1]})
+        ok &= check("hub counter: the address saves", code == 200, f"({code})")
+        ok &= check("hub counter: a pasted board address is cut to the base",
+                    L.hub.store.get("hubCounterUrl") == "http://127.0.0.1:%d" % srv.server_address[1],
+                    L.hub.store.get("hubCounterUrl"))
+        L.hub.hubcount.poll_once()
+        for st, r, b in (("AUTO", 4, 2), ("TELEOP", 31, 27)):
+            board.update(match_state=st, score={"red": r, "blue": b})
+            L.hub.hubcount.poll_once()
+        _, view = L.req("/api/hubcount")
+        ok &= check("hub counter: live, with bioarena's score",
+                    view["status"] == "live" and view["board"]["score"] == {"red": 31, "blue": 27}, str(view))
+        board.update(match_state="POST_MATCH")
+        L.hub.hubcount.poll_once()
+        _, view = L.req("/api/hubcount")
+        ok &= check("hub counter: the finished match is kept once",
+                    [m["score"] for m in view["matches"]][-1:] == [{"red": 31, "blue": 27}], str(view["matches"]))
+        n = len(view["matches"])
+        board.clear()
+        board.update(source="counter", score={"red": 90, "blue": 80}, running=True)
+        L.hub.hubcount.poll_once()
+        _, view = L.req("/api/hubcount")
+        ok &= check("hub counter: a counter-only total is not a match score",
+                    len(view["matches"]) == n and view["board"]["source"] == "counter")
+        srv.shutdown()
+        srv.server_close()
+        L.hub.hubcount.poll_once()
+        L.hub.hubcount.ok_at -= hubcounter.STALE_SECONDS + 1
+        _, view = L.req("/api/hubcount")
+        ok &= check("hub counter: a silent counter reads offline", view["status"] == "offline", str(view))
+    finally:
+        L.req("/api/config", {"hubCounterUrl": ""})
+    return ok
+
+
 def test_nobody_elses_format_can_raise(L):
     """Three parsers read something this app did not write.
 
@@ -2901,7 +2964,8 @@ def main():
                    test_junk_in_every_answer_field,
                    test_the_webhook_is_shut_without_a_token,
                    test_a_refused_body_does_not_eat_the_next_request,
-                   test_nobody_elses_format_can_raise):
+                   test_nobody_elses_format_can_raise,
+                   test_hub_counter_reaches_the_board):
             print(f"\n{fn.__name__.replace('test_', '').replace('_', ' ')}")
             passed &= fn(L)
         print()

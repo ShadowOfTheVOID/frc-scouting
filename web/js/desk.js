@@ -1995,6 +1995,51 @@ async function refresh() {
   if (moved) renderAll();
 }
 
+/**
+ * The camera hub counter, read by the hub from the counter's /api/board and
+ * pushed here on change. Its own state and its own render: it moves every
+ * second during a match, and a full renderAll() that often would repaint the
+ * ranking table under the lead's cursor.
+ */
+let HUBC = null;
+function renderHubCounter() {
+  const card = $('#hubCard');
+  if (!card) return;
+  if (!HUBC || HUBC.status === 'off') { card.classList.add('hide'); return; }
+  card.classList.remove('hide');
+  const b = HUBC.board || {};
+  const score = b.score || { red: 0, blue: 0 };
+  const live = HUBC.status === 'live';
+  const official = b.source === 'bioarena';
+  $('#hubRed').textContent = score.red;
+  $('#hubBlue').textContent = score.blue;
+  const chip = $('#hubChip');
+  chip.textContent = !live ? 'OFFLINE' : official ? 'BIOARENA' : b.source === 'practice' ? 'PRACTICE' : 'CAMERA';
+  chip.className = 'chip ' + (!live ? 'bad' : official ? 'ok' : 'warn');
+  card.classList.toggle('stale', !live);
+  const act = b.hub_active || {};
+  $('#hubActRed').className = act.red ? 'on' : '';
+  $('#hubActBlue').className = act.blue ? 'on' : '';
+  const bits = [];
+  if (!live) bits.push(`No reply from ${HUBC.url}${HUBC.error ? ' — ' + HUBC.error : ''}`);
+  else if (b.alert) bits.push(b.alert);
+  else if (official || b.source === 'practice') {
+    if (b.match_state) bits.push(b.match_state.replace(/_/g, ' ').toLowerCase());
+    if (b.match_time_s != null) bits.push(`${Math.round(b.match_time_s)} s`);
+    if (b.shift) bits.push(String(b.shift).replace(/_/g, ' ').toLowerCase());
+  } else bits.push('Counted since the counter started — not a match score');
+  $('#hubSay').textContent = bits.join(' · ');
+  const hist = (HUBC.matches || []).slice(-4).reverse();
+  $('#hubHist').innerHTML = hist.length ? hist.map((m) => `
+    <div class="hubc-row"><span>${esc(m.match || 'match')}</span>
+      <span class="tnum"><em class="r">${m.score.red}</em> – <em class="b">${m.score.blue}</em></span></div>`).join('')
+    : '';
+}
+async function refreshHubCounter() {
+  try { HUBC = await net.api('/api/hubcount'); } catch {}
+  renderHubCounter();
+}
+
 /** Settings, which change only when somebody saves them or the solver refits. */
 async function refreshConfig() {
   try { CONFIG = await net.api('/api/config'); } catch {}
@@ -2054,6 +2099,9 @@ async function main() {
   // Settings are not in refresh() any more: /api/config carries serverTime, so
   // it can never answer 304, and nothing on it changes without one of these.
   net.on('calibration', () => refreshConfig().then(renderAll));
+  net.on('hubcount', (st) => { HUBC = { ...(HUBC || {}), ...st }; renderHubCounter(); });
+  net.on('hubcountMatch', refreshHubCounter);
+  refreshHubCounter();
 
   // The picklist is the one thing refresh() does not re-read, so it needs its
   // own listener - and it is the one that matters most. Two dashboards are open

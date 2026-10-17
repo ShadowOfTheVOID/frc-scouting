@@ -439,3 +439,10 @@ body{
    It runs for 200ms on a tap and never again - nothing here animates on its own. */
 #s-standby{transition:opacity .2s ease-out}
 #s-standby.idle{opacity:.62}
+
+/* Press feedback. A gloved thumb in a loud stand gets no click sound, so the
+   control itself answers: a quick dip on press, nothing on release lag. */
+.ubtn,.obtn,button{transition:transform .08s ease-out,background .15s,border-color .15s}
+.ubtn:active,.obtn:active,button:active{transform:scale(.97)}
+@media (prefers-reduced-motion:reduce){.ubtn,.obtn,button{transition:none}
+  .ubtn:active,.obtn:active,button:active{transform:none}}

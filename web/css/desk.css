@@ -226,3 +226,68 @@ a:hover{color:var(--red-label)}
   border:1px solid var(--btn);color:var(--t4);font:700 10.5px Barlow,sans-serif;letter-spacing:.06em}
 .picker button.on{border-color:transparent;color:var(--t0)}
 .picker button.on i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:6px}
+
+/* ----------------------------------------------------------- hub counter */
+/* The camera FUEL count. Two big numbers in alliance colour; the chip says
+   whether they are bioarena's score or the counter's own running total, since
+   the two look identical and only one of them is a match score. */
+.hubc{margin-top:6px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;
+  background:linear-gradient(180deg,var(--raised),var(--panel));transition:opacity .3s}
+.hubc.stale{opacity:.55}
+.hubc-top{display:flex;align-items:center;justify-content:space-between}
+.chip{font:800 9.5px Barlow,sans-serif;letter-spacing:.14em;padding:3px 8px;border-radius:999px;
+  border:1px solid var(--btn);color:var(--t4)}
+.chip.ok{color:var(--green-soft);border-color:var(--green-border);background:rgba(52,168,106,.08)}
+.chip.warn{color:var(--amber);border-color:rgba(245,165,36,.35);background:rgba(245,165,36,.07)}
+.chip.bad{color:var(--red-soft);border-color:var(--red-ring);background:rgba(225,29,43,.08)}
+.hubc-score{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0 6px}
+.hubc-score .side{position:relative;padding:8px 10px;border-radius:9px;background:var(--row);
+  display:flex;flex-direction:column;align-items:flex-start}
+.hubc-score .side.red{box-shadow:inset 3px 0 0 var(--red)}
+.hubc-score .side.blue{box-shadow:inset 3px 0 0 var(--blue-rail)}
+.hubc-score b{font:700 38px/1 'Barlow Condensed',sans-serif;font-variant-numeric:tabular-nums}
+.hubc-score .red b{color:var(--red-label)}
+.hubc-score .blue b{color:var(--blue-label)}
+.hubc-score span{font:800 9.5px Barlow,sans-serif;letter-spacing:.16em;color:var(--t5);margin-top:3px}
+/* lit while bioarena says that hub is active */
+.hubc-score i{position:absolute;top:9px;right:10px;width:7px;height:7px;border-radius:50%;
+  background:var(--track)}
+.hubc-score i.on{background:var(--green-soft);box-shadow:0 0 8px var(--green)}
+.hubc-row{display:flex;justify-content:space-between;padding:5px 0;border-top:1px solid var(--row);
+  font:600 11.5px Barlow,sans-serif;color:var(--t4)}
+.hubc-row em{font-style:normal;font-weight:700}
+.hubc-row em.r{color:var(--red-label)}
+.hubc-row em.b{color:var(--blue-label)}
+
+/* ---------------------------------------------------------------- polish */
+/* Softer edges, motion on what responds to a pointer, and a visible focus
+   ring. Colours, sizes and layout are untouched: the mocks still govern. */
+body{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
+  background:radial-gradient(1200px 600px at 50% -200px,#16161b,var(--page))}
+.shell{border-radius:16px;box-shadow:0 30px 80px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.02)}
+.apphead{background:linear-gradient(180deg,#121216,var(--raised))}
+.apphead .bar{background:linear-gradient(180deg,var(--red-link),var(--red))}
+.seg button{transition:background .15s,color .15s}
+.seg button:not(.on):hover{color:var(--t0);background:rgba(255,255,255,.04)}
+.seg button.on{box-shadow:0 2px 10px rgba(225,29,43,.35)}
+.tbl{border-radius:12px;overflow:hidden}
+.tbl .r{transition:background .12s}
+.tbl .r:hover{background:rgba(255,255,255,.035)}
+.tiles{border-radius:12px;overflow:hidden}
+.tile{transition:background .15s}
+.tile:hover{background:#121216}
+.mrow{border-radius:0 8px 8px 0}
+.pk{border-radius:0 8px 8px 0;transition:transform .12s,background .12s}
+.pk:hover{background:#131317}
+.callout{background:rgba(225,29,43,.035)}
+button{transition:border-color .15s,color .15s,background .15s}
+.pkf button:hover,.picker button:hover,.pk .x:hover{border-color:var(--t6);color:var(--t1)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--red-link);
+  outline-offset:2px}
+input,select{transition:border-color .15s}
+input:focus,select:focus{border-color:var(--t6)}
+*{scrollbar-width:thin;scrollbar-color:var(--btn) transparent}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:var(--btn);border-radius:9px;border:2px solid var(--panel)}
+::-webkit-scrollbar-track{background:transparent}
+@media (prefers-reduced-motion:reduce){*{transition:none !important}}

@@ -37,6 +37,7 @@ import analytics
 import discover
 import envfile
 import firewall
+import hubcounter
 import keys as keyhygiene
 import lovat as lovat_report
 import offsite
@@ -193,6 +194,41 @@ class Hub:
         # Where the credentials live. An attribute rather than the constant so a
         # test never writes the developer's own `.env`.
         self.env_path = envfile.PATH
+        # The camera hub counter, read on its own one-second thread rather than
+        # the 2 s source poller: a scoreboard two seconds behind is one nobody
+        # trusts, and a counter that is off must not hold up TBA or Nexus.
+        self.hubcount = hubcounter.HubCounterLink(
+            lambda: self.store.get("hubCounterUrl") or "",
+            on_change=lambda st: self.broadcast("hubcount", st),
+            on_match=self.record_hub_match,
+            label_now=self.on_field_label)
+
+    def on_field_label(self):
+        """The match Nexus has on the field, as the counter's per-match row is named."""
+        ek = self.event_key()
+        if not ek:
+            return None
+        for m in self.store.matches(ek):
+            if m.get("status") == "On field" and not m.get("breakdown"):
+                return m.get("label") or m.get("matchKey")
+        return None
+
+    def record_hub_match(self, rec):
+        """One finished match's camera count, kept beside the event."""
+        ek = self.event_key()
+        if not ek:
+            return
+        self.store.mutate(f"hubcount:{ek}",
+                          lambda rows: (((rows or []) + [rec])[-hubcounter.KEEP_MATCHES:], None), [])
+        self.note("info", "hub counter: %s red %d blue %d" % (
+            rec.get("match") or "match", rec["score"]["red"], rec["score"]["blue"]))
+        self.broadcast("hubcountMatch", rec)
+
+    def hubcount_view(self):
+        ek = self.event_key()
+        st = self.hubcount.state()
+        st["matches"] = (self.store.get(f"hubcount:{ek}") or []) if ek else []
+        return st
 
     WRITES_KEPT = 1000        # five minutes of writes is all writes/min needs
 
@@ -260,6 +296,12 @@ class Hub:
                 bool(lv.ok) and not self.status["lovat"]),
             svc("ai", ai_c.ok, f"{ai_c.provider} · {ai_c.model} · {self.ai_calls()}"
                 f"/{self.ai_ceiling()} answers this event" if ai_c.ok else "no provider set"),
+            svc("hub counter", self.hubcount.state()["status"] == "live",
+                {"off": "no address set", "live": "live, %s" % (
+                    (self.hubcount.board or {}).get("source", "counter"))}.get(
+                    self.hubcount.state()["status"],
+                    "unreachable: %s" % (self.hubcount.error or "no reply")),
+                self.hubcount.state()["status"] == "offline"),
             svc("solver", True, f"multipliers fitted from {self.store.get('multipliersFittedFrom') or 0} windows"),
             # The one service that is not a source: this is the hub talking
             # outwards. A mirror that is refusing pushes has to be visible
@@ -3015,6 +3057,7 @@ class Handler(BaseHTTPRequestHandler):
                           "source": "env" if h.admin_set() else "none",
                           "problem": h.admin_password()[1]},
                 "ourTeam": h.cfg("ourTeam"),
+                "hubCounterUrl": h.store.get("hubCounterUrl") or "",
                 "status": h.status,
                 "multipliers": h.store.get("multipliers") or rules.BUCKET_PRIORS,
                 "multipliersFittedFrom": h.store.get("multipliersFittedFrom") or 0,
@@ -3110,6 +3153,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(h.seat_history(), etag=etag)
         if p == "/api/diag":
             return self._json(h.diag())
+        if p == "/api/hubcount":
+            return self._json(h.hubcount_view())
         if p == "/api/export":
             ek = (q.get("event") or [h.event_key()])[0]
             return self._json({
@@ -3190,6 +3235,8 @@ class Handler(BaseHTTPRequestHandler):
             for k in ("eventLevel", "ourTeam", "aiProvider", "aiCallLimit"):
                 if k in body:
                     h.store.set(k, body[k])
+            if "hubCounterUrl" in body:
+                h.store.set("hubCounterUrl", hubcounter.normalise_url(str(body["hubCounterUrl"] or "")))
             # Credentials go to `.env` beside the hub, never into the database:
             # one file to back up, one file to copy to a spare laptop, and no key
             # riding along in a snapshot or in a `.db` sent to somebody to look
@@ -3832,6 +3879,8 @@ def main():
     else:
         threading.Thread(target=hub.run_poller, daemon=True, name="poller").start()
     threading.Thread(target=hub.run_snapshots, daemon=True, name="snapshots").start()
+    threading.Thread(target=hub.hubcount.run, args=(hub.stop_flag,), daemon=True,
+                     name="hubcount").start()
 
     responder = None
     if not args.no_mdns:

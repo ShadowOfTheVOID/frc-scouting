@@ -520,6 +520,25 @@ alone rather than corrupting it — see [how it works](docs/how-it-works.md#the-
 
 ---
 
+## The camera hub counter
+
+If the team runs the camera FUEL counter (the Hub Counter or Watchtower app, or
+`run.py hubgui` from YOLOv26-FRC-Model), paste its address — the one its
+scoreboard page opens on, e.g. `10.0.100.20:8090` — into **HUB COUNTER** on the
+setup page. The strategy board's LIVE tab then shows both hubs' counts, updated
+every second.
+
+- **BIOARENA** on the card: the counter is linked to the field, and the numbers
+  are bioarena's credited score for this match. When the match ends it is kept,
+  named after the match Nexus had on the field (last four under the card,
+  all of them at `/api/hubcount`).
+- **CAMERA**: the counter's own total since it started. Not a match score, so
+  it is shown but never kept.
+- **OFFLINE**: no reply for five seconds. The server tab says why.
+
+The hub only reads the counter's open `/api/board`; it cannot change a count or
+a setting there, and the counter keeps sending to bioarena exactly as before.
+
 ## Reading the data somewhere else — and keeping a copy off the laptop
 
 Optional, and it needs a website you already host. Set up once, it does two jobs at the same

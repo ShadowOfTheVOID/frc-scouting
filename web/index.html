@@ -140,6 +140,11 @@
             there is nothing to look up. Needs no API key: the list comes from Statbotics, and
             from The Blue Alliance if you have set that key.</div>
           <div class="say" id="findSay"></div></div>
+        <div class="f"><label>HUB COUNTER</label>
+          <input id="hubCounterUrl" placeholder="10.0.100.20:8090" autocomplete="off">
+          <div class="h">The camera FUEL counter's address — the one its scoreboard page opens on.
+            Its live counts show on the strategy board's LIVE tab, and each match bioarena
+            scores is kept. Leave blank if there is no counter.</div></div>
         <div class="f hide" id="eventPickRow"><label>PICK THE EVENT</label>
           <select id="eventPick"></select>
           <div class="h">Fills in the key and the level below. Everything after this is one
@@ -526,6 +531,7 @@ async function reload() {
   $('#eventKey').value = c.eventKey || '';
   $('#eventLevel').value = c.eventLevel || 'regional';
   $('#ourTeam').value = c.ourTeam || '';
+  $('#hubCounterUrl').value = c.hubCounterUrl || '';
   const bits = [c.keys.tba ? 'TBA SET' : 'NO TBA KEY', c.keys.nexus ? 'NEXUS SET' : 'NO NEXUS KEY'];
   if (c.keys.frcEvents) bits.push('FRC EVENTS SET');
   if (c.keys.lovat) bits.push('LOVAT SET');
@@ -768,7 +774,8 @@ const SECRETS = ['tbaKey','nexusKey','nexusToken','frcEventsUser','frcEventsToke
 /** What the boxes currently say, as the hub wants it. */
 function typed() {
   const body = { eventKey: $('#eventKey').value.trim(), eventLevel: $('#eventLevel').value,
-                 ourTeam: $('#ourTeam').value.trim() };
+                 ourTeam: $('#ourTeam').value.trim(),
+                 hubCounterUrl: $('#hubCounterUrl').value.trim() };
   for (const k of SECRETS) {
     // A blank box means "leave that one alone": nobody is retyping eight keys
     // to change the event. FORGET beside the box is how one is taken off.
