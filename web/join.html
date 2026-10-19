@@ -4,12 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Join · REBUILT Scouting</title>
+<script src="/js/theme.js"></script>
 <link rel="stylesheet" href="/css/desk.css">
 <style>
   .qrs { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
   .qr { background: #fff; padding: 16px; border-radius: 14px; text-align: center; }
   .qr img, .qr canvas { width: 100%; max-width: 300px; height: auto; image-rendering: pixelated; }
-  .qr .u { color: #111; font: 600 14px ui-monospace, Menlo, monospace; margin-top: 10px; word-break: break-all; }
+  .qr .u { color: #111; font:600 14px ui-monospace, Menlo, monospace; margin-top: 10px; word-break: break-all; }
   /* One address, one code. A laptop with a second network adapter - an Ethernet
      cable as well as wifi, or a virtual one left by VirtualBox, Docker or a VPN -
      used to put two identical squares side by side under a heading that says
@@ -21,8 +22,7 @@
   #qrOne .qr { padding: 20px; }
   #qrOne .qr img { max-width: 380px; }
   #qrAlts { margin-top: 20px; }
-  #qrAlts > summary { cursor: pointer; list-style: none; font: 800 11px Barlow, sans-serif;
-    letter-spacing: .14em; color: var(--t4); }
+  #qrAlts > summary { cursor: pointer; list-style: none; font:700 13.5px var(--f-body); color: var(--t4); }
   #qrAlts > summary::-webkit-details-marker { display: none; }
   #qrAlts > summary::before { content: "\25B8  "; color: var(--t5); }
   #qrAlts[open] > summary::before { content: "\25BE  "; }
@@ -40,11 +40,11 @@
 </style>
 </head>
 <body>
-<div class="shell"><div class="apphead"><div class="bar"></div><div class="in"><div><h1>POINT A PHONE CAMERA AT THIS</h1><div class="sub">SCANNING USES THE PHONE'S OWN CAMERA APP — NOTHING TO INSTALL</div></div></div></div><div class="pane mid">
+<div class="shell"><div class="apphead"><div class="bar"></div><div class="in"><div><h1>Point a phone camera at this</h1><div class="sub">Scanning uses the phone's own camera app — nothing to install</div></div></div></div><div class="pane mid">
   <div id="qrOne"><p class="hint">finding addresses…</p></div>
   <div id="qrAltsHolder"></div>
   <div class="callout">
-    <div class="h">THEN TELL THEM: ADD IT TO THE HOME SCREEN, BEFORE THE FIRST MATCH</div>
+    <div class="h">Then tell them: Add it to the home screen, before the first match</div>
     <div class="b">On iPhone — <b>Share</b> → <b>Add to Home Screen</b> → <b>Add</b>, then open it
       from the new icon. iPhone stores the Safari tab and the home-screen app
       <b>separately</b>, so anything logged in the tab beforehand never reaches the hub. The phone
@@ -52,17 +52,17 @@
       goes full screen on the first tap.</div>
   </div>
   <div class="callout">
-    <div class="h">NEVER SCOUTED BEFORE? FOUR MINUTES, ON YOUR OWN PHONE</div>
+    <div class="h">Never scouted before? Four minutes, on your own phone</div>
     <div class="b"><a href="/tutorial" style="color:var(--red-link)"><b>Open the practice
       tutorial</b></a> — it walks through taking a seat and the hold pad, then gives you a
       practice match to hold along with and tells you how close you were. It records nothing and
       touches no real data, so it is safe to run during an event.</div>
   </div>
-  <div><div class="eyebrow">TEST ONE PHONE BEFORE YOU SEAT SIX</div>
+  <div><div class="eyebrow">Test one phone before you seat six</div>
     <div class="b">If one phone loads this, the network works for the whole event. Thirty seconds
       now beats finding out at match 1.</div>
   </div>
-  <div><div class="eyebrow">IF A PHONE CAN'T CONNECT</div>
+  <div><div class="eyebrow">If a phone can't connect</div>
     <ul class="hint" style="line-height:1.7">
       <li>Make sure it's on the <b>same wifi as this laptop</b>. Not a different venue SSID,
           not cellular.</li>
@@ -119,8 +119,8 @@
     const d = document.createElement('details');
     d.id = 'qrAlts';
     d.innerHTML =
-      '<summary>THIS LAPTOP HAS ' + urls.length + ' ADDRESSES \u2014 OPEN THIS ONLY IF THE '
-      + 'CODE ABOVE DOES NOT LOAD</summary>'
+      '<summary>This laptop has ' + urls.length + ' addresses \u2014 open this only if the '
+      + 'code above does not load</summary>'
       + '<p class="hint">A second address means a second network adapter: an Ethernet cable as '
       + 'well as wifi, a phone hotspot, or a virtual one left behind by VirtualBox, Docker or a '
       + 'VPN. Only an address on the same wifi as the phones can work, and the code above is '

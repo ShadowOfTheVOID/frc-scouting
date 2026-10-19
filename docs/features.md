@@ -32,7 +32,7 @@ somewhere else, holds nothing but what it is sent, and is read-only. See below.
 
 ## The scout phone
 
-Landscape, two thumbs, six screens. The app moves between them on its own — a scout never
+Landscape, six screens, in a simple one-button layout or a two-thumb one. The app moves between them on its own — a scout never
 navigates.
 
 ### TAKE A SEAT
@@ -100,29 +100,45 @@ battery; see [Battery](how-it-works.md#battery).
 
 ### LIVE MATCH
 
-The only screen that matters, and it has two controls.
+The only screen that matters. It comes in two layouts, picked with the **Simple mode** switch
+on the seat screen (and on standby). Both record exactly the same thing — when the robot was
+shooting, and roughly how fast — so the solver cannot tell them apart, and each entry carries
+`inputMode` (`simple` or `pro`) so their accuracy can be compared later.
 
-- **Left thumb — the rate ladder.** `DUMPING` / `STEADY` / `A TRICKLE`. How hard the robot is
-  shooting right now.
-- **Right thumb — the hold pad.** Held down for as long as the robot is actually shooting.
-  That is the whole job.
+- **Simple mode** (on by default for a phone that has never chosen). One big button: hold it
+  while the robot shoots. When it is let go the run is saved straight away at the last speed
+  picked, and the column beside it asks **How fast was that?** — *A few* / *Steady* / *Lots*. A
+  tap there re-labels that run; ignoring it keeps the speed. Holding the button again starts
+  the next run immediately, so a robot that shoots twice in a row is never missed while the
+  scout reads. Simulated against the solver, picking the speed after the run instead of during
+  it costs about one point of per-match error (13% → 14%), well under what a beginner
+  fighting the two-thumb layout costs.
+- **Pro mode.** The two-thumb layout. **Left thumb** picks how fast — *Lots* / *Steady* /
+  *A few*, with their balls-per-second priors beside them. **Right thumb** holds the pad while
+  the robot is actually shooting.
 
-Everything else on the screen is read-only feedback: a running ball estimate, the shift strip
-showing whether this alliance's hub is live or dead right now, and a bar of every run logged so
-far.
+The middle of the screen only shows what a scout needs mid-match: the robot, the clock, and a
+pill saying whether shots count right now — **Hub on**, **Hub off**, or just the shift when
+the phone does not know who won auto yet. The running ball estimate, the run count and the
+timeline of runs are on the after-the-buzzer screen instead.
+
+When the hub is off the button turns grey and says so, but it is **never blocked**: holding it
+still records the run. Those runs score nothing (the official count for an off shift is zero,
+so the split gives them nothing), and they are what *wasted fuel* and *stockpiles* on the
+dashboard are measured from.
 
 The first tap on the pad also **starts the match clock for everyone watching that match** — the
-other five phones adopt the same timeline and show `CLOCK FROM AK` so nobody wonders whose
+other five phones adopt the same timeline and show `Clock from AK` so nobody wonders whose
 clock they are on. Tapping late costs nothing; the hub re-anchors afterwards from the official
 start time.
 
-Two smaller pads:
+Smaller buttons, in both layouts:
 
-- **FEEDING** and **DEFENDING** — held the same way as the main pad, recording when the robot
+- **Feeding** and **Defending** — held the same way as the main pad, recording when the robot
   was doing something other than scoring.
-- **UNDO** takes back the most recently finished run of any kind — shooting, feeding or
+- **Undo** (top bar) takes back the most recently finished run of any kind — shooting, feeding or
   defending.
-- **CLIMB** cycles `None → L1 → L2 → L3`. During auto it is a single toggle, because the auto
+- **Climb** (top bar) cycles `None → L1 → L2 → L3`. During auto it is a single toggle, because the auto
   tower is Level 1 only. The tap is also **timed**: the first press of a climb records the
   second of the match it happened on, which is the one number an alliance captain always asks
   for — how long before the buzzer does this robot have to leave? Cycling `L1 → L2` keeps the

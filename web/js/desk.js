@@ -14,7 +14,9 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<
 // `red2` as the sign above the chair reads it: RED 2. The lead is matching this
 // against a printed sign across the room, so every panel has to spell it the
 // same way - the crew alert used to say RED2 while the row under it said RED 1.
-const stationLabel = (k) => String(k || '').replace(/(\d)/, ' $1').toUpperCase();
+const stationLabel = (k) => cap(String(k || '').replace(/(\d)/, ' $1'));
+const cap = (x) => { const t = String(x || ''); return t.charAt(0).toUpperCase() + t.slice(1); };
+
 
 let STATE = null, ANALYTICS = null, CONFIG = null, ourTeam = null;
 const DNP = new Set(JSON.parse(localStorage.getItem('dnp') || '[]'));
@@ -45,7 +47,7 @@ function climbCell(t) {
   const rate = Math.round((t.exact.climbRate || {})[best] || 0);
   const cls = { Level3: 'l3', Level2: 'l2', Level1: 'l1' }[best] || 'none';
   return best === 'None'
-    ? '<span class="cl none">NONE</span>'
+    ? '<span class="cl none">None</span>'
     : `<span class="cl ${cls}">${best.replace('Level', 'L')} · ${rate}%</span>`;
 }
 function trustCell(v) {
@@ -151,13 +153,13 @@ function renderLive() {
   const rows = [];
   const block = (m, cls, tag) => m ? `
     <div class="mrow ${cls}">
-      <div class="top"><span class="l">${esc((m.label || '').toUpperCase())}${tag ? ' · ' + tag : ''}</span>
-        ${cls === 'now' ? `<span class="r">${esc(live.nowQueuing ? 'QUEUING ' + live.nowQueuing : 'ON FIELD')}</span>` : ''}</div>
+      <div class="top"><span class="l">${esc(m.label || '')}${tag ? ' · ' + tag : ''}</span>
+        ${cls === 'now' ? `<span class="r">${esc(live.nowQueuing ? 'Queuing ' + live.nowQueuing : 'On field')}</span>` : ''}</div>
       <div class="teams red">${(m.red || []).join(' · ') || '—'}</div>
       <div class="teams blue">${(m.blue || []).join(' · ') || '—'}</div>
     </div>` : '';
   rows.push(block(onField, 'now', ''));
-  rows.push(block(queuing, 'next', 'QUEUING'));
+  rows.push(block(queuing, 'next', 'Queuing'));
   rows.push(block(upcoming[0], 'later', ''));
   $('#onfield').innerHTML = rows.filter(Boolean).join('') ||
     '<div class="empty">No schedule yet — set an event key and API keys on the hub.</div>';
@@ -171,25 +173,25 @@ function renderLive() {
     $('#headsupBody').textContent =
       `${unwatched.slice(0, 6).join(', ')} ${unwatched.length === 1 ? 'has' : 'have'} `
       + `gone unscouted in the last ${UNWATCHED_LOOKBACK} played matches — check the `
-      + `stations on the CREW tab.`;
+      + `stations on the Crew tab.`;
   } else $('#headsup').classList.add('hide');
 
   const cov = ANALYTICS ? ANALYTICS.coverage : { robotsScouted: 0, pct: 0 };
   const seated = CREW.filter((c) => c.scoutId && c.connected).length;
   const flags = (STATE && STATE.flags || []).length;
   $('#tiles').innerHTML =
-    tile('SCOUTED', cov.robotsScouted, `${cov.pct}% coverage`) +
-    tile('MATCHES', `${played}<small>/${matches.length || 0}</small>`, 'played') +
-    tile('STATIONS', `${seated}<small>/6</small>`,
+    tile('Scouted', cov.robotsScouted, `${cov.pct}% coverage`) +
+    tile('Matches', `${played}<small>/${matches.length || 0}</small>`, 'played') +
+    tile('Stations', `${seated}<small>/6</small>`,
          seated < 6 ? `${6 - seated} not reporting` : 'all reporting', seated < 6 ? 'warn' : '') +
-    tile('FLAGGED', flags, 'need reconcile', flags ? true : '');
+    tile('Flagged', flags, 'need reconcile', flags ? true : '');
 
   const teams = ANALYTICS ? Object.values(ANALYTICS.teams).filter((t) => t.matchesScouted) : [];
   teams.sort((a, b) => b.estimated.avgFuel - a.estimated.avgFuel);
   $('#rankHead').style.gridTemplateColumns = RANK_COLS;
   $('#rankHead').innerHTML =
-    `<span>TEAM</span><span>NAME</span><span class="num">FUEL/MATCH</span><span class="num">CLIMB</span>
-     <span class="num">AUTO</span><span class="num">RP</span><span class="num">CONFIDENCE</span>`;
+    `<span>Team</span><span>Name</span><span class="num">Fuel/match</span><span class="num">Climb</span>
+     <span class="num">Auto</span><span class="num">RP</span><span class="num">Confidence</span>`;
   $('#rankBody').innerHTML = teams.slice(0, 12).map((t) => `
     <div class="r" style="grid-template-columns:${RANK_COLS}">
       <span class="tno">${t.team}</span>
@@ -218,7 +220,7 @@ function renderRpOutlook() {
   if (!host) return;
   const t = ourTeam && ANALYTICS && ANALYTICS.teams[ourTeam];
   if (!t) {
-    host.innerHTML = '<div class="hint">Set OUR TEAM on the hub settings page.</div>';
+    host.innerHTML = '<div class="hint">Set your team number on the hub settings page.</div>';
     return;
   }
   const ms = (STATE && STATE.matches) || [];
@@ -260,10 +262,10 @@ function recordText(rec) {
 // ════════════════════════════════════════════════════════════════ TEAMS
 let sortKey = 'fuel', sortDir = -1;
 const ALL_HEAD = [
-  ['rank', 'RANK', 2], ['team', 'TEAM', 0], ['name', 'NAME', 0], ['fuel', 'FUEL/MATCH', 1],
-  ['climb', 'CLIMB', 1], ['epa', 'EPA', 1], ['tower', 'TOWER', 1], ['stock', 'STOCK', 1],
-  ['waste', 'WASTED', 1], ['died', 'DIED', 1], ['drv', 'DRIVER', 1],
-  ['lovat', 'LOVAT', 1], ['n', 'MATCHES', 1],
+  ['rank', 'Rank', 2], ['team', 'Team', 0], ['name', 'Name', 0], ['fuel', 'Fuel/match', 1],
+  ['climb', 'Climb', 1], ['epa', 'EPA', 1], ['tower', 'Tower', 1], ['stock', 'Stock', 1],
+  ['waste', 'Wasted', 1], ['died', 'Died', 1], ['drv', 'Driver', 1],
+  ['lovat', 'Lovat', 1], ['n', 'Matches', 1],
 ];
 function sortVal(t, k) {
   switch (k) {
@@ -617,7 +619,7 @@ function syncFilterBar(shown, total) {
   clash.style.opacity = ourZone ? '' : '.45';
   clash.title = ourZone
     ? `Hide robots that usually start ${ourZone}, where ${ourTeam} does`
-    : 'Needs OUR TEAM set on the hub settings page, and a scouted start zone for it';
+    : 'Needs your team number on the hub settings page, and a scouted start zone for it';
   const on = filtersOn();
   $('#pkFilterClear').classList.toggle('hide', !on);
   // Say the rank is the board's, not the visible list's, wherever rows are
@@ -646,19 +648,19 @@ function renderEditBar() {
   if (!PIN_SET || CAN_EDIT) {
     bar.innerHTML = CAN_EDIT && PIN_SET
       ? `<div class="callout" style="margin:0 0 10px;border-color:var(--green-border);background:rgba(52,168,106,.07)">
-           <div class="h" style="color:var(--green-soft)">EDITING UNLOCKED</div>
+           <div class="h" style="color:var(--green-soft)">Editing unlocked</div>
            <div class="b">Weights and do-not-pick flags will save to the hub for everyone.</div></div>`
       : '';
   } else {
     bar.innerHTML = `<div class="callout" style="margin:0 0 10px">
-      <div class="h">READ ONLY</div>
+      <div class="h">Read only</div>
       <div class="b" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <span>Anyone can look at the board. Changing it needs the strategy passcode.</span>
         <input id="pinInput" type="password" inputmode="numeric" autocomplete="off" placeholder="passcode"
-          style="width:130px;background:var(--raised);border:1px solid var(--btn);border-radius:8px;
-          padding:8px 10px;color:var(--t0);font:700 13px Barlow,sans-serif;text-align:center;letter-spacing:.2em">
-        <button id="pinGo" style="padding:9px 14px;border-radius:8px;background:var(--red);border:none;
-          color:#fff;font:800 10.5px Barlow,sans-serif;letter-spacing:.12em;cursor:pointer">UNLOCK EDITING</button>
+          style="width:130px;background:var(--soft);border:0;border-radius:999px;
+          padding:8px 10px;color:var(--t0);font:700 14px var(--f-body);text-align:center">
+        <button id="pinGo" style="padding:9px 14px;border-radius:999px;background:var(--red);border:none;
+          color:#fff;font:700 13px var(--f-body);cursor:pointer">Unlock editing</button>
         <span class="hint" id="pinMsg"></span>
       </div></div>`;
     $('#pinGo').onclick = () => tryUnlock($('#pinInput').value.trim());
@@ -781,7 +783,7 @@ function wirePickMode() {
     };
   }
   const head = $('#weightsHead'), hint = $('#weightsHint');
-  if (head) head.textContent = `WEIGHTS · ${PICK_MODE === 'first' ? 'FIRST' : 'SECOND'} PICK`;
+  if (head) head.textContent = `Weights · ${PICK_MODE === 'first' ? 'first' : 'second'} pick`;
   if (hint) {
     hint.textContent = PICK_MODE === 'first'
       ? 'Exact fields carry the ranking. Fuel is estimated, so it only breaks ties.'
@@ -847,7 +849,7 @@ function renderPicklist() {
 function renderWeights() {
   const W = activeWeights();
   $('#weights').innerHTML = Object.entries(W).map(([k, v]) => `
-    <div class="wt"><div class="lb"><span>${k.toUpperCase()}</span><span id="w-${k}">${v}</span></div>
+    <div class="wt"><div class="lb"><span>${cap(k)}</span><span id="w-${k}">${v}</span></div>
     <input type="range" min="0" max="50" value="${v}" data-w="${k}"${CAN_EDIT ? '' : ' disabled'}></div>`).join('')
     + (CAN_EDIT ? '' : '<div class="hint">Unlock editing on the draft board to change these.</div>');
   for (const el of $$('[data-w]')) el.oninput = () => {
@@ -870,12 +872,12 @@ function renderHealth() {
   const flags = (STATE && STATE.flags) || [];
   const rep = ANALYTICS.scoreReport || null;
   $('#healthTiles').innerHTML =
-    tile('COVERAGE', `${c.pct}%`, `${c.robotsScouted} of ${c.robotsExpected} robots`) +
-    tile('MEDIAN ERROR', rep && rep.medianPct != null ? `${rep.medianPct}%` : '—',
+    tile('Coverage', `${c.pct}%`, `${c.robotsScouted} of ${c.robotsExpected} robots`) +
+    tile('Median error', rep && rep.medianPct != null ? `${rep.medianPct}%` : '—',
          rep && rep.compared ? `over ${rep.compared} alliance-matches` : 'no results yet',
          rep && rep.medianPct > 25 ? 'warn' : '') +
-    tile('FLAGGED', flags.length, 'need reconcile', flags.length ? true : '') +
-    tile('CALIBRATED', (CONFIG && CONFIG.multipliersFittedFrom) || 0, 'windows fitted');
+    tile('Flagged', flags.length, 'need reconcile', flags.length ? true : '') +
+    tile('Calibrated', (CONFIG && CONFIG.multipliersFittedFrom) || 0, 'windows fitted');
 
   renderScoreReport(rep);
   renderScoutPanel();
@@ -915,8 +917,8 @@ function renderScoreReport(rep) {
   $('#repCap').textContent =
     `raw scout estimate vs the official result · ${rep.compared} fully-watched alliance-matches`;
   $('#repHead').style.gridTemplateColumns = REP_COLS;
-  $('#repHead').innerHTML = `<span>MATCH</span><span>SIDE</span>
-    <span class="num">OFFICIAL</span><span class="num">SCOUTS SAID</span><span class="num">OFF BY</span>`;
+  $('#repHead').innerHTML = `<span>Match</span><span>Side</span>
+    <span class="num">Official</span><span class="num">Scouts said</span><span class="num">Off by</span>`;
   $('#repBody').innerHTML = rep.rows.slice(0, 40).map((r) => {
     const d = r.deltaPct;
     const col = d == null ? 'var(--t5)'
@@ -927,7 +929,7 @@ function renderScoreReport(rep) {
     return `<div class="r" style="grid-template-columns:${REP_COLS}">
       <span class="tno" style="font-size:13px">${esc(shortCode(r.label))}</span>
       <span style="color:${r.alliance === 'red' ? 'var(--red-label)' : 'var(--blue-label)'};
-        font:800 10.5px Barlow,sans-serif;letter-spacing:.1em">${r.alliance.toUpperCase()}</span>
+        font:700 13px var(--f-body)">${cap(r.alliance)}</span>
       <span class="num">${r.officialFuel} <span class="band">fuel</span>${partial}</span>
       <span class="num">${Math.round(r.scoutFuel)} <span class="band">fuel</span></span>
       <span class="num" style="color:${col}">${d == null ? '—' : (d > 0 ? '+' : '') + Math.round(d) + '%'}</span>
@@ -971,8 +973,8 @@ function renderScoutPanel() {
     return;
   }
   $('#scoutHead').style.gridTemplateColumns = SCOUT_COLS;
-  $('#scoutHead').innerHTML = `<span>SCOUT</span><span class="num">MATCHES</span>
-    <span class="num">MISSED</span><span class="num">RECONCILES</span>`;
+  $('#scoutHead').innerHTML = `<span>Scout</span><span class="num">Matches</span>
+    <span class="num">Missed</span><span class="num">Reconciles</span>`;
   $('#scoutBody').innerHTML = scouts.map((s) => `
     <div class="r" style="grid-template-columns:${SCOUT_COLS}">
       <span>${esc(s.scoutId)}</span>
@@ -1023,24 +1025,24 @@ function renderCrew() {
     } else if (secsSince(c.lastMatchAt) > 25 * 60) problems.push(`${who} — nothing logged in ${ago(secsSince(c.lastMatchAt))}`);
   }
   $('#crewAlert').innerHTML = problems.length
-    ? `<div class="callout" style="margin:0 0 4px"><div class="h">GO TALK TO SOMEONE</div>
+    ? `<div class="callout" style="margin:0 0 4px"><div class="h">Go talk to someone</div>
        ${problems.map((p) => `<div class="b">${esc(p)}</div>`).join('')}</div>`
     : `<div class="callout" style="margin:0 0 4px;border-color:var(--green-border);background:rgba(52,168,106,.07)">
-       <div class="h" style="color:var(--green-soft)">ALL SIX STATIONS COVERED</div>
+       <div class="h" style="color:var(--green-soft)">All six stations covered</div>
        <div class="b">Every robot has a scout and every phone is reporting.</div></div>`;
 
   $('#crewHead').style.gridTemplateColumns = CREW_COLS;
-  $('#crewHead').innerHTML = `<span>STATION</span><span>SCOUT</span><span class="num">PHONE</span>
-    <span class="num">LAST HEARD</span><span class="num">LAST MATCH</span>`;
+  $('#crewHead').innerHTML = `<span>Station</span><span>Scout</span><span class="num">Phone</span>
+    <span class="num">Last heard</span><span class="num">Last match</span>`;
   $('#crewBody').innerHTML = CREW.map((c) => {
     const side = c.seat.startsWith('red') ? 'var(--red-label)' : 'var(--blue-label)';
     const ok = c.connected;
     return `<div class="r" style="grid-template-columns:${CREW_COLS}">
-      <span style="color:${side};font:800 12px Barlow,sans-serif;letter-spacing:.1em">${stationLabel(c.seat)}</span>
+      <span style="color:${side};font:700 13px var(--f-body)">${stationLabel(c.seat)}</span>
       <span>${c.scoutId ? esc(String(c.scoutId).toUpperCase()) : '<span style="color:var(--t6)">nobody seated</span>'}
-        ${c.scoutId ? `<button class="x" data-unseat="${c.seat}" data-device="${esc(c.deviceId || '')}" style="margin-left:8px">FREE</button>` : ''}</span>
-      <span class="num" style="color:${ok ? 'var(--green-soft)' : 'var(--red-alert)'};font:800 10.5px Barlow,sans-serif;letter-spacing:.1em">
-        ${c.scoutId ? (ok ? 'LIVE' : 'NOT SEEN') : '—'}</span>
+        ${c.scoutId ? `<button class="x" data-unseat="${c.seat}" data-device="${esc(c.deviceId || '')}" style="margin-left:8px">Free</button>` : ''}</span>
+      <span class="num" style="color:${ok ? 'var(--green-soft)' : 'var(--red-alert)'};font:700 13px var(--f-body)">
+        ${c.scoutId ? (ok ? 'Live' : 'Not seen') : '—'}</span>
       <span class="num">${ago(secsSince(c.lastSeenAt))}</span>
       <span class="num">${c.lastMatch ? esc(shortCode(matchLabel(c.lastMatch))) + ' · ' + ago(secsSince(c.lastMatchAt)) : '—'}</span>
     </div>`;
@@ -1062,14 +1064,14 @@ function renderCrew() {
     || ms.find((x) => !x.breakdown);
   $('#crewMatch').innerHTML = m ? ['red', 'blue'].map((side) =>
     `<div class="r" style="grid-template-columns:70px repeat(3,1fr)">
-      <span style="color:${side === 'red' ? 'var(--red-label)' : 'var(--blue-label)'};font:800 11px Barlow,sans-serif;letter-spacing:.12em">${side.toUpperCase()}</span>
+      <span style="color:${side === 'red' ? 'var(--red-label)' : 'var(--blue-label)'};font:700 13.5px var(--f-body)">${cap(side)}</span>
       ${[1, 2, 3].map((n) => {
         const team = (m[side] || [])[n - 1];
         const c = CREW.find((x) => x.seat === side + n) || {};
         const watched = c.scoutId && c.connected;
         return `<span style="opacity:${watched ? 1 : .55}">${team || '—'}
           <span class="hint" style="display:block;color:${watched ? 'var(--t5)' : 'var(--red-alert)'}">
-          ${watched ? esc(String(c.scoutId).toUpperCase()) : 'UNWATCHED'}</span></span>`;
+          ${watched ? esc(String(c.scoutId).toUpperCase()) : 'Unwatched'}</span></span>`;
       }).join('')}
     </div>`).join('') : '<div class="empty">No upcoming match.</div>';
 
@@ -1082,7 +1084,7 @@ function renderCrew() {
   $('#crewSwaps').innerHTML = SEATLOG.length ? SEATLOG.slice(0, 6).map((e) => `
     <div class="kv"><span>${esc(stationLabel(e.seat))}</span>
       <b>${e.from ? esc(String(e.from).toUpperCase()) + ' → ' : ''}${
-        e.scoutId ? esc(String(e.scoutId).toUpperCase()) : 'FREED'}</b></div>`).join('')
+        e.scoutId ? esc(String(e.scoutId).toUpperCase()) : 'Freed'}</b></div>`).join('')
     : '<div class="hint">nobody has swapped yet</div>';
 
   const base = net.state.base || location.origin;
@@ -1141,14 +1143,14 @@ function winProbability(m) {
 
 function verdictBanner(m, side) {
   const w = winProbability(m);
-  if (!w) return `<div class="callout" style="margin:0"><div class="h">NOT ENOUGH DATA</div>
+  if (!w) return `<div class="callout" style="margin:0"><div class="h">Not enough data</div>
     <div class="b">Some robots on this match have not been scouted yet.</div></div>`;
   const pct = Math.round((side === 'red' ? w.red : 1 - w.red) * 100);
   const lead = side === 'red' ? w.margin : -w.margin;
   const strong = pct >= 50;
   return `<div class="callout" style="margin:0;border-color:${strong ? 'var(--green-border)' : 'var(--line)'};
       background:${strong ? 'rgba(52,168,106,.07)' : 'transparent'}">
-    <div class="h" style="color:${strong ? 'var(--green-soft)' : 'var(--t4)'}">${pct}% TO WIN</div>
+    <div class="h" style="color:${strong ? 'var(--green-soft)' : 'var(--t4)'}">${pct}% to win</div>
     <div class="b">${lead >= 0 ? '+' : '−'}${Math.abs(Math.round(lead))} projected points,
       margin of error ±${Math.round(w.sd)}. Fuel is estimated; fouls are not modelled.</div></div>`;
 }
@@ -1157,7 +1159,7 @@ function allianceCard(m, side) {
   const pr = project(m, side);
   const { lineup, teams, records, fuel, tower } = pr;
   const band = Math.round(pr.band);
-  const label = side === 'red' ? 'RED' : 'BLUE';
+  const label = side === 'red' ? 'Red' : 'Blue';
   const th = rpThresholds((STATE && STATE.event && STATE.event.level) || 'regional');
   // Two records per robot on purpose. `d` is the one the projection was allowed
   // to use - our own solved fuel, or null - and `rec` is everything the hub
@@ -1188,7 +1190,7 @@ function allianceCard(m, side) {
     ${autoClashNote(records)}
     ${defenseNote(m, side, records)}
     <div class="tiles" style="grid-template-columns:repeat(3,1fr)">
-      ${tile('PROJECTED FUEL', Math.round(fuel),
+      ${tile('Projected fuel', Math.round(fuel),
              // A robot nobody has scouted contributes nothing to this sum, so
              // an alliance with one unknown robot reads as a weak alliance
              // rather than an unknown one. The table below names them; the
@@ -1200,14 +1202,14 @@ function allianceCard(m, side) {
                     ? ` · lovat has ${lovatFills === 1 ? 'another' : lovatFills}` : '')
                : `±${band} · Energized at ${th.energized}`,
              fuel >= th.energized ? '' : 'warn')}
-      ${tile('TOWER POINTS', Math.round(tower), `Traversal at ${th.traversal}`,
+      ${tile('Tower points', Math.round(tower), `Traversal at ${th.traversal}`,
              tower >= th.traversal ? '' : 'warn')}
-      ${tile('SUPERCHARGED', fuel >= th.supercharged ? 'YES' : 'NO', `needs ${th.supercharged}`)}
+      ${tile('Supercharged', fuel >= th.supercharged ? 'Yes' : 'No', `needs ${th.supercharged}`)}
     </div>
     <div class="tbl">
       <div class="hd" style="grid-template-columns:56px 1fr 90px 80px 78px">
-        <span>TEAM</span><span>NAME</span><span class="num">FUEL</span><span class="num">CLIMB</span>
-        <span class="num">LOVAT</span></div>
+        <span>Team</span><span>Name</span><span class="num">Fuel</span><span class="num">Climb</span>
+        <span class="num">Lovat</span></div>
       ${rows || '<div class="empty">No lineup yet.</div>'}
     </div></div>`;
 }
@@ -1232,7 +1234,7 @@ function autoClashNote(teams) {
     const named = ts.map((t, i) => lanes[i] ? `${t.team} (${esc(lanes[i])})` : String(t.team));
     const apart = lanes.every(Boolean) && new Set(lanes).size === lanes.length;
     return `<div class="callout" style="margin:0">
-    <div class="h">AUTO — ${esc(zone.toUpperCase())}</div>
+    <div class="h">Auto — ${esc(zone)}</div>
     <div class="b">${named.join(' and ')} both usually start ${esc(zone)}.${apart
       ? ' Different lanes, so ask rather than assume — but they are still both going that way.'
       : ' Worth asking before the match rather than watching it happen.'}</div></div>`;
@@ -1250,7 +1252,7 @@ function defenseNote(m, side, teams) {
     }
   }
   if (!hits.length) return '';
-  return `<div class="callout" style="margin:0"><div class="h">EXPECT DEFENCE</div>
+  return `<div class="callout" style="margin:0"><div class="h">Expect defence</div>
     <div class="b">${hits.slice(0, 4).map(esc).join(' · ')}.</div></div>`;
 }
 
@@ -1334,11 +1336,11 @@ function teamCharts(t) {
   if (lovatDef.some((v) => v)) defSeries.push({ label: 'played (lovat)', color: 'var(--s3)', values: lovatDef });
 
   return `
-    <div class="tbl"><div class="cap"><span class="t">FUEL BY MATCH</span>
+    <div class="tbl"><div class="cap"><span class="t">Fuel by match</span>
       <span class="n">estimated — one point per match this robot played</span></div>
       <div style="padding:12px 16px 16px">${fuel}</div></div>
     ${defSeries.length ? `
-    <div class="tbl"><div class="cap"><span class="t">DEFENCE BY MATCH</span>
+    <div class="tbl"><div class="cap"><span class="t">Defence by match</span>
       <span class="n">seconds of contact — played, and taken from the other alliance</span></div>
       <div style="padding:12px 16px 16px">${chart.line({
         x, series: defSeries, unit: 'seconds',
@@ -1352,7 +1354,7 @@ let openTeam = null;
 function renderTeamDetail() {
   const t = openTeam && ANALYTICS && ANALYTICS.teams[openTeam];
   if (!t) {
-    $('#tdMain').innerHTML = '<div class="empty">Pick a team from the TEAMS tab.</div>';
+    $('#tdMain').innerHTML = '<div class="empty">Pick a team from the Teams tab.</div>';
     $('#tdSide').innerHTML = '';
     return;
   }
@@ -1361,29 +1363,29 @@ function renderTeamDetail() {
   const lv = t.lovat || {}, lvN = lovatN(t);
   $('#tdMain').innerHTML = `
     <div style="display:flex;align-items:flex-end;gap:14px">
-      <div style="font:700 54px/.9 'Barlow Condensed',sans-serif">${t.team}</div>
-      <div style="padding-bottom:6px"><div style="font:600 14px Barlow,sans-serif;color:var(--t1)">${esc(t.name || '')}</div>
+      <div style="font:700 54px/.9 var(--f-num)">${t.team}</div>
+      <div style="padding-bottom:6px"><div style="font:600 14px var(--f-body);color:var(--t1)">${esc(t.name || '')}</div>
         <div class="hint">${t.matchesScouted} matches scouted · ${e.matchesWithOfficial} with official results${recordLine(e)}</div></div>
     </div>
     <div class="tiles" style="grid-template-columns:repeat(3,1fr)">
-      ${tile('FUEL / MATCH', es.avgFuel,
+      ${tile('Fuel / match', es.avgFuel,
              `± ${es.band}${es.cycleRate ? ` · ${es.cycleRate}/s` : ''} · estimated`)}
-      ${tile('BEST CLIMB', !e.bestClimb || e.bestClimb === 'None' ? '—'
+      ${tile('Best climb', !e.bestClimb || e.bestClimb === 'None' ? '—'
                : e.bestClimb.replace('Level', 'L'),
              e.matchesWithOfficial
                ? `${Math.round((e.climbRate || {})[e.bestClimb] || 0)}% of matches · exact`
                : 'no official result yet')}
-      ${tile('TOWER PTS', e.avgTowerPoints ?? '—',
+      ${tile('Tower pts', e.avgTowerPoints ?? '—',
              e.autoClimbRate == null ? 'no official result yet'
                : `auto climb ${e.autoClimbRate}%`)}
-      ${tile('RELIABILITY', `${Math.round(100 - o.diedRate - o.noShowRate)}%`,
+      ${tile('Reliability', `${Math.round(100 - o.diedRate - o.noShowRate)}%`,
              `died ${Math.round(o.diedRate)}% · no-show ${Math.round(o.noShowRate)}%`,
              (o.diedRate + o.noShowRate) > 20 ? 'warn' : '')}
       ${tile('EPA', t.epa.epa ?? '—', t.epa.epa == null ? 'statbotics unavailable'
              : `auto ${t.epa.auto ?? '—'} · teleop ${t.epa.teleop ?? '—'} · statbotics`)}
       ${tile('OPR', e.opr ?? '—', e.rank ? `rank ${e.rank} · exact` : 'no rankings yet')}
     </div>
-    <div class="tbl"><div class="cap"><span class="t">WHAT SCOUTS SAW</span>
+    <div class="tbl"><div class="cap"><span class="t">What scouts saw</span>
       <span class="n">yes/no observations — the reliable kind</span></div>
       <div style="padding:6px 16px 12px">
         <div class="kv"><span>stockpiles through an inactive shift</span><b>${Math.round(o.stockpileRate)}%</b></div>
@@ -1393,7 +1395,7 @@ function renderTeamDetail() {
         <div class="kv"><span>defends</span><b>${teamCounts(o.defenseAgainst)}</b></div>
         <div class="kv"><span>defended by</span><b>${teamCounts(o.defendedBy)}</b></div>
         <div class="kv"><span>starts</span><b>${o.startZone
-          ? `${o.startZone.toUpperCase()}${o.startLane ? ` · ${o.startLane.toUpperCase()}` : ''} · ${Math.round(o.startZonePct)}%`
+          ? `${cap(o.startZone)}${o.startLane ? ` · ${o.startLane}` : ''} · ${Math.round(o.startZonePct)}%`
           : '—'}</b></div>
         <div class="kv"><span>auto did nothing</span><b>${o.autoFailRate
           ? Math.round(o.autoFailRate) + '%' : 'never seen'}</b></div>
@@ -1419,7 +1421,7 @@ function renderTeamDetail() {
       </div></div>
     ${teamCharts(t)}
     ${lvN ? `
-    <div class="tbl"><div class="cap"><span class="t">FROM LOVAT</span>
+    <div class="tbl"><div class="cap"><span class="t">From Lovat</span>
       <span class="n">other teams' scouts — not ours, and not verified</span></div>
       <div style="padding:6px 16px 12px">
         <div class="kv"><span>matches uploaded</span><b>${lvN} · ${lv.scouters || '?'} scout${lv.scouters === 1 ? '' : 's'}</b></div>
@@ -1443,10 +1445,10 @@ function renderTeamDetail() {
           ? '—' : Math.round(lv.scoresWhileMovingRate) + '%'}</b></div>
         <div class="kv"><span>crosses the field</span><b>${lv.traversalRate == null
           ? '—' : Math.round(lv.traversalRate) + '%'}${
-          kinds(lv.traversalKinds, 'NONE')}</b></div>
+          kinds(lv.traversalKinds, 'None')}</b></div>
         <div class="kv"><span>gets beached</span><b>${lv.beachedRate == null
           ? '—' : Math.round(lv.beachedRate) + '%'}${
-          kinds(lv.beachedKinds, 'NEITHER')}</b></div>
+          kinds(lv.beachedKinds, 'Neither')}</b></div>
         <div class="kv"><span>disrupts</span><b>${lv.disruptRate == null
           ? '—' : Math.round(lv.disruptRate) + '%'}</b></div>
         <div class="kv"><span>outpost intakes</span><b>${lv.outpostIntakes ?? '—'}</b></div>
@@ -1457,14 +1459,14 @@ function renderTeamDetail() {
           lv.unmatched.length} row${lv.unmatched.length > 1 ? 's' : ''} we could not place on our
           schedule (${esc(lv.unmatched.join(', '))}) — counted here, not joined to a match.</div>` : ''}
       </div></div>` : ''}
-    <div class="tbl"><div class="cap"><span class="t">WHAT THE NOTES ADD UP TO</span>
+    <div class="tbl"><div class="cap"><span class="t">What the notes add up to</span>
       <span class="n">generated — a reading of the notes below, not a measurement</span></div>
       <div style="padding:6px 16px 12px" id="aiNotesBody"></div>
       <div style="padding:0 16px 12px"><button id="aiNotesGo"
-        style="padding:8px 12px;border-radius:8px;background:transparent;border:1px solid var(--btn);
-        color:var(--t4);font:700 10.5px Barlow,sans-serif;letter-spacing:.12em;cursor:pointer"
-        >SUMMARISE THE NOTES</button></div></div>
-    <div class="tbl"><div class="cap"><span class="t">WHAT SCOUTS WROTE</span>
+        style="padding:8px 12px;border-radius:999px;background:var(--soft);border:0;
+        color:var(--t4);font:700 13px var(--f-body);cursor:pointer"
+        >Summarise the notes</button></div></div>
+    <div class="tbl"><div class="cap"><span class="t">What scouts wrote</span>
       <span class="n">${t.notes.length ? `${t.notes.length} note${t.notes.length > 1 ? 's' : ''}` : 'nothing typed'}</span></div>
       <div style="padding:6px 16px 12px">
         ${t.notes.length ? t.notes.map((nt) => `
@@ -1484,7 +1486,7 @@ function renderTeamDetail() {
   peekAi('#aiNotesBody', `notes/${team}`, {}, 'Not summarised yet.');
   wireAi('#aiNotesGo', '#aiNotesBody', `notes/${team}`, () => ({}), 'Not summarised yet.');
   const p = (pit && pit.payload) || null;
-  $('#tdSide').innerHTML = `<div class="eyebrow">FROM THE PIT</div>` + (p ? `
+  $('#tdSide').innerHTML = `<div class="eyebrow">From the pit</div>` + (p ? `
     <div class="kv"><span>drivetrain</span><b>${esc(p.drivetrain || '—')}</b></div>
     <div class="kv"><span>shooter</span><b>${esc(p.shooter || '—')}</b></div>
     <div class="kv"><span>claims climb</span><b>${esc(p.maxClimb || '—')}</b></div>
@@ -1494,7 +1496,7 @@ function renderTeamDetail() {
     <div style="margin-top:8px" class="hint">${esc(p.autos || '')}</div>
     <div style="margin-top:6px" class="hint">${esc(p.notes || '')}</div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">
-      ${(p.photos || []).map((id) => `<img src="/api/photo/${esc(encodeURIComponent(id))}" style="width:88px;height:88px;object-fit:cover;border-radius:8px;border:1px solid var(--btn)">`).join('')}
+      ${(p.photos || []).map((id) => `<img src="/api/photo/${esc(encodeURIComponent(id))}" style="width:88px;height:88px;object-fit:cover;border-radius:16px">`).join('')}
     </div>`
     : '<div class="hint">Not pit scouted yet.</div>');
 }
@@ -1527,7 +1529,7 @@ function aiBlock(res, idle) {
   }
   if (res.text) {
     const when = res.at ? new Date(res.at * 1000).toLocaleTimeString() : '';
-    return `<div style="white-space:pre-wrap;font:400 12.5px/1.55 Barlow,sans-serif;color:var(--t1)"
+    return `<div style="white-space:pre-wrap;font:400 13.5px/1.55 var(--f-body);color:var(--t1)"
       >${esc(res.text)}</div>
       <div class="hint" style="margin-top:8px">generated by ${esc(res.model || res.provider || 'the model')}${
         when ? ` · ${esc(when)}` : ''}${res.cached ? ' · cached' : ''} — read it against the numbers above</div>`;
@@ -1543,7 +1545,7 @@ function wireAi(btnSel, bodySel, path, bodyFn, idle) {
   if (!btn) return;
   btn.onclick = async () => {
     const label = btn.textContent;
-    btn.textContent = 'THINKING…'; btn.disabled = true;
+    btn.textContent = 'Thinking…'; btn.disabled = true;
     $(bodySel).innerHTML = aiBlock(await aiCall(path, { ...bodyFn(), force: true }), idle);
     btn.textContent = label; btn.disabled = false;
   };
@@ -1602,9 +1604,9 @@ function wireAsk() {
   const ask = async () => {
     const question = box.value.trim();
     if (!question) return;
-    go.textContent = 'THINKING…'; go.disabled = true;
+    go.textContent = 'Thinking…'; go.disabled = true;
     $('#askOut').innerHTML = aiBlock(await aiCall('ask', { question }), '');
-    go.textContent = 'ASK'; go.disabled = false;
+    go.textContent = 'Ask'; go.disabled = false;
   };
   go.onclick = ask;
   box.onkeydown = (ev) => { if (ev.key === 'Enter') ask(); };
@@ -1815,7 +1817,7 @@ function renderSeats() {
   const ms = ((STATE && STATE.matches) || []).filter((m) => !m.breakdown).slice(0, 4);
   const cols = `90px repeat(6, 1fr)`;
   $('#seatHead').style.gridTemplateColumns = cols;
-  $('#seatHead').innerHTML = '<span>MATCH</span>' +
+  $('#seatHead').innerHTML = '<span>Match</span>' +
     SEAT_KEYS.map((k) => `<span>${stationLabel(k)}</span>`).join('');
   $('#seatBody').innerHTML = ms.map((m) => `
     <div class="r" style="grid-template-columns:${cols}">
@@ -1835,7 +1837,7 @@ function renderSeats() {
   const rc = '1fr 120px';
   const roster = CREW.filter((c) => c.scoutId);
   $('#rosterHead').style.gridTemplateColumns = rc;
-  $('#rosterHead').innerHTML = '<span>NAME</span><span class="num">STATION</span>';
+  $('#rosterHead').innerHTML = '<span>Name</span><span class="num">Station</span>';
   $('#rosterBody').innerHTML = roster.map((c) => `
     <div class="r" style="grid-template-columns:${rc}"><span>${esc(String(c.scoutId).toUpperCase())}</span>
       <span class="num">${esc(stationLabel(c.seat))}</span></div>`).join('')
@@ -1847,7 +1849,7 @@ function renderSeats() {
      <div class="kv"><span>coverage</span><b>${c.pct}%</b></div>`;
   const empty = SEAT_KEYS.filter((k) => !seats[k]);
   $('#seatWarn').innerHTML = empty.length
-    ? `<div class="callout" style="margin-top:10px"><div class="h">${empty.length} STATION${empty.length > 1 ? 'S' : ''} EMPTY</div>
+    ? `<div class="callout" style="margin-top:10px"><div class="h">${empty.length} station${empty.length > 1 ? 's' : ''} empty</div>
        <div class="b">${empty.map(stationLabel).join(', ')} — those robots go unwatched.</div></div>` : '';
 }
 
@@ -1859,10 +1861,10 @@ function renderServer() {
   const upTxt = up > 3600 ? `${Math.floor(up / 3600)}h ${Math.floor(up % 3600 / 60)}m`
     : up > 60 ? `${Math.floor(up / 60)}m` : `${up}s`;
   $('#srvTiles').innerHTML =
-    tile('UPTIME', upTxt, `${esc(DIAG.platform)}`) +
-    tile('MEMORY', DIAG.memoryMB ? `${DIAG.memoryMB}` : '—', 'MB resident') +
-    tile('WRITES / MIN', DIAG.writesPerMin, 'rows accepted') +
-    tile('DEVICES', DIAG.sseClients, 'streaming now');
+    tile('Uptime', upTxt, `${esc(DIAG.platform)}`) +
+    tile('Memory', DIAG.memoryMB ? `${DIAG.memoryMB}` : '—', 'MB resident') +
+    tile('Writes / min', DIAG.writesPerMin, 'rows accepted') +
+    tile('Devices', DIAG.sseClients, 'streaming now');
   // A service with no API key is a choice, not a fault - counting those as
   // "not running" turns an unconfigured hub into an alarming one.
   const retrying = DIAG.services.filter((s) => s.status === 'RETRYING').length;
@@ -1872,14 +1874,14 @@ function renderServer() {
     : idle ? `${idle} idle · no key` : 'all services healthy';
   const sc = '1fr 110px';
   $('#srvHead').style.gridTemplateColumns = sc;
-  $('#srvHead').innerHTML = '<span>SERVICE</span><span class="num">STATUS</span>';
+  $('#srvHead').innerHTML = '<span>Service</span><span class="num">Status</span>';
   $('#srvBody').innerHTML = DIAG.services.map((s) => `
     <div class="r" style="grid-template-columns:${sc}">
       <span>${esc(s.name)}<span class="hint" style="display:block">${esc(s.detail)}</span></span>
       <span class="num" style="color:${s.status === 'RUNNING' ? 'var(--green-soft)' : s.status === 'RETRYING' ? 'var(--amber)' : 'var(--t5)'};
-        font:800 10.5px Barlow,sans-serif;letter-spacing:.1em">${s.status}</span></div>`).join('');
+        font:700 13px var(--f-body)">${s.status.charAt(0) + s.status.slice(1).toLowerCase()}</span></div>`).join('');
   $('#srvLog').innerHTML = DIAG.log.map((l) => `
-    <div style="padding:7px 16px;border-bottom:1px solid var(--row);font:400 11.5px 'JetBrains Mono',monospace;color:var(--t2)">
+    <div style="padding:7px 16px;border-bottom:1px solid var(--row);font:400 14px 'JetBrains Mono',monospace;color:var(--t2)">
       <span style="color:${l.level === 'error' ? 'var(--red-alert)' : l.level === 'warn' ? 'var(--amber)' : 'var(--t5)'}">${l.level.toUpperCase().padEnd(5)}</span>
       ${esc(new Date(l.at * 1000).toLocaleTimeString())} ${esc(l.msg)}</div>`).join('')
     || '<div class="empty">Nothing logged.</div>';
@@ -1895,14 +1897,14 @@ function renderServer() {
     `<div class="kv"><span>python</span><b>${esc(DIAG.python)}</b></div>
      <div class="kv"><span>stations claimed</span><b>${Object.keys(DIAG.seats || {}).length} / 6</b></div>
      <div style="margin-top:10px;display:flex;flex-direction:column;gap:7px;
-                 font:800 11px Barlow,sans-serif;letter-spacing:.1em">
-       <a href="/api/export" download="scouting-export.json">DOWNLOAD FULL EXPORT · JSON</a>
-       <a href="/api/export.csv?table=teams">TEAM SUMMARY · CSV</a>
-       <a href="/api/export.csv?table=scout">EVERY SCOUT ENTRY · CSV</a>
-       <a href="/api/export.csv?table=pit">PIT SCOUTING · CSV</a>
-       <a href="/api/export.csv?table=lovat">WHAT LOVAT HAS · CSV</a>
-       <a href="/picklist/print" target="_blank">PRINTABLE PICKLIST</a>
-       <a href="/picklist/print?list=second" target="_blank">PRINTABLE SECOND-PICK LIST</a>
+                 font:700 13.5px var(--f-body)">
+       <a href="/api/export" download="scouting-export.json">Download full export · JSON</a>
+       <a href="/api/export.csv?table=teams">Team summary · CSV</a>
+       <a href="/api/export.csv?table=scout">Every scout entry · CSV</a>
+       <a href="/api/export.csv?table=pit">Pit scouting · CSV</a>
+       <a href="/api/export.csv?table=lovat">What Lovat has · CSV</a>
+       <a href="/picklist/print" target="_blank">Printable picklist</a>
+       <a href="/picklist/print?list=second" target="_blank">Printable second-pick list</a>
      </div>
      <div class="hint" style="margin-top:8px">JSON is the one that imports back in — the
        same shape the phones write, so a full export and a single phone's backup both go
@@ -1940,14 +1942,22 @@ function renderTab(name) {
 }
 
 function renderHeader() {
+  const logo = $('.apphead .logo');
+  if (logo) logo.textContent = ourTeam || 'FRC';
   $('#evTitle').textContent = STATE && STATE.event && STATE.event.name
-    ? `${STATE.event.name.toUpperCase()} · STRATEGY` : 'REBUILT · STRATEGY';
+    ? STATE.event.name : 'REBUILT strategy';
   const played = STATE ? (STATE.matches || []).filter((m) => m.breakdown).length : 0;
   const total = STATE ? (STATE.matches || []).length : 0;
   const ago = net.state.lastSync ? Math.round((Date.now() - net.state.lastSync) / 1000) : null;
   $('#evSub').textContent = STATE
-    ? `QUAL ${played} / ${total} · ${(STATE.teams || []).length} TEAMS${ago != null ? ` · SYNC ${ago}s` : ''}`
-    : 'NO EVENT · 0 TEAMS';
+    ? `Qual ${played} of ${total} · ${(STATE.teams || []).length} teams`
+    : 'No event · 0 teams';
+  // Whether this screen is still hearing from the hub, as a pill by the title.
+  const pill = $('#evSync');
+  if (pill) {
+    pill.className = 'pill ' + (net.state.online ? 'ok' : 'warn');
+    pill.innerHTML = '<span class="d"></span>' + (net.state.online ? 'Connected' : "Can't reach the hub");
+  }
 }
 
 function renderAll() {
@@ -2084,4 +2094,4 @@ async function main() {
   every(10000, refresh);
 }
 
-main().catch((e) => { console.error(e); $('#evSub').textContent = 'FAILED: ' + e.message; });
+main().catch((e) => { console.error(e); $('#evSub').textContent = 'Failed: ' + e.message; });

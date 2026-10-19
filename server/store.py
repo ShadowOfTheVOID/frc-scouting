@@ -605,7 +605,8 @@ _NUMERIC = ("driverRating", "defenseRating", "accuracyRating", "preload",
 #: to stop something that is not the phone making every answer in the event
 #: carry a megabyte. `note` is what a scout actually typed and gets room.
 _TEXT = {"endgameTower": 32, "autoTower": 32, "startPosition": 32, "startLane": 32,
-         "traversal": 32, "beached": 32, "climbSpot": 32, "clockBy": 32, "note": 2000}
+         "traversal": 32, "beached": 32, "climbSpot": 32, "clockBy": 32, "inputMode": 16,
+         "note": 2000}
 
 
 def _finite(v):

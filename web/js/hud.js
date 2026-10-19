@@ -1,5 +1,8 @@
-// Phone HUD. Landscape, two thumbs: left picks the rate, right holds while shooting.
-// Screens and every literal value come from design/Phone *.dc.html.
+// Phone HUD. Landscape, in one of two layouts:
+// - pro: two thumbs - left picks how fast, right holds while they shoot.
+// - simple: one big button to hold, and how fast is asked after letting go.
+// Both record exactly the same intervals; simple mode only changes when the
+// speed gets picked, and the phone writes down which layout made each entry.
 
 import * as db from './db.js';
 import * as net from './net.js';
@@ -10,33 +13,35 @@ import { loadRules, phases, phaseAt, hubActive, matchSeconds, intensityBuckets, 
 const $ = (s) => document.querySelector(s);
 const SCREENS = ['seat', 'standby', 'offline', 'live', 'after', 'bumped'];
 
-// The ladder reads top-down fastest-first and uses the mock's wording.
+// The ladder reads top-down fastest-first. Simple mode lists the same three
+// the other way up, slowest first, because there it is a question, not a dial.
 const LADDER = [
-  { id: 'dumping', label: 'DUMPING' },
-  { id: 'steady',  label: 'STEADY' },
-  { id: 'trickle', label: 'A TRICKLE' },
+  { id: 'dumping', label: 'Lots' },
+  { id: 'steady',  label: 'Steady' },
+  { id: 'trickle', label: 'A few' },
 ];
+const speedName = (id) => (LADDER.find((b) => b.id === id) || LADDER[1]).label;
 const DRIVE = ['rough', 'okay', 'solid', 'great', 'best'];
 const DEFENSE = ['not at all', 'a little', 'some', 'a lot'];
 const WRONGS = [
-  { k: 'died',      a: 'STOPPED', b: 'MOVING' },
-  { k: 'tipped',    a: 'TIPPED',  b: '' },
-  { k: 'noShow',    a: 'NO-SHOW', b: '' },
-  { k: 'fouls',     a: 'LOTS OF', b: 'FOULS' },
+  { k: 'died',      a: 'Stopped', b: 'moving' },
+  { k: 'tipped',    a: 'Tipped',  b: '' },
+  { k: 'noShow',    a: 'No-show', b: '' },
+  { k: 'fouls',     a: 'Lots of', b: 'fouls' },
   // Distinct from STOPPED MOVING (the whole match) and NO-SHOW (never turned
   // up): the robot was there and auto did nothing.
-  { k: 'autoFailed', a: 'AUTO',   b: 'DID NOTHING' },
+  { k: 'autoFailed', a: 'Auto',   b: 'did nothing' },
   // A climb that was tried and lost is not the same robot as one that never
   // left the floor, and the climb button can only say which level it reached.
   // Hidden the moment a level IS set: a robot cannot both climb and fall.
-  { k: 'climbFailed',     a: 'CLIMB',      b: 'FELL OFF' },
-  { k: 'autoClimbFailed', a: 'AUTO CLIMB', b: 'FELL OFF' },
+  { k: 'climbFailed',     a: 'Climb',      b: 'fell off' },
+  { k: 'autoClimbFailed', a: 'Auto climb', b: 'fell off' },
 ];
 const CLIMBS = ['None', 'Level1', 'Level2', 'Level3'];
 const START_ZONES = [
-  { id: 'left', label: 'LEFT' },
-  { id: 'centre', label: 'CENTRE' },
-  { id: 'right', label: 'RIGHT' },
+  { id: 'left', label: 'Left' },
+  { id: 'centre', label: 'Centre' },
+  { id: 'right', label: 'Right' },
 ];
 // Which lane they lined up in, asked after the buzzer rather than before it:
 // the side is visible from the stands as they roll out, the lane often is not
@@ -46,35 +51,35 @@ const START_ZONES = [
 // Kept as a second, optional field rather than five zones in place of three,
 // so every entry ever logged still reads as the side it named.
 const START_LANES = [
-  { id: 'trench', label: 'TRENCH' },
-  { id: 'bump', label: 'BUMP' },
+  { id: 'trench', label: 'Trench' },
+  { id: 'bump', label: 'Bump' },
 ];
 // The second page of the after screen. All optional, all one tap, none of them
 // asked during the match: unanswered stays unknown rather than becoming a no.
 const TRAVERSAL = [
-  { id: 'trench', label: 'TRENCH' },
-  { id: 'bump', label: 'BUMP' },
-  { id: 'both', label: 'BOTH' },
-  { id: 'none', label: 'STAYED', sub: 'their side' },
+  { id: 'trench', label: 'Trench' },
+  { id: 'bump', label: 'Bump' },
+  { id: 'both', label: 'Both' },
+  { id: 'none', label: 'Stayed', sub: 'their side' },
 ];
 const BEACHED = [
-  { id: 'fuel', label: 'ON THE', sub: 'fuel' },
-  { id: 'bump', label: 'ON THE', sub: 'bump' },
-  { id: 'both', label: 'BOTH' },
-  { id: 'neither', label: 'NO' },
+  { id: 'fuel', label: 'On the', sub: 'fuel' },
+  { id: 'bump', label: 'On the', sub: 'bump' },
+  { id: 'both', label: 'Both' },
+  { id: 'neither', label: 'No' },
 ];
 // Which part of the tower they used. Two robots that both want the middle of
 // the same face cannot climb together, and that is an alliance-selection fact
 // nothing else we record can answer.
 const CLIMB_SPOTS = [
-  { id: 'frontSide', label: 'FRONT', sub: 'side' },
-  { id: 'frontMiddle', label: 'FRONT', sub: 'middle' },
-  { id: 'backSide', label: 'BACK', sub: 'side' },
-  { id: 'backMiddle', label: 'BACK', sub: 'middle' },
+  { id: 'frontSide', label: 'Front', sub: 'side' },
+  { id: 'frontMiddle', label: 'Front', sub: 'middle' },
+  { id: 'backSide', label: 'Back', sub: 'side' },
+  { id: 'backMiddle', label: 'Back', sub: 'middle' },
 ];
 const AFTER_FLAGS = [
-  { k: 'scoresWhileMoving', label: 'SHOOTS', sub: 'on the move' },
-  { k: 'disrupts', label: 'KNOCKS', sub: 'shots down' },
+  { k: 'scoresWhileMoving', label: 'Shoots', sub: 'on the move' },
+  { k: 'disrupts', label: 'Knocks', sub: 'shots down' },
 ];
 const ACCURACY = ['sprayed it', 'half in', 'mostly in', 'nearly all', 'never missed'];
 
@@ -90,6 +95,13 @@ let currentMatch = null;
 let autoWinner = null;
 let entry = null;
 let rate = 'steady';
+// Simple mode is on unless this phone has been switched to the two-thumb
+// layout. A phone that has never chosen is a new scout's phone.
+let simple = localStorage.getItem('inputMode') !== 'pro';
+// Simple mode: the shooting run that "How fast was that?" is about - an index
+// into entry.payload.intervals - until the next run starts. null = none.
+let pending = null;
+let padHeld = false;
 let eventKey = localStorage.getItem('eventKey') || '';
 // Which page of the after screen is up. Always 1 when a match ends: the extra
 // questions are worth asking, but never at the cost of the next match.
@@ -316,7 +328,12 @@ function seatKey() {
 }
 
 /** `red2` as the sign above the chair reads it: RED 2. */
-const seatLabel = (k) => String(k || 'this chair').replace(/(\d)/, ' $1').toUpperCase();
+const seatLabel = (k) => {
+  const s = String(k || 'this chair').replace(/(\d)/, ' $1');
+  return s.charAt(0).toUpperCase() + s.slice(1);
+};
+/** red, 2 -> Red 2 */
+const stationLabel = (al, n) => al ? `${al.charAt(0).toUpperCase()}${al.slice(1)} ${n}` : '';
 
 // When the match this phone was bumped out of finishes, as wall clock. Taking a
 // chair back mid-match stops whoever the lead has just put in it, and then two
@@ -418,10 +435,10 @@ function showBumped(key, byScout, freed) {
   $('#bumpSeat').textContent = `${seatLabel(key)} · ${seat.scout}`;
   $('#bumpTitle').textContent = freed
     ? `The scout lead freed ${seatLabel(key)}.`
-    : `${String(byScout || 'Someone').toUpperCase()} took ${seatLabel(key)}.`;
+    : `${String(byScout || 'Someone')} took ${seatLabel(key)}.`;
   $('#bumpBody').textContent = freed
     ? 'Stop logging until you have a chair again. Everything you already saved is safe and has been sent.'
-    : 'Stop logging — two phones on one robot means neither set of data is trustworthy. '
+    : 'Stop logging — two phones on one robot means neither set of data can be trusted. '
       + 'Everything you already saved is safe and has been sent.';
   renderBumped();
   show('bumped');
@@ -438,7 +455,7 @@ function renderSeat() {
         const d = document.createElement('div');
         d.className = `st ${al}`;
         d.dataset.al = al; d.dataset.n = String(n);
-        d.innerHTML = `<span class="bar"></span><span class="al">${al.toUpperCase()}</span>
+        d.innerHTML = `<span class="bar"></span><span class="al">${al === 'red' ? 'Red' : 'Blue'}</span>
           <span class="nu">${n}</span><span class="wh"></span>`;
         d.onclick = () => { seat.alliance = al; seat.station = n; buzz(); renderSeat(); };
         el.appendChild(d);
@@ -452,30 +469,31 @@ function renderSeat() {
     const ours = !!claim && claim.deviceId === db.deviceId();
     const taken = !!claim && !ours;
     const wh = d.querySelector('.wh');
-    wh.textContent = mine ? `ME · ${seat.scout || '--'}`
-      : taken ? String(claim.scoutId || '??').toUpperCase()
+    wh.textContent = mine ? `you · ${seat.scout || '--'}`
+      : taken ? String(claim.scoutId || '??')
       // the chair this phone is holding right now, while a different tile is
       // selected - it used to read OPEN in green, which is a lie about our own
-      : ours ? 'THIS PHONE' : 'OPEN';
+      : ours ? 'this phone' : 'open';
     // OPEN is the only green one - a name means someone is already in that chair
     wh.classList.toggle('open', !mine && !taken && !ours);
   }
   if (seat.alliance && seat.station) {
-    $('#signExample').textContent = `${seat.alliance.toUpperCase()} ${seat.station}`;
+    $('#signExample').textContent = stationLabel(seat.alliance, seat.station);
   }
   const m = pickCurrentMatch();
   const t = teamForSeat(m);
   $('#seatTeam').textContent = t || '—';
   $('#seatBlurb').textContent = t
-    ? `in ${m.label.toLowerCase()}, then whoever sits in ${seat.alliance.toUpperCase()} ${seat.station} after that`
+    ? `in ${m.label.toLowerCase()}, then whoever sits in ${stationLabel(seat.alliance, seat.station)} after that`
     : 'pick a station to see who you\'ll watch';
   $('#sitSub').textContent = seat.scout && seat.alliance && seat.station
     ? (m ? `${m.label.toLowerCase()} is next` : 'ready') : 'pick a station first';
   $('#seatHub').textContent = net.state.base ? `${net.state.base.replace(/^https?:\/\//, '')} · connected` : 'not found yet';
   $('#seatDot').className = 'dot' + (net.state.online ? '' : ' amber');
   $('#seatEvent').textContent = eventKey
-    ? `${eventKey.toUpperCase()} · HUB ${net.state.online ? 'FOUND' : 'NOT FOUND'}`
-    : 'NO EVENT SET ON THE HUB';
+    ? `${eventKey} · ${net.state.online ? 'hub found' : 'hub not found'}`
+    : 'No event set on the hub';
+  paintMode();
 }
 
 $('#btnInitials').onclick = () => {
@@ -516,16 +534,136 @@ function renderLadder() {
   for (const d of el.children) d.classList.toggle('on', d.dataset.id === rate);
 }
 
-function paintHold(holding = false, frac = 0) {
-  $('#holdpad').classList.toggle('on', holding);
-  $('#holdMeter').style.height = holding ? `${Math.min(100, frac * 100)}%` : '0';
-  $('#holdLine').style.bottom = holding ? `${Math.min(100, frac * 100)}%` : '0';
-  $('#holdLabel').textContent = holding ? 'HOLDING' : 'HOLD WHILE SHOOTING';
-  $('#holdRate').textContent = rateOf(rate);
+/**
+ * Simple mode's speed question.
+ *
+ * Asked after the run, about the run: the interval is saved the moment the
+ * button is let go, at the last speed picked, and a tap here re-labels that
+ * one interval. Nothing waits on an answer - a scout who ignores it keeps the
+ * speed they had, and holding the button again starts the next run at once,
+ * so a robot that shoots twice in a row is never missed while somebody reads.
+ */
+function renderSpeed() {
+  const el = $('#speedOpts');
+  if (!el.children.length) {
+    for (const b of [...LADDER].reverse()) {
+      const d = document.createElement('div');
+      d.className = 'o';
+      d.dataset.id = b.id;
+      d.textContent = b.label;
+      d.onclick = () => pickSpeed(b.id);
+      el.appendChild(d);
+    }
+  }
+  const iv = pendingRun();
+  const shown = iv ? iv.intensity : rate;
+  for (const d of el.children) d.classList.toggle('on', d.dataset.id === shown);
+  $('#speed').classList.toggle('dim', padHeld);
+  $('#speedQ').textContent = iv && !padHeld ? 'How fast was that?' : 'How fast?';
+  $('#speedFoot').textContent = padHeld ? "You'll pick this when you let go"
+    : iv ? `Keeps "${speedName(shown)}" if you don't tap`
+    : 'You pick this after each run';
 }
 
+function pendingRun() {
+  return (pending != null && entry && entry.payload.intervals[pending]) || null;
+}
+
+function pickSpeed(id) {
+  rate = id;
+  const iv = pendingRun();
+  if (iv && iv.intensity !== id) { iv.intensity = id; autosave(); }
+  buzz(); renderSpeed(); renderLadder();
+}
+
+/** Whether a shot right now would score: true, false, or null for unknown. */
+function hubNow() {
+  const t = clock.elapsed();
+  const now = phaseAt(t);
+  if (!now || (!clock.running && t === 0)) return null;
+  return hubActive(now.id, seat.alliance, autoWinner);
+}
+
+/**
+ * The hold button's words, for each state it can be in.
+ *
+ * Never blocked: when the hub is off it goes grey and says so, but holding
+ * still records the run. Those runs score nothing (the official count for an
+ * off shift is zero, so the split gives them nothing), and they are exactly
+ * what "wasted fuel" and "stockpiles" on the dashboard are measured from.
+ */
+function paintHold(holding = false, secs = 0) {
+  padHeld = holding;
+  const pad = $('#holdpad');
+  const t = clock.elapsed();
+  const started = clock.running || t > 0;
+  const over = started && !phaseAt(t);
+  const off = !holding && started && !over && hubNow() === false;
+  pad.classList.toggle('on', holding);
+  pad.classList.toggle('off', off);
+  pad.classList.toggle('idle', !holding && over);
+  let lb, big = '', un;
+  if (holding) {
+    if (simple) { lb = `Holding · ${secs.toFixed(1)}s`; un = 'Let go when they stop shooting'; }
+    else { lb = 'Holding'; big = `${secs.toFixed(1)}s`; un = `at ${speedName(rate)}`; }
+  } else if (!started) {
+    lb = 'Tap here when the match starts';
+    un = 'then hold it down while they shoot';
+  } else if (over) {
+    lb = 'Match over'; un = '';
+  } else if (off) {
+    lb = 'Hub is off';
+    un = simple ? "Shots now don't score. If they shoot anyway, hold so we can count the wasted shots."
+      : 'Hold anyway if they shoot';
+  } else if (simple) {
+    lb = 'Hold while they shoot';
+    un = pendingRun() ? 'Holding again starts a new run right away' : 'Let go when they stop';
+  } else {
+    lb = 'Hold while they shoot'; big = String(rateOf(rate)); un = 'balls per second';
+  }
+  $('#holdLabel').textContent = lb;
+  $('#holdRate').textContent = big;
+  $('#holdUnit').textContent = un;
+  if (simple) renderSpeed();
+}
+
+/**
+ * Lay the live screen out for the current mode. The clock, the hub pill and
+ * the feeding/defending pair are single elements that move between the two
+ * layouts, so every handler bound to them keeps working in either.
+ */
+function placeLive() {
+  $('#s-live').classList.toggle('simple', simple);
+  $('#lvBody').classList.toggle('simple', simple);
+  if (simple) {
+    $('#lvHdrClock').append($('#lvShotState'), $('#lvClock'));
+    $('#speed').appendChild($('#fdPair'));
+  } else {
+    $('#lvCentre').append($('#lvClock'), $('#lvShotState'));
+    $('#lvLeft').appendChild($('#fdPair'));
+  }
+}
+
+function setMode(on) {
+  simple = !!on;
+  try { localStorage.setItem('inputMode', simple ? 'simple' : 'pro'); } catch {}
+  pending = null;
+  buzz();
+  paintMode();
+  placeLive();
+}
+
+function paintMode() {
+  const sw = $('#seatMode');
+  sw.classList.toggle('on', simple);
+  sw.setAttribute('aria-checked', String(simple));
+  $('#sbModeState').textContent = simple ? 'on' : 'off';
+}
+$('#seatMode').onclick = () => setMode(!simple);
+$('#sbMode').onclick = () => setMode(!simple);
+
 /** Hold-and-release recorder. Tap and hold only — no drags (Android owns edge swipes). */
-function holdRecorder(el, list, onPaint) {
+function holdRecorder(el, list, onPaint, { onBegin, onRecord } = {}) {
   let t0 = null, raf = null;
   const begin = (ev) => {
     if (t0 !== null) return;
@@ -533,9 +671,10 @@ function holdRecorder(el, list, onPaint) {
     if (!clock.running) return;
     t0 = clock.elapsed();
     buzz(12);
+    onBegin && onBegin();
     const tick = () => {
       if (t0 === null) return;
-      onPaint && onPaint(true, Math.min(1, (clock.elapsed() - t0) / 5));
+      onPaint && onPaint(true, clock.elapsed() - t0);
       raf = requestAnimationFrame(tick);
     };
     tick();
@@ -549,6 +688,7 @@ function holdRecorder(el, list, onPaint) {
     if (t1 - start < 0.15) return;
     const ph = phaseAt(start);
     list().push({ start: +start.toFixed(2), end: +t1.toFixed(2), phase: ph ? ph.id : null, intensity: rate });
+    onRecord && onRecord(list().length - 1);
     buzz(12);
     renderLive(); autosave();
   };
@@ -559,90 +699,77 @@ function holdRecorder(el, list, onPaint) {
   el.addEventListener('contextmenu', (e) => e.preventDefault());
 }
 
-function renderStrip() {
-  const el = $('#lvStrip');
-  const t = clock.elapsed();
-  const now = phaseAt(t);
-  if (el.children.length !== phases().length) {
-    el.innerHTML = phases().map((p) => `<span style="flex:${(p.end - p.start) / 10}"><span class="fill"></span></span>`).join('');
-  }
-  phases().forEach((p, i) => {
-    const s = el.children[i];
-    const act = hubActive(p.id, seat.alliance, autoWinner);
-    s.className = now && now.id === p.id ? 'now' : (act === true ? 'live' : '');
-    const fill = s.querySelector('.fill');
-    if (fill) fill.style.width = (now && now.id === p.id)
-      ? `${Math.min(100, ((t - p.start) / (p.end - p.start)) * 100)}%` : '0';
-  });
-}
-
+/** When they were shooting, across the whole match. On the after screen. */
 function renderRunbar() {
-  const el = $('#lvRunbar');
+  const el = $('#afRunbar');
   const total = matchSeconds();
   const ivs = entry ? entry.payload.intervals : [];
-  // The runs only change when one is logged or undone; the cursor moves every
-  // tick. Rebuilding the whole bar for the cursor threw away and reparsed a
-  // span per logged run five times a second for the length of a match.
+  // Rebuilt only when a run is logged or undone.
   const last = ivs[ivs.length - 1];
   const sig = `${ivs.length}:${last ? last.end : ''}`;
   if (el.dataset.sig !== sig) {
     el.dataset.sig = sig;
     el.innerHTML = ivs.map((iv) =>
       `<span class="r ${iv.intensity}" style="left:${(iv.start / total) * 100}%;width:${Math.max(0.8, ((iv.end - iv.start) / total) * 100)}%"></span>`
-    ).join('') + '<span class="cur"></span>';
+    ).join('');
   }
-  const cur = el.lastElementChild;
-  if (cur) cur.style.left = `${Math.min(100, (clock.elapsed() / total) * 100)}%`;
 }
 
 function renderLive() {
   if (!entry) return;
   const t = clock.elapsed();
   const now = phaseAt(t);
-  $('#lvSeat').textContent = `${seat.alliance.toUpperCase()} ${seat.station}`;
+  if ($('#lvBody').classList.contains('simple') !== simple) placeLive();
+  $('#lvSeat').textContent = stationLabel(seat.alliance, seat.station);
+  const name = teamName(entry.team) || '';
+  // Simple mode has no middle column, so the robot it is watching goes up top.
   $('#lvMeta').textContent = PRACTICE
-    ? 'PRACTICE · NOTHING IS SAVED'
-    : `${(currentMatch ? currentMatch.label : 'MANUAL').toUpperCase()} · ${seat.scout}`;
+    ? (simple ? `${entry.team || '—'} · practice` : 'Practice · nothing is saved')
+    : simple ? `${entry.team || '—'}${name ? ' ' + name : ''}`
+    : `${currentMatch ? currentMatch.label : 'Manual'} · ${seat.scout}`;
   $('#lvTeam').textContent = entry.team || '—';
-  $('#lvTeamName').textContent = (teamName(entry.team) || '').toUpperCase();
+  $('#lvTeamName').textContent = name;
   $('#lvMatchOf').textContent = matchOfText();
   $('#lvClock').textContent = fmt(t);
-  $('#lvBalls').textContent = ballsSoFar();
-  $('#lvRuns').textContent = entry.payload.intervals.length;
-  $('#lvClimb').textContent = (now && now.id === 'auto')
-    ? (entry.payload.autoTower === 'Level1' ? 'L1' : '—')
-    : (entry.payload.endgameTower === 'None' ? '—' : entry.payload.endgameTower.replace('Level', 'L'));
   const inAuto = now && now.id === 'auto';
-  $('#btnClimb').querySelector('.a').textContent = inAuto ? 'AUTO CLIMB' : 'CLIMB';
+  $('#btnClimb').querySelector('.a').textContent = inAuto ? 'Auto climb' : 'Climb';
+  // The level only once there is one; "not set" was just more to read.
   $('#climbSub').textContent = inAuto
-    ? (entry.payload.autoTower === 'Level1' ? 'L1 · 15 PTS' : 'TAP IF THEY DO')
-    : (entry.payload.endgameTower === 'None' ? 'NOT SET' : `${entry.payload.endgameTower.replace('Level', 'L')} SET`);
-  $('#btnClimb').classList.toggle('on', inAuto && entry.payload.autoTower === 'Level1');
-  $('#lvLink').textContent = !net.state.online ? 'SAVING LOCALLY'
-    : (clock.sharedBy && clock.sharedBy !== seat.scout) ? `CLOCK FROM ${String(clock.sharedBy).toUpperCase()}`
-    : 'STATION LINKED';
-  $('#lvDot').className = 'dot' + (net.state.online ? '' : ' amber');
+    ? (entry.payload.autoTower === 'Level1' ? 'L1' : '')
+    : (entry.payload.endgameTower === 'None' ? '' : entry.payload.endgameTower.replace('Level', 'L'));
+  $('#btnClimb').classList.toggle('on', inAuto ? entry.payload.autoTower === 'Level1' : entry.payload.endgameTower !== 'None');
+  paintLink();
 
   const st = $('#lvShotState');
-  if (!clock.running && t === 0) { st.textContent = 'TAP THE PAD TO START'; st.className = 'shotstate unknown'; }
-  else if (!now) { st.textContent = 'MATCH OVER'; st.className = 'shotstate dead'; }
+  if (!clock.running && t === 0) { st.textContent = 'Not started'; st.className = 'shotstate unknown'; }
+  else if (!now) { st.textContent = 'Match over'; st.className = 'shotstate dead'; }
   else {
     const act = hubActive(now.id, seat.alliance, autoWinner);
     const left = Math.ceil(now.end - t);
-    if (act === true) { st.textContent = `SHOTS COUNT · ${left}s LEFT`; st.className = 'shotstate'; }
-    else if (act === false) { st.textContent = `SHOTS DON'T COUNT · ${left}s LEFT`; st.className = 'shotstate dead'; }
-    else { st.textContent = `${now.label} · ${left}s LEFT`; st.className = 'shotstate unknown'; }
+    if (act === true) { st.textContent = `Hub on · ${left}s left`; st.className = 'shotstate'; }
+    else if (act === false) { st.textContent = `Hub off · ${left}s left`; st.className = 'shotstate dead'; }
+    else { st.textContent = `${now.label} · ${left}s left`; st.className = 'shotstate unknown'; }
   }
-  renderStrip(); renderRunbar(); renderLadder();
+  if (!padHeld) paintHold();
+  renderLadder();
+}
+
+/** Connection words in the live header: silent while all is well. */
+function paintLink() {
+  $('#lvLink').textContent = !net.state.online ? 'Saving on this phone'
+    : (clock.sharedBy && clock.sharedBy !== seat.scout) ? `Clock from ${clock.sharedBy}`
+    : '';
+  $('#lvDot').className = 'dot' + (net.state.online ? '' : ' amber');
 }
 
 // ═══════════════════════════════════════════════════════ AFTER THE BUZZER
 function renderAfter() {
   if (!entry) return;
-  $('#afTitle').textContent = `${(currentMatch ? currentMatch.label : 'MATCH').toUpperCase()} DONE`;
-  $('#afMeta').textContent = `${entry.team} · ${ballsSoFar()} BALLS · ${entry.payload.endgameTower === 'None' ? 'NO CLIMB' : entry.payload.endgameTower.replace('Level', 'L') + ' CLIMB'}`;
+  $('#afTitle').textContent = `${currentMatch ? currentMatch.label : 'Match'} done`;
+  $('#afMeta').textContent = `${entry.team} · ${ballsSoFar()} balls · ${entry.payload.endgameTower === 'None' ? 'no climb' : entry.payload.endgameTower.replace('Level', 'L') + ' climb'}`;
   const nx = nextMatch();
-  $('#afNext').textContent = nx ? `NEXT: ${nx.label.toUpperCase()}` : 'NEXT: —';
+  $('#afNext').textContent = nx ? `Next: ${nx.label}` : 'Next: —';
+  renderRunbar();
   $('#afBalls').textContent = ballsSoFar();
   // The second they left to climb rides on the same line as the level, so the
   // scout can see the number they just produced without another row of chrome.
@@ -685,7 +812,7 @@ function renderAfter() {
   $('#afPage2a').classList.toggle('hide', afterPage !== 2);
   $('#afPage2b').classList.toggle('hide', afterPage !== 2);
   const answered = answeredExtras();
-  $('#btnAfMore').querySelector('.a').textContent = afterPage === 1 ? 'A FEW MORE THINGS' : 'BACK';
+  $('#btnAfMore').querySelector('.a').textContent = afterPage === 1 ? 'A few more things' : 'Back';
   $('#afMoreSub').textContent = afterPage === 2 ? 'to driving and faults'
     : answered ? `${answered} answered` : 'optional';
 
@@ -870,18 +997,19 @@ function tickStandby() {
 }
 
 function renderStandby() {
-  $('#sbSeat').textContent = `${seat.alliance.toUpperCase()} ${seat.station}`;
-  $('#sbMeta').textContent = `${seat.scout} · ${history.length} ${history.length === 1 ? 'MATCH' : 'MATCHES'} IN`;
-  $('#sbSync').textContent = net.state.queued ? `${net.state.queued} WAITING` : 'EVERYTHING SENT';
+  $('#sbSeat').textContent = stationLabel(seat.alliance, seat.station);
+  $('#sbMeta').textContent = `${seat.scout} · ${history.length} ${history.length === 1 ? 'match' : 'matches'} in`;
+  $('#sbSync').textContent = net.state.queued ? `${net.state.queued} waiting` : 'Everything sent';
+  paintMode();
   $('#sbDot').className = 'dot' + (net.state.online ? '' : ' amber');
 
   const m = currentMatch;
   const t = teamForSeat(m);
   $('#sbTeam').textContent = t || '—';
   $('#sbTeamMeta').textContent = t ? (teamName(t) || 'not seen yet') : '—';
-  $('#sbUntil').textContent = !m ? 'WAITING FOR THE SCHEDULE'
-    : m.status ? `${m.label.toUpperCase()} · ${m.status.toUpperCase()}`
-    : `UNTIL ${m.label.toUpperCase()} IS CALLED`;
+  $('#sbUntil').textContent = !m ? 'Waiting for the schedule'
+    : m.status ? `${m.label} · ${m.status.toLowerCase()}`
+    : `until ${m.label} is called`;
 
   $('#openMatchSub').textContent = t
     ? `open the match screen for ${t} now`
@@ -899,7 +1027,7 @@ function renderStandby() {
     <div class="lrow"><span class="code">${shortCode(h.matchLabel)}</span>
       <span class="team">${h.team}</span>
       <span class="desc">${Math.round((h.payload.intervals || []).reduce((s, i) => s + (i.end - i.start) * rateOf(i.intensity), 0))} balls · ${h.payload.endgameTower === 'None' ? 'none' : h.payload.endgameTower.replace('Level', 'L')}${RECONCILED.has(h.matchKey) ? ' · reconciled' : ''}</span>
-      <span class="tag ${QUEUED_IDS.has(h.id) ? 'queued' : 'sent'}">${QUEUED_IDS.has(h.id) ? 'QUEUED' : 'SENT'}</span></div>`).join('')
+      <span class="tag ${QUEUED_IDS.has(h.id) ? 'queued' : 'sent'}">${QUEUED_IDS.has(h.id) ? 'waiting' : 'sent'}</span></div>`).join('')
     : '<div class="lrow"><span class="desc">nothing logged yet</span></div>';
 }
 
@@ -910,12 +1038,12 @@ async function renderBumped() {
     <div class="lrow"><span class="code">${shortCode(h.matchLabel)}</span>
       <span class="team">${h.team}</span>
       <span class="desc">${Math.round((h.payload.intervals || []).reduce((s, i) => s + (i.end - i.start) * rateOf(i.intensity), 0))} balls</span>
-      <span class="tag sent">SAVED</span></div>`).join('')
+      <span class="tag sent">saved</span></div>`).join('')
     : '<div class="lrow"><span class="desc">nothing logged yet</span></div>';
 }
 
 async function renderOffline() {
-  $('#offSeat').textContent = `${seat.alliance.toUpperCase()} ${seat.station} · ${seat.scout}`;
+  $('#offSeat').textContent = `${stationLabel(seat.alliance, seat.station)} · ${seat.scout}`;
   const q = await db.queued();
   const items = db.collapse(q);
   $('#offBlurb').textContent = items.length
@@ -925,7 +1053,7 @@ async function renderOffline() {
     const r = it.record;
     return `<div class="lrow"><span class="code">${shortCode(r.matchLabel)}</span>
       <span class="desc">${r.team} · ${Math.round((r.payload.intervals || []).reduce((s, i) => s + (i.end - i.start) * rateOf(i.intensity), 0))} balls</span>
-      <span class="tag queued">QUEUED</span></div>`;
+      <span class="tag queued">waiting</span></div>`;
   }).join('') : '<div class="lrow"><span class="desc">nothing waiting</span></div>';
 }
 
@@ -1073,10 +1201,10 @@ function nextMatch() {
   return i >= 0 ? matches[i + 1] : null;
 }
 function matchOfText() {
-  if (PRACTICE) return 'TRAINING RUN';
+  if (PRACTICE) return 'training run';
   const mine = matches.filter((m) => teamForSeat(m));
   const i = mine.findIndex((m) => currentMatch && m.matchKey === currentMatch.matchKey);
-  return mine.length ? `MATCH ${i + 1} OF ${mine.length}` : 'MATCH — OF —';
+  return mine.length ? `match ${i + 1} of ${mine.length}` : '';
 }
 function loadMatch(m) {
   currentMatch = m;
@@ -1085,6 +1213,7 @@ function loadMatch(m) {
   entry = newEntry(m, teamForSeat(m));
   clock.reset();
   rate = 'steady';
+  pending = null;
   $('#afNote').value = '';
   // joined late? pick up the clock already running for this match
   if (shared && net.serverNow() - shared.startedAt < matchSeconds() + 30) clock.adopt(shared);
@@ -1144,7 +1273,7 @@ function goStandbyOrLive() {
 // ══════════════════════════════════════════════════════════════ startup
 async function main() {
   await loadRules();
-  renderLadder(); paintHold();
+  renderLadder(); placeLive(); paintMode(); paintHold();
   document.addEventListener('pointerdown', () => {
     if (screen === 'live' || screen === 'standby') acquireWake();
   }, { passive: true });
@@ -1161,7 +1290,11 @@ async function main() {
   fs.offerHomeScreen({ el: $('#a2hs') });
 
   // Right pad records shooting; the two left utility buttons record their own runs.
-  holdRecorder($('#holdpad'), () => entry.payload.intervals, paintHold);
+  holdRecorder($('#holdpad'), () => entry.payload.intervals, paintHold, {
+    onBegin: () => { pending = null; },
+    // Which layout made this entry, so its accuracy can be told apart later.
+    onRecord: (i) => { entry.payload.inputMode = simple ? 'simple' : 'pro'; if (simple) pending = i; },
+  });
   holdRecorder($('#btnFeeding'), () => entry.payload.feedIntervals,
     (on) => $('#btnFeeding').classList.toggle('on', on));
   holdRecorder($('#btnDefending'), () => entry.payload.defenseIntervals,
@@ -1194,6 +1327,7 @@ async function main() {
       if (l[l.length - 1].end > newest[newest.length - 1].end) newest = l;
     }
     newest.pop();
+    if (pending != null && pending >= entry.payload.intervals.length) pending = null;
     buzz(20); renderLive(); autosave();
   };
   $('#btnClimb').onclick = () => {
@@ -1236,7 +1370,7 @@ async function main() {
       wasQueued = net.state.queued;
       refreshHistory().then(() => { if (screen === 'standby') renderStandby(); });
     }
-    if (screen === 'live') { $('#lvLink').textContent = net.state.online ? 'STATION LINKED' : 'SAVING LOCALLY'; $('#lvDot').className = 'dot' + (net.state.online ? '' : ' amber'); }
+    if (screen === 'live') paintLink();
     if (screen === 'standby') renderStandby();
     if (screen === 'seat') renderSeat();
     if (screen === 'offline') renderOffline();
@@ -1393,5 +1527,5 @@ async function main() {
 main().catch((e) => {
   console.error(e);
   document.body.insertAdjacentHTML('afterbegin',
-    `<div style="padding:24px;font:600 14px Barlow,sans-serif;color:#ff5c66">Failed to start: ${e.message}</div>`);
+    `<div style="padding:24px;font:700 15px var(--f-body);color:var(--red-alert)">Failed to start: ${e.message}</div>`);
 });

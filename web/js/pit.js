@@ -27,8 +27,8 @@ function renderMap() {
   const map = STATE && STATE.pitMap;
   const host = $('#mapHost');
   if (!map || !map.pits) {
-    host.innerHTML = `<div style="padding:26px 18px;text-align:center;font:600 13px/1.6 Barlow,sans-serif;color:var(--body)">
-      No pit map for this event.<br><span style="color:var(--dim)">Nexus only has one where the event uses it for queuing. The LIST works either way.</span></div>`;
+    host.innerHTML = `<div style="padding:26px 18px;text-align:center;font:600 14px/1.6 var(--f-body);color:var(--body)">
+      No pit map for this event.<br><span style="color:var(--dim)">Nexus only has one where the event uses it for queuing. The list works either way.</span></div>`;
     return;
   }
   const size = map.size || { x: 1000, y: 1000 };
@@ -107,7 +107,7 @@ function renderList() {
     const name = (teams.find((x) => x.team === t) || {}).name || '';
     return `<div class="qrow ${st}" data-team="${t}"><b>${t}</b>
       <span class="nm">${esc(name)}${pits[t] ? ' · pit ' + esc(pits[t]) : ''}</span>
-      <span class="st">${st === 'done' ? 'DONE' : st === 'partial' ? 'STARTED' : 'TO DO'}</span></div>`;
+      <span class="st">${st === 'done' ? 'Done' : st === 'partial' ? 'Started' : 'To do'}</span></div>`;
   }).join('') || '<div class="qrow"><span class="nm">No teams yet.</span></div>';
   for (const r of $$('#listHost .qrow')) r.onclick = () => select(Number(r.dataset.team));
 }
@@ -116,7 +116,7 @@ function renderProgress() {
   const teams = (STATE && STATE.teams || []).map((t) => t.team);
   const done = teams.filter((t) => pitStatus(t) === 'done').length;
   const pct = teams.length ? Math.round(done / teams.length * 100) : 0;
-  $('#progLbl').textContent = teams.length ? `${done} OF ${teams.length} PITS DONE` : 'NO TEAMS YET';
+  $('#progLbl').textContent = teams.length ? `${done} of ${teams.length} pits done` : 'No teams yet';
   $('#progPct').textContent = teams.length ? `${pct}%` : '';
   $('#progBar').style.width = `${pct}%`;
 }
@@ -138,7 +138,7 @@ function select(team) {
 
   const st = String(insp[team] || insp[String(team)] || '').toLowerCase();
   const badge = $('#pInsp');
-  badge.textContent = st ? st.toUpperCase().replace(/-/g, ' ') : 'INSPECTION —';
+  badge.textContent = st ? st.charAt(0).toUpperCase() + st.slice(1).replace(/-/g, ' ') : 'Inspection —';
   badge.className = 'insp ' + (st === 'complete' ? 'complete' : st === 'hold' ? 'hold' : 'other');
 
   for (const holder of $$('.chips')) {
@@ -159,7 +159,7 @@ function select(team) {
   renderShots();
   const save = $('#pSave');
   save.classList.remove('saved');
-  save.textContent = prev ? 'UPDATE PIT' : 'SAVE PIT';
+  save.textContent = prev ? 'Update pit' : 'Save pit';
   renderMap(); renderList();
 }
 
@@ -178,7 +178,7 @@ function renderShots() {
   // hub now refuses those on the way in; this is the other half of it.
   $('#pShots').innerHTML = (draft.photos || []).map((p) =>
     `<img src="${p.startsWith('data:') ? esc(p) : '/api/photo/' + esc(encodeURIComponent(p))}" alt="">`).join('')
-    + '<div class="addshot" id="addShot">+ PHOTO</div>';
+    + '<div class="addshot" id="addShot">+ Photo</div>';
   const add = $('#addShot');
   if (add) add.onclick = () => $('#pPhoto').click();
 }
@@ -225,7 +225,7 @@ $('#pSave').onclick = async () => {
   entries[sel] = rec;
   const b = $('#pSave');
   b.classList.add('saved');
-  b.textContent = net.state.online ? 'SAVED · SENT' : 'SAVED ON THIS PHONE';
+  b.textContent = net.state.online ? 'Saved · sent' : 'Saved on this phone';
   if (navigator.vibrate) { try { navigator.vibrate(14); } catch {} }
   net.flush();
   renderMap(); renderList(); renderProgress();
@@ -256,8 +256,8 @@ async function refresh() {
   for (const r of local) if (!entries[r.team]) entries[r.team] = r;
 
   $('#phdr').textContent = STATE
-    ? `${(STATE.eventKey || '').toUpperCase()}${STATE.pitMap ? '' : ' · NO MAP'}`
-    : 'HUB NOT REACHABLE';
+    ? `${STATE.eventKey || ''}${STATE.pitMap ? '' : ' · no map'}`
+    : 'Hub not reachable';
   $('#pdot').className = 'dot' + (net.state.online ? '' : ' amber');
   renderMap(); renderList(); renderProgress();
 }
@@ -291,4 +291,4 @@ async function main() {
   // the way back.
   every(30000, refresh, { leading: false });
 }
-main().catch((e) => { console.error(e); $('#phdr').textContent = 'FAILED: ' + e.message; });
+main().catch((e) => { console.error(e); $('#phdr').textContent = 'Failed: ' + e.message; });

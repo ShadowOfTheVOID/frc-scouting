@@ -1452,7 +1452,7 @@ def test_admin_panel(L):
 
     code, r = L.req("/api/config", {"ourTeam": "254"})
     ok &= check("a save without it is refused, and says which button to press",
-                code == 403 and r.get("locked") is True and "UNLOCK" in r["error"],
+                code == 403 and r.get("locked") is True and "Unlock" in r["error"],
                 f"({code} {r})")
     ok &= check("and changed nothing", L.store.get("ourTeam") == "6059")
     for path in ("/api/keycheck", "/api/keytest"):

@@ -440,24 +440,34 @@ Practice with a fake event before you are standing in a venue. See
 
 That is it. From here on they tap the icon.
 
+### Light or dark
+
+Every page has a **Light mode / Dark mode** button (on the phone it is on the seat screen). It
+starts out following the device's own setting, and a choice is remembered per browser.
+
 ### During matches
 
 Scouts do not have to do anything except watch their robot:
 
-- **Left thumb** picks how fast the robot is shooting — *a trickle*, *steady*, *dumping*.
-- **Right thumb** holds the big pad while the robot is actually shooting. That is the whole job.
+- **Simple mode** (the default for a new phone): hold the one big button while the robot is
+  actually shooting, then tap how fast it was — *a few*, *steady*, *lots* — or leave it and the
+  last answer is kept. That is the whole job.
+- **Pro mode** (switch on the seat screen): the two-thumb layout. Left thumb picks how fast,
+  right thumb holds the pad. Same data either way.
+- When their hub is off the button goes grey, but holding it still counts: those shots score
+  nothing, and they are how the dashboard measures wasted fuel.
 - The first scout to tap the pad starts the clock **for everyone on that match**. The others'
   phones jump straight into the match on the same clock.
 - **Tapping late is fine.** Really. Tell them to tap when they notice the match started, not to
   race the buzzer — the hub corrects the timing afterwards from official results.
 - **Before the buzzer**, while the robot is lining up, the waiting screen asks two things in one
   tap each: where it starts, and how much fuel it is carrying. Both can be left blank.
-- **CLIMB** is one button that cycles the level, and it now also records *when* it was tapped —
+- **Climb** is one button that cycles the level, and it now also records *when* it was tapped —
   the second of the match this robot left to go and climb, which is the first thing an alliance
   captain asks about a robot that says it climbs. Nothing extra for the scout to do.
 - After the buzzer: a few taps for driving, how much of it went in, defence, anything that went
-  wrong, then **SEND IT IN**.
-- **A FEW MORE THINGS** on that screen opens a second page of optional one-tap questions: which
+  wrong, then **Send it in**.
+- **A few more things** on that screen opens a second page of optional one-tap questions: which
   lane it started in, how it crosses the field, whether it got stuck and on what, whether it
   shoots on the move or knocks shots down, and where on the tower it climbed. Skipping them
   costs nothing — an unanswered question reads as *not asked* everywhere, never as a no. Two of

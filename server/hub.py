@@ -584,7 +584,7 @@ class Hub:
         steps = []
         if not ek:
             steps.append(step("event", "Name the event", False,
-                              "Type your team number into OUR TEAM and press FIND MY EVENTS: "
+                              "Type your team number into Our team and press Find my events: "
                               "the hub looks up what you are registered for and fills the key "
                               "and the level in. It needs no API key for that. Failing that, "
                               "EVENT KEY is the code on frc.events or The Blue Alliance, like "
@@ -596,11 +596,11 @@ class Hub:
         else:
             steps.append(step("event", "Name the event", True,
                               f"{ek} is saved, but no teams have arrived yet. That needs a key "
-                              "below and one poll - or the key is wrong, which only TEST KEYS "
+                              "below and one poll - or the key is wrong, which only Test keys "
                               "can tell you."))
 
         steps.append(step("nexus", "Paste the Nexus key", nexus_set,
-                          "Saved. TEST KEYS below is what says whether it works."
+                          "Saved. Test keys below is what says whether it works."
                           if nexus_set else
                           "Free, from frc.nexus/api. It is the one key worth stopping for: its "
                           '"on field" is what arms the scouting screen on all six phones. '
@@ -619,23 +619,23 @@ class Hub:
             # An `unset` box has nothing to answer and a `down` vendor has
             # nothing to say yet; only `bad` is a key that is wrong, and this is
             # the one place in the app that can tell those three apart.
-            steps.append(step("test", "Press TEST KEYS", False,
+            steps.append(step("test", "Press Test keys", False,
                               f"Tested {ago()}: {listed('bad')} came back wrong. Fix that box "
                               "and test again - a wrong key and a quiet service look identical "
                               "everywhere else in the app, on purpose."))
         elif listed("ok"):
-            steps.append(step("test", "Press TEST KEYS", True,
+            steps.append(step("test", "Press Test keys", True,
                               f"{listed('ok')} answered, tested {ago()}."
                               + (f" {listed('down')} had nothing to say - that is a service "
                                  "being quiet, not a key being wrong."
                                  if listed("down") else "")))
         elif states:
-            steps.append(step("test", "Press TEST KEYS", False,
+            steps.append(step("test", "Press Test keys", False,
                               f"Tested {ago()}, and nothing answered. Either no key is saved "
                               "yet, or this laptop has no internet right now."))
         else:
-            steps.append(step("test", "Press TEST KEYS", False,
-                              "SAVE & REFRESH first, then TEST KEYS asks each vendor whether "
+            steps.append(step("test", "Press Test keys", False,
+                              "Save & refresh first, then Test keys asks each vendor whether "
                               "the key actually works. Do it at home: a key that turns out to "
                               "be wrong is not a thing you can replace on a Saturday morning."))
 
@@ -671,7 +671,7 @@ class Hub:
                     "until you do.",
                     "A password on this panel: stop the hub and run  python3 server/hub.py "
                     "--set-admin-password  in the same window it was started from. Without one, "
-                    "UNLOCK is just the button.",
+                    "Unlock is just the button.",
                     "The off-site mirror, at the bottom of this page, if your team has a host "
                     "with a domain name. setup.md Part B.",
                 ]}
@@ -2802,7 +2802,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _locked_out(self):
         return self._json({
-            "error": "The hub settings are locked. Press UNLOCK on the admin page and "
+            "error": "The hub settings are locked. Press Unlock on the admin page and "
                      "enter the admin password.",
             "locked": True,
         }, 403)
@@ -3851,7 +3851,7 @@ def main():
         print("  Admin password: loaded from %s\n"
               % (".env" if envfile.ADMIN in from_file else "the environment"))
     else:
-        print("  Admin password: none set - UNLOCK on the admin page is one button.\n"
+        print("  Admin password: none set - Unlock on the admin page is one button.\n"
               "                  `python3 server/hub.py --set-admin-password` sets one.\n")
 
     # Where the keys are, in a line, because it is a file now and files get

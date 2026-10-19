@@ -1,0 +1,98 @@
+/* Colours and type for every page, in two themes.
+
+   Dark is soft charcoal with red; light is warm paper with a deeper red. With
+   no choice saved the page follows the device's own setting, and theme.js
+   sets data-theme on <html> when somebody picks one - so each theme is written
+   out twice below: once for "the device says light", once for "they chose
+   light". Every page reads these names; none of them hard-codes a colour that
+   only works in one theme.
+
+   --ink is the colour translucent overlays are mixed from, as an RGB triple:
+   rgba(var(--ink),.06) is a faint wash in either theme - white on charcoal,
+   warm brown on paper. */
+
+@import url('/css/fonts.css');
+
+:root{
+  color-scheme:dark;
+  --f-body:Nunito,system-ui,sans-serif;
+  --f-num:'Barlow Condensed',Nunito,system-ui,sans-serif;
+  --f-mono:'JetBrains Mono',ui-monospace,monospace;
+
+  --page:#131316; --panel:#1a1a1e; --raised:#232328; --chrome:#1e1e22;
+  --thead:#1a1a1e; --logwell:#161619;
+  --line:#2a2a30; --line-panel:#2a2a30; --line-row:#232328; --row:#232328;
+  --track:#2e2e35; --btn:#36363d; --seg:#2c2c32;
+  --soft:#232328; --soft2:#2c2c32;
+  --ink:255,255,255; --on-red:#fff;
+
+  --red:#e5323d; --red-bg:rgba(229,50,61,.16); --red-link:#ff6b74; --red-alert:#ff7a82;
+  --red-label:#ff8a91; --red-soft:#ff9aa0; --red-dim:#6d2b30; --red-ring:rgba(229,50,61,.38);
+  --red-dash:rgba(229,50,61,.3);
+  --blue-rail:#3a5f8f; --blue-label:#94bbec; --blue:#3f7bc4; --blue-bg:rgba(148,187,236,.13);
+  --green:#4cc38a; --green-soft:#5ccf95; --green-border:rgba(92,207,149,.38); --green-dot:#5ccf95;
+  --green-bg:rgba(92,207,149,.14);
+  --amber:#f6bf5a; --amber-bg:rgba(246,191,90,.13); --amber-line:rgba(246,191,90,.35);
+
+  --t0:#f3f3f5; --t1:#c8c8cf; --t2:#b9b9c1; --t3:#a6a6af; --t4:#9696a0; --t5:#878791; --t6:#797983;
+  --muted:#9696a0; --body:#c2c2ca; --dim:#797983; --dead:#4a4a52;
+
+  --shadow:0 1px 2px rgba(0,0,0,.3);
+  --scrim:rgba(10,10,12,.92);
+
+  /* chart series - fixed order, never cycled; stepped for this surface */
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181; --s6:#2f9a2f;
+}
+
+@media (prefers-color-scheme:light){:root:not([data-theme="dark"]){
+  color-scheme:light;
+  --page:#f3ecd6; --panel:#fbf6e4; --raised:#f3ead0; --chrome:#f6efda;
+  --thead:#fbf6e4; --logwell:#f6efdb;
+  --line:#e4d8b6; --line-panel:#e4d8b6; --line-row:#eee4c8; --row:#f3ead0;
+  --track:#e8dcb8; --btn:#dccfa8; --seg:#ebdfbd;
+  --soft:#f3ead0; --soft2:#ebdfbd;
+  --ink:70,50,15; --on-red:#fff;
+  --red:#cc1f33; --red-bg:rgba(204,31,51,.09); --red-link:#b3162a; --red-alert:#b3162a;
+  --red-label:#b3162a; --red-soft:#a8283a; --red-dim:#e6b3b9; --red-ring:rgba(204,31,51,.32);
+  --red-dash:rgba(204,31,51,.28);
+  --blue-rail:#8fb0d8; --blue-label:#2b5c9b; --blue:#2f69b0; --blue-bg:rgba(43,92,155,.1);
+  --green:#23794e; --green-soft:#23794e; --green-border:rgba(35,121,78,.38); --green-dot:#2f9a63;
+  --green-bg:rgba(35,121,78,.11);
+  --amber:#9a5b05; --amber-bg:rgba(201,133,0,.13); --amber-line:rgba(154,91,5,.35);
+  --t0:#211b16; --t1:#4a4138; --t2:#554b41; --t3:#625649; --t4:#776b5d; --t5:#857969; --t6:#938775;
+  --muted:#776b5d; --body:#4f463d; --dim:#938775; --dead:#d8cba6;
+  --shadow:0 1px 3px rgba(80,60,20,.12);
+  --scrim:rgba(243,236,214,.95);
+  --s1:#2a6fc0; --s2:#c24e1d; --s3:#12805a; --s4:#946200; --s5:#b83f6c; --s6:#2b7a2b;
+}}
+:root[data-theme="light"]{
+  color-scheme:light;
+  --page:#f3ecd6; --panel:#fbf6e4; --raised:#f3ead0; --chrome:#f6efda;
+  --thead:#fbf6e4; --logwell:#f6efdb;
+  --line:#e4d8b6; --line-panel:#e4d8b6; --line-row:#eee4c8; --row:#f3ead0;
+  --track:#e8dcb8; --btn:#dccfa8; --seg:#ebdfbd;
+  --soft:#f3ead0; --soft2:#ebdfbd;
+  --ink:70,50,15; --on-red:#fff;
+  --red:#cc1f33; --red-bg:rgba(204,31,51,.09); --red-link:#b3162a; --red-alert:#b3162a;
+  --red-label:#b3162a; --red-soft:#a8283a; --red-dim:#e6b3b9; --red-ring:rgba(204,31,51,.32);
+  --red-dash:rgba(204,31,51,.28);
+  --blue-rail:#8fb0d8; --blue-label:#2b5c9b; --blue:#2f69b0; --blue-bg:rgba(43,92,155,.1);
+  --green:#23794e; --green-soft:#23794e; --green-border:rgba(35,121,78,.38); --green-dot:#2f9a63;
+  --green-bg:rgba(35,121,78,.11);
+  --amber:#9a5b05; --amber-bg:rgba(201,133,0,.13); --amber-line:rgba(154,91,5,.35);
+  --t0:#211b16; --t1:#4a4138; --t2:#554b41; --t3:#625649; --t4:#776b5d; --t5:#857969; --t6:#938775;
+  --muted:#776b5d; --body:#4f463d; --dim:#938775; --dead:#d8cba6;
+  --shadow:0 1px 3px rgba(80,60,20,.12);
+  --scrim:rgba(243,236,214,.95);
+  --s1:#2a6fc0; --s2:#c24e1d; --s3:#12805a; --s4:#946200; --s5:#b83f6c; --s6:#2b7a2b;
+}
+
+/* The light/dark switch. Any element with data-theme-toggle becomes one;
+   theme.js keeps its words in step with the theme on screen. */
+.themebtn{display:inline-flex;align-items:center;gap:7px;cursor:pointer;
+  border:0;border-radius:999px;padding:7px 14px;background:var(--soft);color:var(--t1);
+  font:700 13px var(--f-body);white-space:nowrap;touch-action:manipulation}
+.themebtn:hover{color:var(--t0)}
+.themebtn:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+.themebtn .ic{width:14px;height:14px;border-radius:50%;background:var(--t1);
+  box-shadow:inset -5px -2px 0 0 var(--soft)}

@@ -3,12 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no,maximum-scale=1">
-<meta name="theme-color" content="#05060a">
+<meta name="theme-color" content="#1a1a1e">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Practice · REBUILT Scouting</title>
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <link rel="icon" href="/icons/icon-192.png">
+<script src="/js/theme.js"></script>
 <link rel="stylesheet" href="/css/hud.css">
 <style>
   /* The real HUD above; only the teaching furniture is new. It sits OVER the
@@ -19,8 +20,8 @@
   .tut { min-height: 100%; display: flex; flex-direction: column; }
   .tbar { display: flex; align-items: center; gap: 10px; padding: 8px 14px;
     background: var(--chrome); border-bottom: 1px solid var(--line-panel); flex: none; }
-  .tbar .step { font: 800 10px Barlow, sans-serif; letter-spacing: .18em; color: var(--red-alert); }
-  .tbar .ttl { font: 800 12px Barlow, sans-serif; letter-spacing: .1em; color: var(--t0); }
+  .tbar .step { font:700 12.5px var(--f-body); color: var(--red-alert); }
+  .tbar .ttl { font:700 13px var(--f-body); color: var(--t0); }
   .tbar .sp { flex: 1; }
   .pips { display: flex; gap: 5px; }
   .pips i { width: 16px; height: 4px; border-radius: 2px; background: var(--track); display: block; }
@@ -28,8 +29,8 @@
   .pips i.did { background: var(--red-dim); }
   .tbtn { padding: 8px 14px; border-radius: 8px; border: 1px solid var(--btn);
     background: transparent; color: var(--t1); cursor: pointer;
-    font: 800 10.5px Barlow, sans-serif; letter-spacing: .12em; }
-  .tbtn.go { background: var(--red); border-color: var(--red); color: #fff; }
+    font:700 13px var(--f-body); }
+  .tbtn.go { background: var(--red); border-color: var(--red); color: var(--on-red); }
   /* Quieter than BACK and NEXT: always available, never the thing being
      suggested. Somebody who has done this before should not have to hunt. */
   #tSkip { border-color: transparent; color: var(--t5); padding-left: 8px; padding-right: 8px; }
@@ -37,17 +38,17 @@
   .tbtn:disabled { opacity: .4; cursor: default; }
   .stage { flex: 1; min-height: 0; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
   .say { max-width: 760px; }
-  .say h2 { font: 700 26px/1.15 'Barlow Condensed', sans-serif; margin: 0 0 6px; color: var(--t0);
+  .say h2 { font:700 26px/1.15 var(--f-num); margin: 0 0 6px; color: var(--t0);
     letter-spacing: -.01em; }
-  .say p { font: 500 13.5px/1.6 Barlow, sans-serif; color: var(--body); margin: 0 0 9px; }
+  .say p { font:500 14.5px/1.6 var(--f-body); color: var(--body); margin: 0 0 9px; }
   .say b { color: var(--t0); }
   .say ul { margin: 0 0 9px; padding-left: 18px; }
-  .say li { font: 500 13px/1.6 Barlow, sans-serif; color: var(--body); margin-bottom: 4px; }
+  .say li { font:500 14px/1.6 var(--f-body); color: var(--body); margin-bottom: 4px; }
   .coach { border: 1px solid var(--red-ring); border-radius: 10px; padding: 10px 13px;
     background: rgba(225, 29, 43, .06); max-width: 760px; }
-  .coach .h { font: 800 9.5px Barlow, sans-serif; letter-spacing: .18em; color: var(--red-alert);
+  .coach .h { font:700 12px var(--f-body); color: var(--red-alert);
     margin-bottom: 4px; }
-  .coach .b { font: 500 12.5px/1.55 Barlow, sans-serif; color: var(--body); }
+  .coach .b { font:500 13.5px/1.55 var(--f-body); color: var(--body); }
   /* A real HUD screen, shown inside the tutorial rather than full-bleed. */
   .demo { border: 1px solid var(--line-panel); border-radius: 12px; overflow: hidden;
     background: var(--panel); flex: none; }
@@ -60,25 +61,25 @@
   .robot .lamp { width: 15px; height: 15px; border-radius: 50%; background: var(--track);
     flex: none; box-shadow: none; transition: background .08s linear; }
   .robot.shooting .lamp { background: var(--red); box-shadow: 0 0 14px rgba(225, 29, 43, .85); }
-  .robot .w { font: 800 13px Barlow, sans-serif; letter-spacing: .14em; color: var(--muted); }
-  .robot.shooting .w { color: #fff; }
-  .robot .hint { font: 500 11.5px Barlow, sans-serif; color: var(--t5); margin-left: auto;
+  .robot .w { font:700 14px var(--f-body); color: var(--muted); }
+  .robot.shooting .w { color: var(--t0); }
+  .robot .hint { font:500 14px var(--f-body); color: var(--t5); margin-left: auto;
     text-align: right; }
   /* The scorecard. */
   .cards { display: flex; gap: 10px; flex-wrap: wrap; }
   .card { border: 1px solid var(--line-panel); border-radius: 10px; padding: 11px 14px;
     background: var(--raised); min-width: 150px; }
-  .card .n { font: 700 34px/1 'Barlow Condensed', sans-serif; color: var(--t0); }
+  .card .n { font:700 34px/1 var(--f-num); color: var(--t0); }
   .card .n.good { color: var(--green-soft); }
   .card .n.warn { color: var(--amber); }
   .card .n.bad { color: var(--red-alert); }
-  .card .l { font: 800 9px Barlow, sans-serif; letter-spacing: .16em; color: var(--muted);
+  .card .l { font:700 11.5px var(--f-body); color: var(--muted);
     margin-top: 3px; }
-  .card .s { font: 500 11px Barlow, sans-serif; color: var(--t5); margin-top: 2px; }
+  .card .s { font:500 13.5px var(--f-body); color: var(--t5); margin-top: 2px; }
   /* Their holds against the truth, on one timeline. */
   .tape { display: flex; flex-direction: column; gap: 5px; max-width: 900px; }
   .tape .row { display: flex; align-items: center; gap: 9px; }
-  .tape .lab { font: 800 9px Barlow, sans-serif; letter-spacing: .14em; color: var(--muted);
+  .tape .lab { font:700 11.5px var(--f-body); color: var(--muted);
     width: 92px; text-align: right; flex: none; }
   .tape .bar { position: relative; height: 15px; flex: 1; border-radius: 4px;
     background: var(--logwell); overflow: hidden; }
@@ -86,7 +87,7 @@
   .tape .bar i.truth { background: var(--green); }
   .tape .bar i.mine { background: var(--red); }
   .tape .bar i.miss { background: var(--red-dim); }
-  .tape .key { font: 500 11px Barlow, sans-serif; color: var(--t5); padding-left: 101px; }
+  .tape .key { font:500 13.5px var(--f-body); color: var(--t5); padding-left: 101px; }
   /* While the practice match runs, the pad has to be under a thumb without
      scrolling - a phone is 390px tall in landscape and the explanation above it
      would push the pad off the bottom on the one screen where that matters. The
@@ -95,9 +96,25 @@
   .stage.play .say { display: none; }
   .stage.play .demo { flex: 1; min-height: 0; }
   .stage.play .demo .screen { height: 100%; }
+  /* The phase strip and the two counters. The real match screen moved these
+     to after the buzzer; the practice keeps them, because watching your own
+     runs pile up is the lesson. */
+  .clockline { display: flex; align-items: center; gap: 12px; }
+  .strip { width: 100%; height: 10px; display: flex; gap: 4px; flex: none; }
+  .strip span { background: var(--soft2); border-radius: 5px; position: relative; overflow: hidden; }
+  .strip span.live { background: var(--btn); }
+  .strip span.now { background: var(--red); }
+  .strip span.now .fill { position: absolute; top: 0; bottom: 0; left: 0; background: var(--on-red);
+    opacity: .5; border-radius: 5px; }
+  .stats { display: flex; align-items: center; gap: 26px; }
+  .stats .s { text-align: center; }
+  .stats .n { font: 700 32px/1 var(--f-num); }
+  .stats .l { font: 600 13px var(--f-body); color: var(--muted); white-space: nowrap; }
+  .stats .div { width: 1px; height: 30px; background: var(--line); }
+  .holdpad .meter, .holdpad .meterline { display: none; }
   .rot { display: none; }
   @media (orientation: portrait) {
-    .rot { display: block; font: 700 11.5px Barlow, sans-serif; color: var(--amber);
+    .rot { display: block; font:700 14px var(--f-body); color: var(--amber);
       padding: 9px 14px; border-bottom: 1px solid var(--line-panel); background: var(--chrome); }
   }
 </style>
@@ -106,13 +123,13 @@
 
 <div class="tut">
   <div class="tbar">
-    <span class="step" id="tStep">STEP 1 OF 6</span>
-    <span class="ttl" id="tTitle">WHAT YOU ARE ACTUALLY DOING</span>
+    <span class="step" id="tStep">Step 1 of 6</span>
+    <span class="ttl" id="tTitle">What you are actually doing</span>
     <span class="sp"></span>
     <span class="pips" id="tPips"></span>
-    <button class="tbtn" id="tSkip" title="Leave the tutorial and open the real scouting screen">SKIP</button>
-    <button class="tbtn" id="tBack">BACK</button>
-    <button class="tbtn go" id="tNext">NEXT</button>
+    <button class="tbtn" id="tSkip" title="Leave the tutorial and open the real scouting screen">Skip</button>
+    <button class="tbtn" id="tBack">Back</button>
+    <button class="tbtn go" id="tNext">Next</button>
   </div>
   <div class="rot">Turn the phone sideways — scouting is landscape, and so is this.</div>
   <div class="stage" id="tStage"></div>
@@ -130,19 +147,19 @@ const buzz = (ms) => { try { navigator.vibrate && navigator.vibrate(ms); } catch
 // never drift into teaching a match that does not exist. Falls back to the
 // 2026 map if the fetch fails, because this page has to work with no hub.
 let PHASES = [
-  { id: 'auto', label: 'AUTO', start: 0, end: 20, short: 'AUTO' },
-  { id: 'transition', label: 'TRANSITION', start: 20, end: 30, short: 'TRANS' },
-  { id: 'shift1', label: 'SHIFT 1', start: 30, end: 55, short: 'S1' },
-  { id: 'shift2', label: 'SHIFT 2', start: 55, end: 80, short: 'S2' },
-  { id: 'shift3', label: 'SHIFT 3', start: 80, end: 105, short: 'S3' },
-  { id: 'shift4', label: 'SHIFT 4', start: 105, end: 130, short: 'S4' },
-  { id: 'endgame', label: 'END GAME', start: 130, end: 160, short: 'END' },
+  { id: 'auto', label: 'Auto', start: 0, end: 20, short: 'Auto' },
+  { id: 'transition', label: 'Transition', start: 20, end: 30, short: 'Trans' },
+  { id: 'shift1', label: 'Shift 1', start: 30, end: 55, short: 'S1' },
+  { id: 'shift2', label: 'Shift 2', start: 55, end: 80, short: 'S2' },
+  { id: 'shift3', label: 'Shift 3', start: 80, end: 105, short: 'S3' },
+  { id: 'shift4', label: 'Shift 4', start: 105, end: 130, short: 'S4' },
+  { id: 'endgame', label: 'End game', start: 130, end: 160, short: 'End' },
 ];
 let MATCH_SECONDS = 160;
 let RATES = [
-  { id: 'dumping', label: 'DUMPING', value: 11 },
-  { id: 'steady', label: 'STEADY', value: 3.5 },
-  { id: 'trickle', label: 'A TRICKLE', value: 1.2 },
+  { id: 'dumping', label: 'Lots', value: 11 },
+  { id: 'steady', label: 'Steady', value: 3.5 },
+  { id: 'trickle', label: 'A few', value: 1.2 },
 ];
 fetch('/rules2026.json').then((r) => r.json()).then((r) => {
   if (Array.isArray(r.phases) && r.phases.length) PHASES = r.phases;
@@ -150,7 +167,7 @@ fetch('/rules2026.json').then((r) => r.json()).then((r) => {
   if (Array.isArray(r.intensityBuckets)) {
     const order = { dumping: 0, steady: 1, trickle: 2 };
     RATES = r.intensityBuckets
-      .map((b) => ({ id: b.id, label: b.id === 'trickle' ? 'A TRICKLE' : b.id.toUpperCase(),
+      .map((b) => ({ id: b.id, label: ({ dumping: 'Lots', steady: 'Steady', trickle: 'A few' })[b.id] || b.id,
                      value: b.prior }))
       .sort((a, b) => (order[a.id] ?? 9) - (order[b.id] ?? 9));
   }
@@ -190,27 +207,27 @@ function padBlock(onRun, opts) {
   const wrap = el(`
     <div class="body three" style="grid-template-columns:var(--col-l) 1fr var(--col-r)">
       <div class="col">
-        <div class="caption">LEFT THUMB · RATE</div>
+        <div class="caption">Left thumb · how fast</div>
         <div class="ladder" data-ladder></div>
       </div>
       <div class="centre">
         <div class="clockline"><div class="clockbig tnum" data-clock>0:00</div>
-          <div class="shotstate dead" data-state>NOT STARTED</div></div>
+          <div class="shotstate dead" data-state>Not started</div></div>
         <div class="strip" data-strip></div>
         <div class="stats">
-          <div class="s"><div class="n tnum" data-runs>0</div><div class="l">RUNS LOGGED</div></div>
+          <div class="s"><div class="n tnum" data-runs>0</div><div class="l">Runs logged</div></div>
           <div class="div"></div>
-          <div class="s"><div class="n tnum" data-secs>0</div><div class="l">SECONDS HELD</div></div>
+          <div class="s"><div class="n tnum" data-secs>0</div><div class="l">Seconds held</div></div>
         </div>
       </div>
       <div class="col">
-        <div class="caption r">RIGHT THUMB · SHOOTING</div>
+        <div class="caption r">Right thumb · hold</div>
         <div class="holdpad" data-pad>
           <div class="meter" data-meter></div><div class="meterline" data-line></div>
           <div class="txt">
-            <div class="lb" data-lb>HOLD WHILE SHOOTING</div>
+            <div class="lb" data-lb>Hold while they shoot</div>
             <div class="big" data-big>3.5</div>
-            <div class="un">BALLS PER SECOND</div>
+            <div class="un">balls per second</div>
           </div>
         </div>
       </div>
@@ -222,7 +239,7 @@ function padBlock(onRun, opts) {
     pad.classList.toggle('on', !!on);
     $('[data-meter]', wrap).style.height = on ? Math.min(100, frac * 100) + '%' : '0';
     $('[data-line]', wrap).style.bottom = on ? Math.min(100, frac * 100) + '%' : '0';
-    $('[data-lb]', wrap).textContent = on ? 'HOLDING' : 'HOLD WHILE SHOOTING';
+    $('[data-lb]', wrap).textContent = on ? 'Holding' : 'Hold while they shoot';
     $('[data-big]', wrap).textContent = rateOf(rate);
   };
   const drawLadder = () => {
@@ -297,8 +314,8 @@ const mmss = (t) => Math.floor(t / 60) + ':' + String(Math.floor(t % 60)).padSta
 const STEPS = [
 {
   id: 'why',
-  title: 'WHAT YOU ARE ACTUALLY DOING',
-  next: 'SHOW ME THE SEAT',
+  title: 'What you are actually doing',
+  next: 'Show me the seat',
   build(stage) {
     stage.appendChild(el(`<div class="say">
       <h2>One robot. One thumb. That is the whole job.</h2>
@@ -316,29 +333,29 @@ const STEPS = [
         <li><b>Everything saves on the phone first.</b> Out of wifi range is normal and costs
             nothing.</li>
       </ul></div>`));
-    stage.appendChild(el(`<div class="coach"><div class="h">WHY IT MATTERS</div>
+    stage.appendChild(el(`<div class="coach"><div class="h">Why it matters</div>
       <div class="b">Six people doing this properly is the difference between a picklist built on
       measurements and one built on impressions. It is about four minutes of practice.</div></div>`));
   },
 },
 {
   id: 'seat',
-  title: 'TAKE A SEAT',
-  next: 'NOW THE TWO THUMBS',
+  title: 'Take a seat',
+  next: 'Now the two thumbs',
   build(stage) {
     stage.appendChild(el(`<div class="say"><h2>Once, at the start of the day.</h2>
       <p>Your initials, then the station on the sign above your chair. Try it — this is the real
          screen.</p></div>`));
     const demo = el(`<div class="demo"><div class="screen">
-      <div class="hdr"><span class="k">TAKE A SEAT</span><span class="m">PRACTICE</span>
-        <span class="sp"></span><span class="m" data-who>NOBODY SEATED</span></div>
+      <div class="hdr"><span class="k">Take a seat</span><span class="m">Practice</span>
+        <span class="sp"></span><span class="m" data-who>Nobody seated</span></div>
       <div class="body" style="display:flex;flex-direction:column;gap:12px;padding:14px">
-        <div class="caption">YOUR INITIALS</div>
+        <div class="caption">Your initials</div>
         <input data-ini maxlength="4" placeholder="AK" autocomplete="off" spellcheck="false"
           style="width:150px;background:var(--raised);border:1px solid var(--btn);border-radius:10px;
-          padding:11px 13px;color:var(--t0);font:800 20px Barlow,sans-serif;letter-spacing:.14em;
+          padding:11px 13px;color:var(--t0);font:800 20px var(--f-body);
           text-transform:uppercase">
-        <div class="caption">THE SIGN ABOVE YOUR CHAIR</div>
+        <div class="caption">The sign above your chair</div>
         <div data-stations style="display:grid;grid-template-columns:repeat(3,120px);gap:8px"></div>
       </div></div></div>`);
     const stations = $('[data-stations]', demo);
@@ -346,8 +363,8 @@ const STEPS = [
     const ini = $('[data-ini]', demo);
     const paint = () => {
       who.textContent = seat.station
-        ? `${seat.scout || '??'} · ${seat.alliance.toUpperCase()} ${seat.station}`
-        : 'NOBODY SEATED';
+        ? `${seat.scout || '??'} · ${seat.alliance.charAt(0).toUpperCase() + seat.alliance.slice(1)} ${seat.station}`
+        : 'Nobody seated';
       for (const b of stations.children) {
         b.classList.toggle('on', b.dataset.a === seat.alliance && +b.dataset.s === seat.station);
       }
@@ -356,7 +373,7 @@ const STEPS = [
       for (const s of [1, 2, 3]) {
         const b = el(`<div class="ubtn" data-a="${a}" data-s="${s}"
           style="height:54px;border-color:${a === 'red' ? 'var(--red-dim)' : 'var(--blue-rail)'}">
-          <span class="a">${a.toUpperCase()} ${s}</span><span class="b">OPEN</span></div>`);
+          <span class="a">${a.charAt(0).toUpperCase() + a.slice(1)} ${s}</span><span class="b">open</span></div>`);
         b.onclick = () => { seat.alliance = a; seat.station = s; buzz(10); paint(); tick(); };
         stations.appendChild(b);
       }
@@ -365,7 +382,7 @@ const STEPS = [
     ini.value = seat.scout;
     paint();
     stage.appendChild(demo);
-    stage.appendChild(el(`<div class="coach"><div class="h">THE ONE THING TO GET RIGHT</div>
+    stage.appendChild(el(`<div class="coach"><div class="h">The one thing to get right</div>
       <div class="b">Take the station on the sign — not your alliance's colour as you see it from
       your seat. There is no field map here on purpose: nothing to mirror, nothing to get
       backwards. A station already taken shows the other scout's initials; tapping it anyway
@@ -377,21 +394,21 @@ const STEPS = [
 },
 {
   id: 'thumbs',
-  title: 'THE TWO THUMBS',
-  next: 'I HAVE THE IDEA',
+  title: 'The two thumbs',
+  next: 'I have the idea',
   build(stage) {
     stage.appendChild(el(`<div class="say"><h2>Left picks the rate. Right holds.</h2>
       <p>Press and hold the red pad. Let go. Do it a few times, and change the rate on the left
          while you are at it — there is no clock running, so nothing is being recorded.</p></div>`));
     const demo = el(`<div class="demo"><div class="screen">
-      <div class="hdr tinted"><span class="k">PRACTICE</span>
-        <span class="m">NO CLOCK — NOTHING IS BEING RECORDED</span></div></div></div>`);
+      <div class="hdr tinted"><span class="k">Practice</span>
+        <span class="m">No clock — nothing is being recorded</span></div></div></div>`);
     const pad = padBlock(null, {});
     $('.screen', demo).appendChild(pad);
     stage.appendChild(demo);
     stage.appendChild(el(`<div class="say">
-      <p><b>The rate is a guess, and a rough one is fine.</b> Three choices: a trickle, steady, or
-      dumping. You are telling the laptop roughly how fast fuel was going in, so that a robot that
+      <p><b>The rate is a guess, and a rough one is fine.</b> Three choices: a few, steady, or
+      lots. You are telling the laptop roughly how fast fuel was going in, so that a robot that
       dumped for four seconds is not read the same as one that trickled for four.</p>
       <p><b>You do not have to be right.</b> The laptop fits everyone's guesses against the
       official totals over the day and corrects for how hot or cold the crew runs. What it cannot
@@ -400,8 +417,8 @@ const STEPS = [
 },
 {
   id: 'match',
-  title: 'A PRACTICE MATCH',
-  next: 'SEE HOW I DID',
+  title: 'A practice match',
+  next: 'See how I did',
   skipTo: 'rest',
   build(stage) {
     held = [];
@@ -413,25 +430,25 @@ const STEPS = [
          left to match what it says. It runs at double speed, so a full match takes eighty
          seconds.</p></div>`));
     const robot = el(`<div class="robot"><span class="lamp"></span>
-      <span class="w" data-w>NOT SHOOTING</span>
-      <span class="hint" data-h>press START when you are ready</span></div>`);
+      <span class="w" data-w>Not shooting</span>
+      <span class="hint" data-h>press Start when you are ready</span></div>`);
     stage.appendChild(robot);
     const demo = el(`<div class="demo tall"><div class="screen">
-      <div class="hdr tinted"><span class="k" data-seat>RED 2</span>
-        <span class="m">PRACTICE MATCH · 2× SPEED</span><span class="sp"></span>
-        <span class="m" data-left>0:00 LEFT</span></div></div></div>`);
+      <div class="hdr tinted"><span class="k" data-seat>Red 2</span>
+        <span class="m">Practice match · 2× speed</span><span class="sp"></span>
+        <span class="m" data-left>0:00 left</span></div></div></div>`);
     const pad = padBlock((run) => { held.push(run); lastRun = run; repaint(); }, {
       clock: () => t, running: () => running,
     });
     $('.screen', demo).appendChild(pad);
     stage.appendChild(demo);
     $('[data-seat]', demo).textContent = seat.station
-      ? `${seat.alliance.toUpperCase()} ${seat.station}` : 'RED 2';
+      ? `${seat.alliance.charAt(0).toUpperCase() + seat.alliance.slice(1)} ${seat.station}` : 'Red 2';
 
     const bar = el(`<div style="display:flex;gap:9px;align-items:center">
-      <button class="tbtn go" data-start style="padding:11px 20px">START THE MATCH</button>
-      <button class="tbtn" data-undo>UNDO LAST HOLD</button>
-      <span style="font:500 11.5px Barlow,sans-serif;color:var(--t5)" data-tip></span></div>`);
+      <button class="tbtn go" data-start style="padding:11px 20px">Start the match</button>
+      <button class="tbtn" data-undo>Undo last hold</button>
+      <span style="font:500 14px var(--f-body);color:var(--t5)" data-tip></span></div>`);
     stage.appendChild(bar);
 
     const cur = () => SCRIPT.find((s) => t >= s.from && t < s.to) || null;
@@ -439,17 +456,17 @@ const STEPS = [
       const s = cur();
       robot.classList.toggle('shooting', !!s);
       $('[data-w]', robot).textContent = s
-        ? 'SHOOTING — ' + (RATES.find((r) => r.id === s.rate) || {}).label : 'NOT SHOOTING';
+        ? 'Shooting — ' + (RATES.find((r) => r.id === s.rate) || {}).label : 'Not shooting';
       $('[data-h]', robot).textContent = s
         ? 'hold the pad, and match the rate on the left'
-        : (running ? 'let go' : 'press START when you are ready');
+        : (running ? 'let go' : 'press Start when you are ready');
       $('[data-clock]', pad).textContent = mmss(t);
-      $('[data-state]', pad).textContent = running ? (s ? 'SCORING' : 'QUIET') : 'NOT STARTED';
+      $('[data-state]', pad).textContent = running ? (s ? 'Scoring' : 'Quiet') : 'Not started';
       $('[data-state]', pad).className = 'shotstate' + (s ? '' : ' dead');
       $('[data-runs]', pad).textContent = held.length;
       $('[data-secs]', pad).textContent =
         held.reduce((a, r) => a + (r.end - r.start), 0).toFixed(0);
-      $('[data-left]', demo).textContent = mmss(Math.max(0, MATCH_SECONDS - t)) + ' LEFT';
+      $('[data-left]', demo).textContent = mmss(Math.max(0, MATCH_SECONDS - t)) + ' left';
       stripInto($('[data-strip]', pad), t);
     }
     function frame() {
@@ -461,20 +478,20 @@ const STEPS = [
     }
     function finish() {
       stage.classList.remove('play');
-      $('[data-start]', bar).textContent = 'MATCH OVER';
+      $('[data-start]', bar).textContent = 'Match over';
       $('[data-start]', bar).disabled = true;
       $('[data-tip]', bar).textContent = 'now see how you did';
       robot.classList.remove('shooting');
-      $('[data-w]', robot).textContent = 'MATCH OVER';
+      $('[data-w]', robot).textContent = 'Match over';
       $('[data-h]', robot).textContent = '';
-      $('#tNext').textContent = 'SEE HOW I DID';
+      $('#tNext').textContent = 'See how I did';
       buzz([20, 60, 20]);
     }
     $('[data-start]', bar).onclick = () => {
       if (running || done) return;
       stage.classList.add('play');
       running = true; t0 = performance.now(); held = [];
-      $('[data-start]', bar).textContent = 'RUNNING';
+      $('[data-start]', bar).textContent = 'Running';
       $('[data-start]', bar).disabled = true;
       frame();
     };
@@ -483,8 +500,8 @@ const STEPS = [
     // live and simply means something else until a match has been run: there is
     // no scorecard to show without one, so it goes past it rather than to a
     // wall of zeros.
-    $('#tNext').textContent = 'SKIP THE PRACTICE';
-    $('[data-tip]', bar).textContent = 'or press SKIP THE PRACTICE to move on';
+    $('#tNext').textContent = 'Skip the practice';
+    $('[data-tip]', bar).textContent = 'or press Skip the practice to move on';
     repaint();
     return () => {
       running = false;
@@ -495,8 +512,8 @@ const STEPS = [
 },
 {
   id: 'score',
-  title: 'HOW YOU DID',
-  next: 'AND AFTER THE BUZZER',
+  title: 'How you did',
+  next: 'And after the buzzer',
   build(stage) {
     if (!held.length) {
       stage.appendChild(el(`<div class="say">
@@ -504,7 +521,7 @@ const STEPS = [
         <p>You have not run the practice match, so there is nothing to compare. It is eighty
            seconds and it is the only part of this that needs a hand rather than a memory.</p>
       </div>`));
-      const b = el(`<div><button class="tbtn go" style="padding:11px 20px">RUN THE PRACTICE MATCH</button></div>`);
+      const b = el(`<div><button class="tbtn go" style="padding:11px 20px">Run the practice match</button></div>`);
       b.firstChild.onclick = () => go(index('match'));
       stage.appendChild(b);
       return;
@@ -534,18 +551,18 @@ const STEPS = [
       : 'Worth another go.'}</h2></div>`));
     stage.appendChild(el(`<div class="cards">
       <div class="card"><div class="n ${cls(cov, 80, 60)}">${cov}%</div>
-        <div class="l">OF THE SHOOTING COVERED</div>
+        <div class="l">Of the shooting covered</div>
         <div class="s">${covered.toFixed(0)}s of ${SHOOTING_TOTAL}s</div></div>
       <div class="card"><div class="n ${wrong < 8 ? 'good' : wrong < 20 ? 'warn' : 'bad'}">${
         wrong.toFixed(0)}s</div>
-        <div class="l">HELD WHEN IT WAS NOT</div>
+        <div class="l">Held when it was not</div>
         <div class="s">this is the half that inflates a robot</div></div>
       <div class="card"><div class="n ${cls(rateOk, 70, 45)}">${rateOk}%</div>
-        <div class="l">RATE SET RIGHT</div>
+        <div class="l">Rate set right</div>
         <div class="s">of the time you were holding</div></div>
       <div class="card"><div class="n ${missedRuns === 0 ? 'good' : missedRuns < 3 ? 'warn' : 'bad'}">${
         SCRIPT.length - missedRuns}/${SCRIPT.length}</div>
-        <div class="l">VOLLEYS SEEN</div>
+        <div class="l">Volleys seen</div>
         <div class="s">${missedRuns ? missedRuns + ' missed entirely' : 'none missed'}</div></div>
     </div>`));
 
@@ -554,9 +571,9 @@ const STEPS = [
       `<i class="${k}" style="left:${(a / MATCH_SECONDS) * 100}%;width:${
         Math.max(0.4, ((b - a) / MATCH_SECONDS) * 100)}%"></i>`;
     stage.appendChild(el(`<div class="tape">
-      <div class="row"><span class="lab">THE ROBOT</span><span class="bar">${
+      <div class="row"><span class="lab">The robot</span><span class="bar">${
         SCRIPT.map((s) => seg(s.from, s.to, 'truth')).join('')}</span></div>
-      <div class="row"><span class="lab">YOU HELD</span><span class="bar">${
+      <div class="row"><span class="lab">You held</span><span class="bar">${
         held.map((h) => seg(h.start, h.end, 'mine')).join('')}</span></div>
       <div class="key">Green is when the robot was scoring. Red is when you were holding. The
         closer those two lines are to identical, the better every number about that robot
@@ -564,45 +581,45 @@ const STEPS = [
 
     const notes = [];
     if (missedRuns > 0) {
-      notes.push(['YOU MISSED A WHOLE VOLLEY',
+      notes.push(['You missed a whole volley',
         'A volley nobody held for is fuel the laptop hands to the other two robots on that '
         + 'alliance. Watch the robot, not the ball — the moment it lines up on the hub, get '
         + 'your thumb down.']);
     }
     if (wrong >= 20) {
-      notes.push(['YOU HELD THROUGH THE QUIET BITS',
+      notes.push(['You held through the quiet bits',
         'Holding while the robot is reloading or driving back reads as scoring it was not doing. '
         + 'When you are not sure, let go. A gap means "nobody saw it", which the laptop can '
         + 'handle; a false hold is a wrong measurement, which it cannot.']);
     }
     if (cov >= 60 && cov < 85 && wrong < 20) {
-      notes.push(['YOUR EDGES ARE LATE',
+      notes.push(['Your edges are late',
         'You are holding for the right runs but starting late or letting go early. Half a second '
         + 'at each end of seven volleys is most of a volley. Anticipate the start; hold until it '
         + 'has clearly stopped.']);
     }
     if (rateOk < 50) {
-      notes.push(['THE RATE STAYED WHERE IT WAS',
+      notes.push(['The rate stayed where it was',
         'The left ladder is a thumb-tap and it is easy to forget in a fast match. If you only '
         + 'ever change it between volleys, that alone gets most of the value.']);
     }
     if (!notes.length) {
-      notes.push(['NOTHING TO FIX',
+      notes.push(['Nothing to fix',
         'That is the standard. Do it again in a week so it is a habit rather than a memory, and '
         + 'then do it with the real thing at a practice match.']);
     }
     for (const [h, b] of notes) {
       stage.appendChild(el(`<div class="coach"><div class="h">${h}</div><div class="b">${b}</div></div>`));
     }
-    const again = el(`<div><button class="tbtn" style="padding:10px 18px">RUN IT AGAIN</button></div>`);
+    const again = el(`<div><button class="tbtn" style="padding:10px 18px">Run it again</button></div>`);
     again.firstChild.onclick = () => go(index('match'));
     stage.appendChild(again);
   },
 },
 {
   id: 'rest',
-  title: 'AFTER THE BUZZER, AND WHEN THINGS GO WRONG',
-  next: 'DONE',
+  title: 'After the buzzer, and when things go wrong',
+  next: 'Done',
   build(stage) {
     stage.appendChild(el(`<div class="say" style="max-width:820px">
       <h2>Thirty seconds of tapping, then you are free.</h2>
@@ -613,23 +630,23 @@ const STEPS = [
       <p>Those second-page answers are the ones other teams' scouting has always had and ours did
          not. They take about ten seconds and they are why a robot's page can say something useful
          about a robot nobody counted.</p>
-      <p>Then press DONE. The phone goes back to standby and <b>arms itself for your next
+      <p>Then press Send it in. The phone goes back to standby and <b>arms itself for your next
          match</b> — you never pick a match.</p></div>`));
     stage.appendChild(el(`<div class="say" style="max-width:820px">
       <h2>Three things that look like something is broken, and are not.</h2>
       <ul>
-        <li><b>OFFLINE.</b> You walked out of range. Keep scouting — everything is saved on the
+        <li><b>Offline.</b> You walked out of range. Keep scouting — everything is saved on the
             phone and sends itself when you are back. The chip says how many are waiting.</li>
-        <li><b>SOMEBODY TOOK YOUR CHAIR.</b> If your screen says you have been bumped, another
+        <li><b>Somebody took your chair.</b> If your screen says you have been bumped, another
             phone claimed your station. Go and find the scout lead; do not just take it back.</li>
-        <li><b>HAND OVER.</b> Leaving mid-day? Use HAND OVER so the next person picks up your
+        <li><b>Hand over.</b> Leaving mid-day? Use HAND OVER so the next person picks up your
             station cleanly, rather than closing the tab.</li>
       </ul>
       <p style="margin-top:14px"><b>One last thing, before your first match:</b> add the page to
          your home screen when the QR code tells you to. On an iPhone the Safari tab and the
          home-screen app are separate — anything you log in the tab before adding it never reaches
          the laptop.</p></div>`));
-    stage.appendChild(el(`<div class="coach"><div class="h">THAT IS THE WHOLE JOB</div>
+    stage.appendChild(el(`<div class="coach"><div class="h">That is the whole job</div>
       <div class="b">Take your seat, wait, hold while your robot scores, tap through the
       questions. Come back and run the practice match again before your next event — it is eighty
       seconds and it is the only part that needs a hand rather than a memory.</div></div>`));
@@ -648,12 +665,12 @@ function go(n) {
   const stage = $('#tStage');
   stage.innerHTML = '';
   stage.scrollTop = 0;
-  $('#tStep').textContent = `STEP ${step + 1} OF ${STEPS.length}`;
+  $('#tStep').textContent = `Step ${step + 1} of ${STEPS.length}`;
   $('#tTitle').textContent = s.title;
   $('#tPips').innerHTML = STEPS.map((_, i) =>
     `<i class="${i === step ? 'on' : i < step ? 'did' : ''}"></i>`).join('');
   $('#tBack').disabled = step === 0;
-  $('#tNext').textContent = step === STEPS.length - 1 ? 'START OVER' : (s.next || 'NEXT');
+  $('#tNext').textContent = step === STEPS.length - 1 ? 'Start over' : (s.next || 'Next');
   teardown = s.build(stage) || null;
   try { localStorage.setItem('tutorialStep', String(step)); } catch (e) {}
 }

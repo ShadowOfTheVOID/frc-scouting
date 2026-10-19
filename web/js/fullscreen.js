@@ -70,11 +70,11 @@ export function install({ triggers = [], orientation, hintEl } = {}) {
 
   if (hintEl) {
     if (canFullscreen()) {
-      hintEl.textContent = 'TAP FOR FULL SCREEN';
+      hintEl.textContent = 'Tap for full screen';
       hintEl.addEventListener('click', go);
     } else if (isiOS) {
       // iPhone Safari: no Fullscreen API, so tell them the one thing that works.
-      hintEl.textContent = 'SHARE → ADD TO HOME SCREEN';
+      hintEl.textContent = 'Share → Add to Home Screen';
     } else {
       hintEl.remove();
     }
