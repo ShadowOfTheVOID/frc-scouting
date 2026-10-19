@@ -104,7 +104,7 @@ AI_ASK_TOKENS = 3000
 # would move a single global counter every ten seconds and there would be no
 # 304s left to give.
 STATE_SCOPES = ("events", "teams", "matches", "flags", "pit_entries",
-                "kv:nexusLive", "kv:pits", "kv:pitMap", "kv:inspection",
+                "kv:nexusLive", "kv:pits", "kv:pitMap", "kv:inspection", "kv:pitQuestions",
                 "kv:alliances", "kv:seats", "kv:matchClocks", "kv:clockFixes",
                 "kv:rankings", "kv:epa", "kv:earlyScores")
 ANALYTICS_SCOPES = ("matches", "teams", "scout_entries", "solved",
@@ -1994,6 +1994,65 @@ def _ai_provider(h, body):
     return h.ai().provider
 
 
+#: The kinds of question a team can add to pit scouting. A choice is a row of
+#: chips like the built-in questions; yes/no is a choice with its two answers
+#: fixed, so a spreadsheet never has to reconcile "Yes", "y" and "true".
+PIT_QUESTION_TYPES = ("choice", "yesno", "number", "text")
+#: Limits, so a pit form stays something a person can fill in walking past.
+PIT_QUESTIONS_MAX, PIT_LABEL_MAX, PIT_HINT_MAX = 30, 120, 160
+PIT_OPTIONS_MAX, PIT_OPTION_MAX = 8, 32
+
+
+def _pit_questions(raw, existing):
+    """Clean a list of custom pit questions sent by the dashboard.
+
+    Returns (questions, error). Each question keeps its id for as long as it
+    exists - the answers already given are filed under it, so renaming a
+    question must not orphan them. A new question gets a fresh id with a random
+    tail rather than one derived from its position or label alone: deleting a
+    question and adding a different one with the same words must never pick up
+    the old one's answers.
+    """
+    if not isinstance(raw, list):
+        return None, "questions must be a list"
+    if len(raw) > PIT_QUESTIONS_MAX:
+        return None, "at most %d custom questions" % PIT_QUESTIONS_MAX
+    known = {q.get("id") for q in (existing or []) if isinstance(q, dict)}
+    used, out = set(), []
+    for q in raw:
+        if not isinstance(q, dict):
+            continue
+        label = " ".join(str(q.get("label") or "").split())[:PIT_LABEL_MAX]
+        if not label:
+            continue
+        kind = q.get("type") if q.get("type") in PIT_QUESTION_TYPES else "text"
+        clean = {"label": label, "type": kind}
+        if kind == "choice":
+            opts = []
+            for o in (q.get("options") if isinstance(q.get("options"), list) else []):
+                o = " ".join(str(o).split())[:PIT_OPTION_MAX]
+                if o and o.lower() not in (x.lower() for x in opts):
+                    opts.append(o)
+            if len(opts) < 2:
+                return None, '"%s" needs at least two answers to choose from' % label
+            if len(opts) > PIT_OPTIONS_MAX:
+                return None, '"%s" has more than %d answers' % (label, PIT_OPTIONS_MAX)
+            clean["options"] = opts
+        hint = " ".join(str(q.get("hint") or "").split())[:PIT_HINT_MAX]
+        if hint:
+            clean["hint"] = hint
+        qid = q.get("id")
+        if not (isinstance(qid, str) and qid in known and qid not in used):
+            slug = re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_")[:24] or "question"
+            qid = "q_%s_%s" % (slug, secrets.token_hex(2))
+            while qid in used or qid in known:
+                qid = "q_%s_%s" % (slug, secrets.token_hex(2))
+        used.add(qid)
+        clean["id"] = qid
+        out.append(clean)
+    return out, None
+
+
 def _mirror_url(raw):
     """What somebody typed into the mirror box, as an address that works.
 
@@ -2258,15 +2317,19 @@ def _csv_table(h, ek, table):
         return header, rows
 
     if table == "pit":
+        # The team's own questions follow the built-in ones, a column each,
+        # headed by the question as it is worded now.
+        extra = [q for q in (h.store.get("pitQuestions") or []) if isinstance(q, dict)]
         header = ["team", "scoutId", "drivetrain", "shooter", "maxClimb", "stockpile",
-                  "groundPickup", "weight", "autos", "notes", "photos"]
+                  "groundPickup", "weight", "autos", "notes", "photos"] + [q["label"] for q in extra]
         rows = []
         for e in sorted(h.store.pit_entries(ek), key=lambda x: x["team"]):
             p = e.get("payload") or {}
+            custom = p.get("custom") if isinstance(p.get("custom"), dict) else {}
             rows.append([e["team"], e.get("scoutId"), p.get("drivetrain"), p.get("shooter"),
                          p.get("maxClimb"), p.get("stockpile"), p.get("groundPickup"),
                          p.get("weight"), p.get("autos"), p.get("notes"),
-                         len(p.get("photos") or [])])
+                         len(p.get("photos") or [])] + [custom.get(q["id"]) for q in extra])
         return header, rows
 
     raise KeyError(table)
@@ -3042,6 +3105,10 @@ class Handler(BaseHTTPRequestHandler):
                 "matchClocks": h.store.get("matchClocks") or {},
                 "clockFixes": h.store.get("clockFixes") or {},
                 "pitEntries": h.store.pit_entries(ek),
+                # The team's own pit questions, beside the built-in ones. Here
+                # rather than on their own route so the pit tablet has them in
+                # the copy of this it keeps for when the wifi goes.
+                "pitQuestions": h.store.get("pitQuestions") or [],
                 "rankings": h.event_data("rankings", ek, {}),
                 "epa": h.event_data("epa", ek, {}),
                 "earlyScores": h.event_data("earlyScores", ek, {}),
@@ -3300,6 +3367,24 @@ class Handler(BaseHTTPRequestHandler):
                 time.sleep(0.6)                  # blunt the guessing rate
                 return self._json({"ok": False}, 403)
             return self._json({"ok": True, "token": h.issue_token()})
+
+        if p == "/api/pitquestions":
+            # The same gate as the picklist: open on a hub with no strategy
+            # passcode, and behind it once one is set. These are the team's
+            # questions, not the hub's settings, so they are edited from the
+            # dashboard on any laptop rather than only on the hub machine.
+            if not self._unlocked():
+                return self._json({"error": "Pit questions can only be changed with the "
+                                            "strategy passcode."}, 403)
+            qs, err = _pit_questions(body.get("questions"), h.store.get("pitQuestions") or [])
+            if err:
+                return self._json({"error": err}, 400)
+            h.store.set("pitQuestions", qs)
+            h.note("info", "pit questions saved: %d custom" % len(qs))
+            # The pit tablets refetch /api/state on this, rather than waiting
+            # out their thirty-second poll.
+            h.broadcast("pitQuestions", {"count": len(qs)})
+            return self._json({"ok": True, "questions": qs})
 
         if p == "/api/picklist":
             if not self._unlocked():

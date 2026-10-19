@@ -617,6 +617,13 @@ they have got it.
 
 ---
 
+## Your own pit questions
+
+On the dashboard, **Setup → Pit questions** lets you add questions of your own to pit
+scouting — pick one, yes or no, a number, or a short answer. They show up on every pit tablet
+within a few seconds, the answers appear on each team's page, and each question gets its own
+column in the pit spreadsheet. Renaming a question keeps the answers already given.
+
 ## The picklist
 
 Everyone on the network can **look** at the picklist. Only people with the strategy passcode can

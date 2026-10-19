@@ -1495,6 +1495,7 @@ function renderTeamDetail() {
     <div class="kv"><span>can stockpile</span><b>${esc(p.stockpile || '—')}</b></div>
     <div class="kv"><span>ground pickup</span><b>${esc(p.groundPickup || '—')}</b></div>
     <div class="kv"><span>weight</span><b>${esc(p.weight || '—')}</b></div>
+    ${pitCustomRows(p)}
     <div style="margin-top:8px" class="hint">${esc(p.autos || '')}</div>
     <div style="margin-top:6px" class="hint">${esc(p.notes || '')}</div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">
@@ -1920,6 +1921,128 @@ function renderServer() {
 // parsed and inserted the markup for all ten, and re-bound every handler on
 // them, when nine were display:none. Scatter plots with a circle per team,
 // full team tables, the log listing - all of it, for nobody.
+// ═══════════════════════════════════════════════════════════ PIT QUESTIONS
+// The team's own pit questions. Edited as a working copy and saved as a whole.
+// The tab is deliberately not in TAB_RENDER: the ten-second refresh redrawing
+// it would throw away whatever is half-typed. It is drawn when it is opened,
+// and again after each change made on it.
+const Q_TYPES = [['choice', 'Pick one'], ['yesno', 'Yes or no'], ['number', 'Number'], ['text', 'Short answer']];
+const Q_MAX = 30;
+let QDRAFT = null;          // the working copy; null means "the same as the hub"
+let qSaving = false;
+
+const savedQuestions = () => ((STATE && STATE.pitQuestions) || []);
+const qChanged = () => QDRAFT !== null && JSON.stringify(QDRAFT) !== JSON.stringify(savedQuestions());
+
+/** Custom answers on a team's page, labelled with today's wording. */
+function pitCustomRows(p) {
+  const answers = (p && p.custom && typeof p.custom === 'object') ? p.custom : {};
+  return savedQuestions().filter((q) => answers[q.id] != null && answers[q.id] !== '')
+    .map((q) => `<div class="kv"><span>${esc(q.label)}</span><b>${esc(answers[q.id])}</b></div>`).join('');
+}
+
+function renderQuestions() {
+  if (!QDRAFT) QDRAFT = JSON.parse(JSON.stringify(savedQuestions()));
+  const locked = PIN_SET && !CAN_EDIT;
+  const dis = locked ? ' disabled' : '';
+  $('#qLock').innerHTML = locked ? `<div class="callout" style="margin:0"><div class="h">Read only</div>
+    <div class="b">Changing the questions needs the strategy passcode. Unlock editing on the
+    Picklist tab, then come back.</div></div>` : '';
+  $('#qList').innerHTML = QDRAFT.length ? QDRAFT.map((q, i) => `
+    <div class="qcard" data-i="${i}">
+      <input data-k="label" value="${esc(q.label || '')}" maxlength="120"
+        placeholder="The question — e.g. What colour are their bumpers?"${dis}>
+      <select data-k="type" aria-label="Kind of answer"${dis}>${Q_TYPES.map(([v, l]) =>
+        `<option value="${v}"${(q.type || 'text') === v ? ' selected' : ''}>${l}</option>`).join('')}</select>
+      <div class="tools">
+        <button class="qbtn sm" data-act="up" aria-label="Move up"${i === 0 || locked ? ' disabled' : ''}>↑</button>
+        <button class="qbtn sm" data-act="down" aria-label="Move down"${i === QDRAFT.length - 1 || locked ? ' disabled' : ''}>↓</button>
+        <button class="qbtn sm" data-act="del"${dis}>Remove</button>
+      </div>
+      ${q.type === 'choice' ? `<div class="wide"><div class="sub">Answers to pick from, separated by commas (2 to 8)</div>
+        <input data-k="options" value="${esc((q.options || []).join(', '))}" placeholder="red, blue, both"${dis}></div>` : ''}
+      <div class="wide"><input data-k="hint" value="${esc(q.hint || '')}" maxlength="160"
+        placeholder="Optional: a help line under the question"${dis}></div>
+    </div>`).join('')
+    : '<div class="empty">No questions of your own yet. Add one and it shows up on every pit tablet.</div>';
+
+  for (const card of $$('#qList .qcard')) {
+    const i = Number(card.dataset.i);
+    const q = QDRAFT[i];
+    for (const el of card.querySelectorAll('[data-k]')) {
+      el.oninput = () => {
+        const k = el.dataset.k;
+        if (k === 'options') q.options = el.value.split(',').map((x) => x.trim()).filter(Boolean);
+        else q[k] = el.value;
+        if (k === 'type') { if (q.type === 'choice' && !q.options) q.options = []; renderQuestions(); return; }
+        paintQState(); renderQPreview();
+      };
+    }
+    for (const b of card.querySelectorAll('[data-act]')) {
+      b.onclick = () => {
+        if (b.dataset.act === 'del') QDRAFT.splice(i, 1);
+        else {
+          const j = b.dataset.act === 'up' ? i - 1 : i + 1;
+          [QDRAFT[i], QDRAFT[j]] = [QDRAFT[j], QDRAFT[i]];
+        }
+        renderQuestions();
+      };
+    }
+  }
+  $('#qAdd').disabled = locked || QDRAFT.length >= Q_MAX;
+  paintQState();
+  renderQPreview();
+}
+
+function paintQState() {
+  const locked = PIN_SET && !CAN_EDIT;
+  const changed = qChanged();
+  $('#qSave').disabled = locked || qSaving || !changed;
+  $('#qUndo').disabled = !changed || qSaving;
+  if (!qSaving) $('#qMsg').textContent = changed ? 'Unsaved changes' : '';
+}
+
+/** The questions as a pit scout will see them, from the working copy. */
+function renderQPreview() {
+  const qs = (QDRAFT || []).filter((q) => (q.label || '').trim());
+  $('#qPreview').innerHTML = qs.length ? qs.map((q) => {
+    const opts = q.type === 'yesno' ? ['yes', 'no'] : q.type === 'choice' ? (q.options || []) : null;
+    return `<div><div class="lbl">${esc(q.label)}</div>${opts
+      ? `<div class="chips">${opts.map((o) => `<span class="chip">${esc(o)}</span>`).join('')
+        || '<span class="h2">add some answers</span>'}</div>`
+      : '<div class="box"></div>'}${q.hint ? `<div class="h2">${esc(q.hint)}</div>` : ''}</div>`;
+  }).join('') : '<div class="hint">Nothing yet — only the built-in questions will show.</div>';
+}
+
+$('#qAdd').onclick = () => {
+  if (!QDRAFT) QDRAFT = JSON.parse(JSON.stringify(savedQuestions()));
+  QDRAFT.push({ label: '', type: 'choice', options: [] });
+  renderQuestions();
+  const inputs = $$('#qList .qcard input[data-k="label"]');
+  if (inputs.length) inputs[inputs.length - 1].focus();
+};
+$('#qUndo').onclick = () => { QDRAFT = null; renderQuestions(); };
+$('#qSave').onclick = async () => {
+  qSaving = true;
+  paintQState();
+  $('#qMsg').textContent = 'Saving…';
+  try {
+    // Half-filled cards (no wording yet) are left out rather than refused.
+    const send = QDRAFT.filter((q) => (q.label || '').trim());
+    const r = await net.api('/api/pitquestions', { method: 'POST', body: JSON.stringify({ questions: send }) });
+    if (STATE) STATE.pitQuestions = r.questions;
+    QDRAFT = null;
+    qSaving = false;
+    renderQuestions();
+    $('#qMsg').textContent = 'Saved. The pit tablets pick it up in a few seconds.';
+  } catch (e) {
+    qSaving = false;
+    paintQState();
+    $('#qMsg').textContent = e.locked ? 'Needs the strategy passcode — unlock editing on the Picklist tab.'
+      : e.status ? e.message : 'Could not reach the hub. Nothing was saved.';
+  }
+};
+
 const TAB_RENDER = {
   crew: () => renderCrew(),
   live: () => renderLive(),
@@ -2027,7 +2150,7 @@ async function main() {
   ourTeam = Number((CONFIG && CONFIG.ourTeam) || 0) || null;
 
   const TABS = ['crew', 'live', 'teams', 'graphs', 'picklist', 'health', 'seats', 'server',
-                'match', 'team'];
+                'match', 'team', 'questions'];
   const goTab = (name) => {
     for (const x of $$('#tabs button')) x.classList.toggle('on', x.dataset.tab === name);
     for (const t of TABS) { const el = $(`#t-${t}`); if (el) el.classList.toggle('hide', t !== name); }
@@ -2037,6 +2160,7 @@ async function main() {
     // hand - no fetch, and nothing to wait for.
     if (dirtyTabs.has(name)) renderTab(name);
     if (name === 'picklist') renderEditBar();
+    if (name === 'questions') renderQuestions();
     // The SERVER tab is the only reader of /api/diag, and refresh() skips it
     // otherwise; opening the tab should not mean waiting 30s to see anything.
     if (name === 'server') refresh();

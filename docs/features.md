@@ -18,7 +18,7 @@ One Python process serves all of them. Nothing is installed on any phone.
 |---|---|---|
 | `/scout` | six scouts, on phones | The match HUD. The only screen a scout ever needs. |
 | `/tutorial` | a new scout, on their own phone | **Practice.** Six steps: what the job is, taking a seat, the hold button (in whichever layout the phone is set to — simple or two-thumb, with a switch to try the other), an eighty-second practice match to hold along with, a scorecard telling them how close they were and which habit to fix, and what the screens that look broken actually mean. It writes nothing and calls no API, so it is safe to run mid-event. |
-| `/dashboard` | scout lead, strategy | Seven tabs of everything the hub knows. |
+| `/dashboard` | scout lead, strategy | Ten tabs of everything the hub knows, including the team's own pit questions. |
 | `/pit` | pit scouts, on phones | The pit map, and a form per robot. |
 | `/` | the hub laptop only | **The admin panel.** Event key, API keys, passcodes, the off-site mirror. Opens read-only and refuses to open at all from a phone. |
 | `/join` | the hub laptop screen | **One** QR code — the address this laptop reaches the network through, which is the one the phones are on. Scouts point a camera at it. A laptop with a second adapter (Ethernet as well as wifi, or a virtual one from VirtualBox, Docker or a VPN) keeps the others behind a fold, because two equal codes under a heading that says *this* is half the crew scanning an address their phone cannot reach. |
@@ -227,11 +227,11 @@ touched. Two fake matches is enough to train someone.
 
 `/pit`, on a phone. Two views of the same thing, toggled at the top.
 
-- **MAP** — the actual venue floor plan from Nexus, drawn to scale, with walls, walkway arrows
+- **Map** — the actual venue floor plan from Nexus, drawn to scale, with walls, walkway arrows
   and area labels. Each pit is coloured by whether it has been scouted. Tap one to open the
   form. This is the point of the app: a pit scout should see where to walk next rather than
   read team numbers off a list.
-- **LIST** — the same robots, sorted unscouted-first and then by pit address, so the list reads
+- **List** — the same robots, sorted unscouted-first and then by pit address, so the list reads
   as a walking order. Works at events with no pit map.
 
 The form per robot:
@@ -247,6 +247,25 @@ The form per robot:
 | Weight | number |
 | Notes | free text |
 | Photos | any number, from the camera |
+| **Our questions** | whatever the team has added on the dashboard — see below |
+
+### Your own pit questions
+
+The dashboard's **Setup → Pit questions** tab is where a team adds questions of its own. Each
+one is a **pick one** (a row of chips, two to eight answers), **yes or no**, a **number**, or a
+**short answer**, with an optional help line. They can be reordered and removed, and a preview
+beside the list shows them as the pit scout will. Up to thirty.
+
+- They appear on every pit tablet under **Our questions**, after the built-in ones, within a
+  few seconds of saving — the hub tells the tablets, and they also arrive with the rest of the
+  event data a tablet keeps for when the wifi goes.
+- Answers are saved with the robot's pit record, keyed by the question's id rather than its
+  wording, so **renaming a question keeps the answers** already given. A deleted question
+  disappears from the tablets and the spreadsheet; its answers stay in the full JSON export.
+- They show on each team's page on the dashboard and on the mirror, and each gets a column in
+  the pit spreadsheet (`/api/export.csv?table=pit`), headed by the question as worded now.
+- Changing them uses the same gate as the picklist: open on a hub with no strategy passcode,
+  and behind it once one is set.
 
 Photos are resized on the phone before sending — a 12MP pit photo is not worth 4MB on venue
 wifi. Inspection status and pit address come from Nexus when a key is set. A progress bar
@@ -378,6 +397,10 @@ from](#where-the-numbers-come-from).
 
 A **PER-SCOUT** panel sits below it, visible only to the lead. See [Who can see
 what](#who-can-see-what).
+
+### PIT QUESTIONS
+
+The editor for the team's own pit questions — see [Your own pit questions](#your-own-pit-questions).
 
 ### SEATS
 
@@ -1023,6 +1046,7 @@ Everything is JSON over plain HTTP. Useful if you want to drive another display 
 | `/api/crew`, `/api/seats`, `/api/seatlog` | GET | Who is where. |
 | `/api/diag` | GET | Server diagnostics and event log. |
 | `/api/picklist` | GET / POST | Reading is open; writing needs the passcode. |
+| `/api/pitquestions` | POST | Save the team's own pit questions (`{"questions": [...]}`). Same gate as the picklist. They are read back in `/api/state` as `pitQuestions`. |
 | `/api/unlock` | POST | Exchange the passcode for a token. |
 | `/api/sync` | POST | What phones send. Last-write-wins on `updatedAt`. |
 | `/api/import` / `/api/export` | POST / GET | Whole-event JSON, idempotent. |

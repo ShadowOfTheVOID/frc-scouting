@@ -476,7 +476,7 @@ function openTeam(team) {
       ${cell('Climb leaves at', ob.climbStartSecs == null ? '—' : `${num(ob.climbStartSecs, 0)}<small>s</small>`)}
       ${cell('Lovat fuel', t.lovat?.matches ? num(t.lovat.avgFuel, 0) : '—')}
     </div>
-    ${pit ? pitBlock(pit) : ''}
+    ${pit ? pitBlock(pit, b.pitQuestions) : ''}
     ${shots.length ? `<div class="eyebrow" style="margin-top:16px">Pit photos</div>
       <div class="shots">${shots.map((p) =>
         `<img loading="lazy" alt="pit photo of team ${team}" src="${esc(signed(`/api/photo/${encodeURIComponent(p.photoId)}`))}">`).join('')}</div>` : ''}
@@ -487,15 +487,21 @@ function openTeam(team) {
   $('#sheetX').onclick = closeSheet;
 }
 
-function pitBlock(pit) {
+function pitBlock(pit, questions) {
   const p = pit.payload || {};
   const skip = new Set(['photos', 'photo', 'photoIds', 'images']);
   const fields = Object.entries(p)
     .filter(([k, v]) => !skip.has(k) && v !== null && v !== '' && typeof v !== 'object');
+  // The team's own questions, under the wording the hub has for them now.
+  const custom = (p.custom && typeof p.custom === 'object') ? p.custom : {};
+  for (const q of (questions || [])) {
+    const v = q && custom[q.id];
+    if (v != null && v !== '') fields.push([q.label, v, true]);
+  }
   if (!fields.length) return '';
   return `<div class="eyebrow" style="margin-top:16px">Pit scouting</div>
-    <div class="kv">${fields.map(([k, v]) =>
-      `<div><div class="k">${esc((k.charAt(0).toUpperCase() + k.slice(1)).replace(/([A-Z])/g, ' $1').trim().replace(/ (\w)/g, (_, c) => ' ' + c.toLowerCase()))}</div>
+    <div class="kv">${fields.map(([k, v, asIs]) =>
+      `<div><div class="k">${esc(asIs ? k : (k.charAt(0).toUpperCase() + k.slice(1)).replace(/([A-Z])/g, ' $1').trim().replace(/ (\w)/g, (_, c) => ' ' + c.toLowerCase()))}</div>
        <div class="v" style="font-size:15px">${esc(typeof v === 'boolean' ? (v ? 'yes' : 'no') : v)}</div></div>`).join('')}</div>`;
 }
 

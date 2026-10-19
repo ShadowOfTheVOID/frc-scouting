@@ -153,6 +153,7 @@ function select(team) {
     }
   }
   paintChips();
+  renderCustom();
   $('#pAutos').value = draft.autos || '';
   $('#pWeight').value = draft.weight || '';
   $('#pNotes').value = draft.notes || '';
@@ -167,6 +168,62 @@ function paintChips() {
   for (const holder of $$('.chips')) {
     const f = holder.dataset.field;
     for (const b of holder.children) b.classList.toggle('on', draft[f] === b.dataset.v);
+  }
+}
+
+/** The team's own questions, from the dashboard's Setup → Pit questions. */
+const customQuestions = () => ((STATE && STATE.pitQuestions) || [])
+  .filter((q) => q && typeof q.id === 'string' && q.label);
+
+/**
+ * Answers live in `draft.custom`, keyed by question id. An answer to a
+ * question that has since been deleted stays in the record untouched - it is
+ * still somebody's observation, and the export keeps the id beside it.
+ */
+function renderCustom() {
+  const qs = customQuestions();
+  $('#pCustomGrp').classList.toggle('hide', !qs.length);
+  if (!draft.custom || typeof draft.custom !== 'object' || Array.isArray(draft.custom)) draft.custom = {};
+  const answers = draft.custom;
+  const host = $('#pCustom');
+  host.innerHTML = '';
+  for (const q of qs) {
+    const wrap = document.createElement('div');
+    wrap.className = 'q';
+    wrap.innerHTML = `<div class="lbl">${esc(q.label)}</div>`;
+    if (q.type === 'choice' || q.type === 'yesno') {
+      const chips = document.createElement('div');
+      chips.className = 'chips';
+      const paint = () => { for (const c of chips.children) c.classList.toggle('on', answers[q.id] === c.dataset.v); };
+      for (const o of (q.type === 'yesno' ? ['yes', 'no'] : (q.options || []))) {
+        const b = document.createElement('button');
+        b.className = 'chip'; b.textContent = o; b.dataset.v = o;
+        // A second tap takes the answer back off, same as the built-in chips.
+        b.onclick = () => { if (answers[q.id] === o) delete answers[q.id]; else answers[q.id] = o; paint(); };
+        chips.appendChild(b);
+      }
+      paint();
+      wrap.appendChild(chips);
+    } else {
+      const inp = document.createElement('input');
+      inp.dataset.q = q.id;
+      inp.dataset.kind = q.type;
+      if (q.type === 'number') inp.inputMode = 'decimal';
+      inp.value = answers[q.id] ?? '';
+      wrap.appendChild(inp);
+    }
+    if (q.hint) wrap.insertAdjacentHTML('beforeend', `<div class="hint2">${esc(q.hint)}</div>`);
+    host.appendChild(wrap);
+  }
+}
+
+/** Typed answers into `draft.custom`; a number question keeps a number. */
+function readCustom() {
+  for (const inp of $$('#pCustom input')) {
+    const v = inp.value.trim();
+    if (!v) delete draft.custom[inp.dataset.q];
+    else if (inp.dataset.kind === 'number' && Number.isFinite(Number(v))) draft.custom[inp.dataset.q] = Number(v);
+    else draft.custom[inp.dataset.q] = v;
   }
 }
 
@@ -215,6 +272,7 @@ $('#pSave').onclick = async () => {
   draft.autos = $('#pAutos').value;
   draft.weight = $('#pWeight').value;
   draft.notes = $('#pNotes').value;
+  readCustom();
   const rec = {
     eventKey: (STATE && STATE.eventKey) || localStorage.getItem('eventKey') || '',
     team: sel,
@@ -286,7 +344,8 @@ async function main() {
   // for 'nexus' meant a pit map that turned up, or an inspection that passed,
   // reached this tablet only when the thirty-second poll came round.
   const nudge = coalesce(refresh, 750);
-  for (const t of ['nexus', 'pits', 'pitMap', 'inspection', 'scout']) net.on(t, nudge);
+  // 'pitQuestions' is the dashboard saving the team's own questions.
+  for (const t of ['nexus', 'pits', 'pitMap', 'inspection', 'scout', 'pitQuestions']) net.on(t, nudge);
   // Stops while the tablet is asleep or on another tab, and catches up once on
   // the way back.
   every(30000, refresh, { leading: false });

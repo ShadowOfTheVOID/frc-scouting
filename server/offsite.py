@@ -92,7 +92,7 @@ BUNDLE_SCOPES = ("events", "teams", "matches", "flags", "scout_entries",
                  "kv:rankings", "kv:epa", "kv:lovat", "kv:alliances", "kv:pits",
                  "kv:pitMap", "kv:inspection", "kv:matchClocks", "kv:clockFixes",
                  "kv:multipliers", "kv:multipliersFittedFrom", "kv:picklist",
-                 "kv:ourTeam", "kv:hubId")
+                 "kv:ourTeam", "kv:hubId", "kv:pitQuestions")
 
 
 def build_bundle(hub, event_key):
@@ -152,6 +152,8 @@ def build_bundle(hub, event_key):
         "analytics": summary,
         "scout": store.scout_entries(event_key),
         "pit": store.pit_entries(event_key),
+        # So the mirror can label the answers to the team's own pit questions.
+        "pitQuestions": store.get("pitQuestions") or [],
         "photoIds": store.photo_ids(event_key),
         "csv": csv,
     }

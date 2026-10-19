@@ -15,93 +15,110 @@
 <link rel="stylesheet" href="/css/hud.css">
 <style>
   /* Pit scouting is portrait, one-handed, walking. The match HUD is landscape
-     because it is a two-thumb controller; this is the opposite job. */
+     because it is a two-thumb controller; this is the opposite job. Same soft
+     style as the rest of the app: shading instead of outlines, pill controls,
+     red only for what is selected. */
   html,body{overflow:hidden}
-  .screen{--safe-l:max(env(safe-area-inset-left),12px);--safe-r:max(env(safe-area-inset-right),12px)}
-  .hdr{padding:0 14px}
+  .screen{--safe-l:max(env(safe-area-inset-left),16px);--safe-r:max(env(safe-area-inset-right),16px)}
+  .hdr{padding:env(safe-area-inset-top) var(--safe-r) 0 var(--safe-l);height:calc(56px + env(safe-area-inset-top))}
+  .hdr .k{font-size:17px}
   .pbody{flex:1;min-height:0;display:flex;flex-direction:column;
-    padding:10px var(--safe-r) max(env(safe-area-inset-bottom),12px) var(--safe-l);gap:8px}
+    padding:4px var(--safe-r) max(env(safe-area-inset-bottom),14px) var(--safe-l);gap:12px}
 
-  .toggle{display:flex;gap:2px;background:rgba(var(--ink),.05);border:1px solid rgba(var(--ink),.1);
-    border-radius:10px;padding:3px;flex:none}
-  .toggle button{flex:1;min-height:38px;border:none;background:transparent;border-radius:8px;
-    font:700 13.5px var(--f-body);color:var(--muted)}
+  .toggle{display:flex;gap:4px;background:var(--soft);border-radius:999px;padding:4px;flex:none}
+  .toggle button{flex:1;min-height:40px;border:none;background:transparent;border-radius:999px;
+    font:700 15px var(--f-body);color:var(--t2);cursor:pointer}
   .toggle button.on{background:var(--red);color:var(--on-red)}
 
-  .bar{height:6px;border-radius:3px;background:rgba(var(--ink),.08);overflow:hidden;flex:none}
-  .bar i{display:block;height:6px;background:var(--green)}
-  .barlbl{display:flex;justify-content:space-between;font:700 12.5px var(--f-body);color:var(--muted);flex:none}
+  .prog{display:flex;flex-direction:column;gap:6px;flex:none}
+  .barlbl{display:flex;justify-content:space-between;font:700 14px var(--f-body);color:var(--t1)}
+  .barlbl #progPct{color:var(--muted)}
+  .bar{height:8px;border-radius:4px;background:var(--soft2);overflow:hidden}
+  .bar i{display:block;height:8px;border-radius:4px;background:var(--green)}
 
   .mapwrap{flex:1;min-height:0;overflow:auto;-webkit-overflow-scrolling:touch;
-    border-radius:14px;background:rgba(var(--ink),.03);border:1px solid rgba(var(--ink),.08);
-    display:flex;align-items:flex-start;justify-content:center;padding:8px}
+    border-radius:24px;background:var(--soft);
+    display:flex;align-items:flex-start;justify-content:center;padding:10px}
   svg.pitmap{display:block;max-width:100%;max-height:100%;width:auto;height:auto}
   .pit{cursor:pointer}
-  .pit rect{stroke:rgba(var(--ink),.16);stroke-width:1.5;fill:rgba(var(--ink),.05)}
-  .pit.done rect{fill:rgba(52,168,106,.32);stroke:var(--green)}
-  .pit.partial rect{fill:rgba(245,165,36,.3);stroke:var(--amber)}
-  .pit.ours rect{stroke:var(--red-alert);stroke-width:3}
+  .pit rect{fill:var(--panel);stroke:none}
+  .pit.done rect{fill:var(--green-bg)}
+  .pit.partial rect{fill:var(--amber-bg)}
+  .pit.ours rect{stroke:var(--red);stroke-width:3}
+  .pit.sel rect{stroke:var(--t0);stroke-width:3}
   .pit text{font:700 13px var(--f-body);fill:var(--t0);pointer-events:none}
+  .pit.done text{fill:var(--green)}
   .pit text.addr{font:600 11px var(--f-body);fill:var(--muted)}
-  .emptypit{fill:none;stroke:rgba(var(--ink),.09);stroke-width:1;stroke-dasharray:4 4}
-  .area rect{fill:rgba(var(--ink),.035);stroke:rgba(var(--ink),.08)}
+  .emptypit{fill:none;stroke:rgba(var(--ink),.12);stroke-width:1;stroke-dasharray:4 4}
+  .area rect{fill:rgba(var(--ink),.04);stroke:none}
   .area text{font:700 11.5px var(--f-body);fill:var(--dim)}
-  .wall{fill:rgba(var(--ink),.14)}
-  .arrow{fill:rgba(var(--ink),.2)}
+  .wall{fill:rgba(var(--ink),.16)}
+  .arrow{fill:rgba(var(--ink),.22)}
 
   .qlist{flex:1;min-height:0;overflow:auto;-webkit-overflow-scrolling:touch;
-    display:flex;flex-direction:column;gap:5px}
-  .qrow{display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:12px;
-    background:rgba(var(--ink),.04);border:1px solid rgba(var(--ink),.09);
-    border-left:3px solid var(--dead);min-height:56px}
-  .qrow.done{border-left-color:var(--green)}
-  .qrow.partial{border-left-color:var(--amber)}
-  .qrow b{font:700 20px var(--f-num);min-width:52px}
-  .qrow .nm{flex:1;font:600 13.5px var(--f-body);color:var(--body);overflow:hidden;
+    display:flex;flex-direction:column;gap:2px}
+  .qrow{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:20px;min-height:58px;cursor:pointer}
+  .qrow:nth-child(odd){background:var(--soft)}
+  .qrow b{font:700 21px var(--f-num);min-width:52px}
+  .qrow .nm{flex:1;font:600 14px var(--f-body);color:var(--body);overflow:hidden;
     text-overflow:ellipsis;white-space:nowrap}
-  .qrow .st{font:700 12px var(--f-body);color:var(--dim)}
+  .qrow .st{font:700 12.5px var(--f-body);padding:4px 11px;border-radius:999px;
+    color:var(--t3);background:var(--soft2)}
+  .qrow.done .st{color:var(--green);background:var(--green-bg)}
+  .qrow.partial .st{color:var(--amber);background:var(--amber-bg)}
 
   /* the form is a sheet over the map, not a side pane */
   .sheet{position:fixed;inset:0;z-index:40;background:var(--panel);display:flex;flex-direction:column;
     transform:translateY(100%);transition:transform .18s ease-out}
   .sheet.open{transform:translateY(0)}
-  .sheethdr{flex:none;display:flex;align-items:center;gap:12px;padding:0 14px;height:56px;
-    border-bottom:1px solid rgba(var(--ink),.08);
-    padding-top:env(safe-area-inset-top)}
-  .sheethdr .no{font:700 30px/1 var(--f-num)}
+  .sheethdr{flex:none;display:flex;align-items:center;gap:12px;
+    padding:calc(10px + env(safe-area-inset-top)) var(--safe-r,16px) 10px var(--safe-l,16px)}
+  .sheethdr .no{font:700 34px/1 var(--f-num)}
   .sheethdr .mt{flex:1;min-width:0}
-  .sheethdr .mt div{font:600 13.5px var(--f-body);color:var(--muted);
+  .sheethdr .mt div{font:600 14px var(--f-body);color:var(--muted);
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .close{min-height:40px;padding:8px 14px;border-radius:10px;background:rgba(var(--ink),.06);
-    border:1px solid rgba(var(--ink),.12);font:700 13.5px var(--f-body);color:var(--t0)}
+  .sheethdr .mt div:first-child{color:var(--t0);font-weight:800}
+  .sheethdr .mt .sub2{display:flex;align-items:center;gap:8px;margin-top:3px}
+  .close{min-height:42px;padding:0 18px;border-radius:999px;background:var(--soft);border:0;
+    font:800 14.5px var(--f-body);color:var(--t0);cursor:pointer}
   .sheetbody{flex:1;min-height:0;overflow:auto;-webkit-overflow-scrolling:touch;
-    padding:12px 14px calc(84px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:16px}
-  .q .lbl{font:700 12.5px var(--f-body);color:var(--muted);margin-bottom:7px}
-  .q .hint2{font:500 14px/1.45 var(--f-body);color:var(--dim);margin-top:6px}
-  .chips{display:flex;gap:7px;flex-wrap:wrap}
-  .chip{flex:1;min-width:74px;min-height:52px;border-radius:12px;
-    background:rgba(var(--ink),.05);border:1px solid rgba(var(--ink),.11);
-    font:700 14px var(--f-body);color:var(--body);display:flex;align-items:center;
-    justify-content:center;text-transform:lowercase}
-  .chip.on{background:var(--red);border-color:var(--red);color:var(--on-red);font-weight:800}
-  .q input,.q textarea{width:100%;background:rgba(var(--ink),.05);border:1px solid rgba(var(--ink),.11);
-    border-radius:12px;padding:13px 14px;color:var(--t0);font:600 14px var(--f-body);
+    padding:6px 16px calc(96px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:22px}
+  .grp{display:flex;flex-direction:column;gap:16px}
+  .grp > h3{margin:0;font:800 16px var(--f-body);color:var(--t0)}
+  .grp > h3 small{font:600 13px var(--f-body);color:var(--muted);margin-left:6px}
+  .q .lbl{font:700 14.5px/1.35 var(--f-body);color:var(--t1);margin-bottom:8px}
+  .q .hint2{font:500 13.5px/1.45 var(--f-body);color:var(--dim);margin-top:6px}
+  .chips{display:flex;gap:8px;flex-wrap:wrap}
+  .chip{flex:1;min-width:76px;min-height:50px;border-radius:999px;border:0;padding:0 14px;
+    background:var(--soft);font:700 15px var(--f-body);color:var(--t1);
+    display:flex;align-items:center;justify-content:center;cursor:pointer}
+  .chip.on{background:var(--red);color:var(--on-red);font-weight:800}
+  .q input,.q textarea{width:100%;background:var(--soft);border:2px solid transparent;
+    border-radius:18px;padding:13px 16px;color:var(--t0);font:600 15px var(--f-body);
     user-select:text;-webkit-user-select:text}
+  .q input:focus,.q textarea:focus{outline:none;border-color:var(--red-ring)}
+  .q input::placeholder,.q textarea::placeholder{color:var(--dim)}
   .q textarea{resize:none;line-height:1.5}
-  .insp{font:700 12px var(--f-body);padding:4px 8px;border-radius:6px;flex:none}
-  .insp.complete{background:rgba(52,168,106,.2);color:var(--green-soft)}
-  .insp.hold{background:rgba(225,29,43,.18);color:var(--red-alert)}
-  .insp.other{background:rgba(var(--ink),.06);color:var(--muted)}
+  .insp{font:700 12.5px var(--f-body);padding:5px 11px;border-radius:999px;flex:none}
+  .insp.complete{background:var(--green-bg);color:var(--green)}
+  .insp.hold{background:var(--red-bg);color:var(--red-alert)}
+  .insp.other{background:var(--soft);color:var(--muted)}
   .shots{display:flex;gap:8px;flex-wrap:wrap}
-  .shots img{width:82px;height:82px;object-fit:cover;border-radius:10px;border:1px solid rgba(var(--ink),.12)}
-  .addshot{width:82px;height:82px;border-radius:10px;border:1px dashed rgba(var(--ink),.2);
-    display:flex;align-items:center;justify-content:center;font:700 13.5px var(--f-body);color:var(--muted)}
-  .savebar{position:absolute;left:0;right:0;bottom:0;padding:10px 14px calc(10px + env(safe-area-inset-bottom));
-    background:linear-gradient(180deg,transparent,var(--panel) 26%)}
-  .save{width:100%;min-height:58px;border-radius:14px;border:0;
-    background:var(--red);color:var(--on-red);
-    font:800 15px var(--f-body)}
-  .save.saved{background:rgba(52,168,106,.25);border-color:var(--green)}
+  .shots img{width:88px;height:88px;object-fit:cover;border-radius:20px}
+  .addshot{width:88px;height:88px;border-radius:20px;background:var(--soft);cursor:pointer;
+    display:flex;align-items:center;justify-content:center;font:700 14px var(--f-body);color:var(--t2)}
+  .savebar{position:absolute;left:0;right:0;bottom:0;padding:12px 16px calc(12px + env(safe-area-inset-bottom));
+    background:linear-gradient(180deg,transparent,var(--panel) 30%)}
+  .save{width:100%;min-height:58px;border-radius:999px;border:0;cursor:pointer;
+    background:var(--red);color:var(--on-red);font:800 17px var(--f-body)}
+  .save.saved{background:var(--green-bg);color:var(--green)}
+  /* A phone is narrow: the light/dark switch keeps its icon and drops its words. */
+  @media (max-width:520px){
+    .hdr{gap:8px}
+    .hdr .themebtn{font-size:0;gap:0;padding:9px}
+    .hdr .m#phdr{max-width:30vw}
+  }
+  .nocustom{font:500 13.5px/1.5 var(--f-body);color:var(--dim)}
 </style>
 </head>
 <body>
@@ -111,6 +128,7 @@
     <span class="m" id="phdr">…</span>
     <span class="sp"></span>
     <span class="m fshint" id="fsHint"></span>
+    <button type="button" class="themebtn" data-theme-toggle></button>
     <span class="dot" id="pdot"></span>
   </div>
 
@@ -119,8 +137,10 @@
       <button id="btnMap" class="on">Map</button>
       <button id="btnList">List</button>
     </div>
-    <div class="barlbl"><span id="progLbl">—</span><span id="progPct"></span></div>
-    <div class="bar"><i id="progBar" style="width:0"></i></div>
+    <div class="prog">
+      <div class="barlbl"><span id="progLbl">—</span><span id="progPct"></span></div>
+      <div class="bar"><i id="progBar" style="width:0"></i></div>
+    </div>
     <div class="mapwrap" id="mapHost"></div>
     <div class="qlist hide" id="listHost"></div>
   </div>
@@ -129,31 +149,45 @@
 <div class="sheet" id="sheet">
   <div class="sheethdr">
     <span class="no" id="pTeam">—</span>
-    <span class="mt"><div id="pName"></div><div id="pAddr"></div></span>
-    <span class="insp other" id="pInsp">—</span>
+    <span class="mt"><div id="pName"></div>
+      <div class="sub2"><span id="pAddr"></span><span class="insp other" id="pInsp">—</span></div></span>
     <button class="close" id="pClose">Done</button>
   </div>
   <div class="sheetbody">
-    <div class="q"><div class="lbl">Drivetrain</div>
-      <div class="chips" data-field="drivetrain" data-opts="swerve,tank,mecanum,other"></div></div>
-    <div class="q"><div class="lbl">How do they shoot</div>
-      <div class="chips" data-field="shooter" data-opts="drum,flywheel,dump,none"></div></div>
-    <div class="q"><div class="lbl">Highest tower level they claim</div>
-      <div class="chips" data-field="maxClimb" data-opts="L3,L2,L1,none"></div></div>
-    <div class="q"><div class="lbl">Can they hold fuel through an inactive shift</div>
-      <div class="chips" data-field="stockpile" data-opts="yes,some,no"></div>
-      <div class="hint2">The defining REBUILT skill — nothing public measures it.</div></div>
-    <div class="q"><div class="lbl">Ground pickup</div>
-      <div class="chips" data-field="groundPickup" data-opts="yes,no"></div></div>
-    <div class="q"><div class="lbl">Auto routines</div>
-      <input id="pAutos" placeholder="2 — centre 8 fuel, wall 5 + L1 climb"></div>
-    <div class="q"><div class="lbl">Weight (lb)</div>
-      <input id="pWeight" inputmode="numeric" placeholder="120"></div>
-    <div class="q"><div class="lbl">Notes</div>
-      <textarea id="pNotes" rows="3" placeholder="what the numbers won't show"></textarea></div>
-    <div class="q"><div class="lbl">Photos</div>
-      <div class="shots" id="pShots"></div>
-      <input type="file" id="pPhoto" accept="image/*" capture="environment" multiple class="hide"></div>
+    <div class="grp">
+      <h3>The robot</h3>
+      <div class="q"><div class="lbl">Drivetrain</div>
+        <div class="chips" data-field="drivetrain" data-opts="swerve,tank,mecanum,other"></div></div>
+      <div class="q"><div class="lbl">How do they shoot?</div>
+        <div class="chips" data-field="shooter" data-opts="drum,flywheel,dump,none"></div></div>
+      <div class="q"><div class="lbl">Highest tower level they claim</div>
+        <div class="chips" data-field="maxClimb" data-opts="L3,L2,L1,none"></div></div>
+      <div class="q"><div class="lbl">Can they hold fuel through an inactive shift?</div>
+        <div class="chips" data-field="stockpile" data-opts="yes,some,no"></div>
+        <div class="hint2">The defining REBUILT skill — nothing public measures it.</div></div>
+      <div class="q"><div class="lbl">Ground pickup?</div>
+        <div class="chips" data-field="groundPickup" data-opts="yes,no"></div></div>
+    </div>
+
+    <!-- The team's own questions, added on the dashboard (Setup → Pit questions).
+         pit.js fills this in; it hides itself when there are none. -->
+    <div class="grp" id="pCustomGrp">
+      <h3>Our questions</h3>
+      <div class="grp" id="pCustom" style="gap:16px"></div>
+    </div>
+
+    <div class="grp">
+      <h3>Autos and notes</h3>
+      <div class="q"><div class="lbl">Auto routines</div>
+        <input id="pAutos" placeholder="2 — centre 8 fuel, wall 5 + L1 climb"></div>
+      <div class="q"><div class="lbl">Weight (lb)</div>
+        <input id="pWeight" inputmode="numeric" placeholder="120"></div>
+      <div class="q"><div class="lbl">Notes</div>
+        <textarea id="pNotes" rows="3" placeholder="what the numbers won't show"></textarea></div>
+      <div class="q"><div class="lbl">Photos</div>
+        <div class="shots" id="pShots"></div>
+        <input type="file" id="pPhoto" accept="image/*" capture="environment" multiple class="hide"></div>
+    </div>
   </div>
   <div class="savebar"><button class="save" id="pSave">Save pit</button></div>
 </div>
