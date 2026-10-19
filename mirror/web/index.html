@@ -3,9 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#1a1a1e">
 <meta name="robots" content="noindex,nofollow">
 <title>Scouting mirror · REBUILT</title>
+<script src="/js/theme.js"></script>
 <link rel="stylesheet" href="/css/mirror.css">
 </head>
 <body>
@@ -13,37 +14,38 @@
 <!-- The passcode gate. Everything below it stays empty until /api/unlock
      hands back a token, so an unlocked page never held any data to leak. -->
 <div id="lock" class="lock hide">
-  <h1>REBUILT SCOUTING</h1>
+  <h1>REBUILT scouting</h1>
   <div class="why" id="lockWhy">Off-site copy of the scouting hub. Enter the team passcode.</div>
-  <div><label for="pin">PASSCODE</label>
+  <div><label for="pin">Passcode</label>
     <input id="pin" type="password" inputmode="text" autocomplete="current-password"
            autocapitalize="off" autocorrect="off" spellcheck="false"></div>
-  <button class="btn go" id="unlock">UNLOCK</button>
+  <button class="btn go" id="unlock">Unlock</button>
+  <button type="button" class="themebtn" data-theme-toggle style="align-self:center"></button>
   <div class="err" id="lockErr"></div>
   <div class="why" id="lockStatus"></div>
 </div>
 
 <div id="app" class="shell hide">
   <div class="apphead">
-    <div class="bar"></div>
     <div class="in">
       <div style="min-width:0">
-        <h1 id="evName">SCOUTING MIRROR</h1>
+        <h1 id="evName">Scouting mirror</h1>
         <div class="sub" id="evSub">loading…</div>
       </div>
       <span class="sp"></span>
       <div class="who"><b id="freshness">—</b><span id="freshSub"></span></div>
+      <button type="button" class="themebtn" data-theme-toggle></button>
     </div>
   </div>
 
   <div class="banner" id="banner"></div>
 
   <div class="tabs" id="tabs">
-    <button data-tab="teams" class="on">TEAMS</button>
-    <button data-tab="matches">MATCHES</button>
-    <button data-tab="picklist">PICKLIST</button>
-    <button data-tab="health">HEALTH</button>
-    <button data-tab="backup">BACKUP</button>
+    <button data-tab="teams" class="on">Teams</button>
+    <button data-tab="matches">Matches</button>
+    <button data-tab="picklist">Picklist</button>
+    <button data-tab="health">Health</button>
+    <button data-tab="backup">Backup</button>
   </div>
 
   <div class="wrap"><div id="view" class="stack"></div></div>

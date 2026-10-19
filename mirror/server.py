@@ -58,12 +58,12 @@ except ImportError:                                       # pragma: no cover
     envfile = None
 
 WEB_ROOT = os.path.join(_HERE, "web")
-#: The fonts and the font declarations are the hub's, byte for byte, so the
-#: mirror reads as the same application rather than a lookalike. Nothing else
-#: is served from there - the dashboard's CSS assumes a 1240px laptop, and this
-#: page has to work on a phone in a stands.
+#: The fonts, the colours of both themes and the light/dark switch are the
+#: hub's, byte for byte, so the mirror reads as the same application rather
+#: than a lookalike. Nothing else is served from there - the dashboard's CSS
+#: assumes a 1240px laptop, and this page has to work on a phone in a stands.
 SHARED_ROOT = os.path.abspath(os.path.join(_HERE, "..", "web"))
-SHARED_OK = ("/fonts/", "/css/fonts.css")
+SHARED_OK = ("/fonts/", "/css/fonts.css", "/css/theme.css", "/js/theme.js")
 
 PROTOCOL = 1
 PORT = 8060
