@@ -267,6 +267,14 @@ beside the list shows them as the pit scout will. Up to thirty.
 - Changing them uses the same gate as the picklist: open on a hub with no strategy passcode,
   and behind it once one is set.
 
+**Two scouts never have to walk to the same pit.** Opening a robot's form tells the hub, and
+every other pit tablet shows that robot in blue — *AK is on it* — within about a second. The
+tablet renews the claim every minute while the form is open and lets go on Done or Save, and
+the hub drops a claim nobody has renewed for three minutes (a tablet that went to sleep or out
+of range). It is a marker, not a lock: a second scout who opens the same robot is told who has
+it and can carry on. Saved pits reach the other tablets the same way, within a second, and
+every tablet also checks the hub every thirty seconds as a backstop.
+
 Photos are resized on the phone before sending — a 12MP pit photo is not worth 4MB on venue
 wifi. Inspection status and pit address come from Nexus when a key is set. A progress bar
 tracks how much of the field is done.
@@ -1046,6 +1054,7 @@ Everything is JSON over plain HTTP. Useful if you want to drive another display 
 | `/api/crew`, `/api/seats`, `/api/seatlog` | GET | Who is where. |
 | `/api/diag` | GET | Server diagnostics and event log. |
 | `/api/picklist` | GET / POST | Reading is open; writing needs the passcode. |
+| `/api/pitclaim` | POST | A pit tablet opening (`{team, deviceId, scoutId}`), renewing, or closing (`release: true`) a robot's form. Read back in `/api/state` as `pitClaims`. |
 | `/api/pitquestions` | POST | Save the team's own pit questions (`{"questions": [...]}`). Same gate as the picklist. They are read back in `/api/state` as `pitQuestions`. |
 | `/api/unlock` | POST | Exchange the passcode for a token. |
 | `/api/sync` | POST | What phones send. Last-write-wins on `updatedAt`. |

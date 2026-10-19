@@ -14,6 +14,47 @@ let STATE = null, entries = {}, sel = null, ourTeam = null, draft = null;
 
 const FIELDS = ['drivetrain', 'shooter', 'maxClimb', 'stockpile', 'groundPickup'];
 
+// ---------------------------------------------------------------- claims
+// Which robots another pit scout has open right now. Opening a robot's form
+// claims it on the hub; the claim is renewed every minute while the form is
+// open and let go on close or save, so every other tablet sees "AK is on
+// this" within a second and the two scouts do not walk to the same pit. The
+// hub drops a claim nobody has renewed for three minutes, and so does this
+// page - by the clock, since an expiry changes nothing the hub would push.
+const CLAIM_SECONDS = 180;
+const RENEW_MS = 60000;
+let renewTimer = null;
+
+/** The first other tablet with this robot open, or null. Ours never counts. */
+function otherClaim(team) {
+  const holders = ((STATE && STATE.pitClaims) || {})[String(team)] || {};
+  for (const [device, c] of Object.entries(holders)) {
+    if (device !== db.deviceId() && c && net.serverNow() - (c.at || 0) < CLAIM_SECONDS) return c;
+  }
+  return null;
+}
+const claimName = (c) => (c.scoutId && c.scoutId !== 'pit' ? c.scoutId : 'Another scout');
+
+function sendClaim(team, release = false) {
+  return net.api('/api/pitclaim', { method: 'POST', body: JSON.stringify({
+    team, release, deviceId: db.deviceId(), scoutId: localStorage.getItem('scoutName') || 'pit',
+  }) }).then((r) => {
+    if (r && r.claims && STATE) { STATE.pitClaims = r.claims; renderMap(); renderList(); }
+  }).catch(() => { /* offline: the form still works, it just is not announced */ });
+}
+
+function holdClaim(team) {
+  clearInterval(renewTimer);
+  sendClaim(team);
+  renewTimer = setInterval(() => sendClaim(team), RENEW_MS);
+}
+
+function letGo(team) {
+  clearInterval(renewTimer);
+  renewTimer = null;
+  if (team) sendClaim(team, true);
+}
+
 function pitStatus(team) {
   const e = entries[team];
   if (!e) return '';
@@ -78,7 +119,8 @@ function renderMap() {
       continue;
     }
     const team = Number(pit.team);
-    const cls = ['pit', pitStatus(team), sel === team ? 'sel' : '', team === ourTeam ? 'ours' : '']
+    const busy = pitStatus(team) !== 'done' && otherClaim(team);
+    const cls = ['pit', pitStatus(team), busy ? 'busy' : '', sel === team ? 'sel' : '', team === ourTeam ? 'ours' : '']
       .filter(Boolean).join(' ');
     parts.push(`<g class="${cls}" data-team="${team}" transform="${rot(pit, b)}">
       <rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="5"></rect>
@@ -105,9 +147,11 @@ function renderList() {
   $('#listHost').innerHTML = rows.map((t) => {
     const st = pitStatus(t);
     const name = (teams.find((x) => x.team === t) || {}).name || '';
-    return `<div class="qrow ${st}" data-team="${t}"><b>${t}</b>
+    const c = st !== 'done' && otherClaim(t);
+    return `<div class="qrow ${c ? 'busy' : st}" data-team="${t}"><b>${t}</b>
       <span class="nm">${esc(name)}${pits[t] ? ' · pit ' + esc(pits[t]) : ''}</span>
-      <span class="st">${st === 'done' ? 'Done' : st === 'partial' ? 'Started' : 'To do'}</span></div>`;
+      <span class="st">${c ? esc(claimName(c)) + ' is on it'
+        : st === 'done' ? 'Done' : st === 'partial' ? 'Started' : 'To do'}</span></div>`;
   }).join('') || '<div class="qrow"><span class="nm">No teams yet.</span></div>';
   for (const r of $$('#listHost .qrow')) r.onclick = () => select(Number(r.dataset.team));
 }
@@ -132,6 +176,16 @@ function select(team) {
   draft.photos = draft.photos || [];
 
   $('#sheet').classList.add('open');
+  // Somebody else already has this one open: say so, but do not stop anyone -
+  // their tablet may have died with the form up.
+  const c = otherClaim(team);
+  $('#pBusy').classList.toggle('hide', !c);
+  if (c) {
+    const mins = Math.max(0, Math.round((net.serverNow() - c.at) / 60));
+    $('#pBusy').innerHTML = `<b>${esc(claimName(c))} is already on this robot</b>`
+      + ` — opened ${mins ? mins + ' min ago' : 'just now'}. Check with them before you both do it.`;
+  }
+  holdClaim(team);
   $('#pTeam').textContent = team;
   $('#pName').textContent = (teams.find((x) => x.team === team) || {}).name || '';
   $('#pAddr').textContent = pits[team] ? `pit ${pits[team]}` : 'pit address unknown';
@@ -287,10 +341,13 @@ $('#pSave').onclick = async () => {
   if (navigator.vibrate) { try { navigator.vibrate(14); } catch {} }
   net.flush();
   renderMap(); renderList(); renderProgress();
-  setTimeout(() => { $('#sheet').classList.remove('open'); sel = null; }, 550);
+  const done = sel;
+  setTimeout(() => { $('#sheet').classList.remove('open'); letGo(done); sel = null; }, 550);
 };
 
-$('#pClose').onclick = () => { $('#sheet').classList.remove('open'); sel = null; renderMap(); };
+$('#pClose').onclick = () => { $('#sheet').classList.remove('open'); letGo(sel); sel = null; renderMap(); };
+// A tablet put down with a form open lets the robot go when the page is left.
+window.addEventListener('pagehide', () => { if (sel) letGo(sel); });
 
 // --------------------------------------------------------------- refresh
 let lastLocalCount = -1;
@@ -306,7 +363,10 @@ async function refresh() {
     if (changed) { STATE = r.value; db.cacheSet('state', STATE); }
   } catch { STATE = await db.cacheGet('state'); }
   const local = await db.all('pit');
-  if (!changed && local.length === lastLocalCount) return;
+  // A claim runs out by the clock, with nothing new from the hub to say so,
+  // so the map is redrawn on the poll while any claim is showing.
+  const claimsShowing = Object.keys((STATE && STATE.pitClaims) || {}).length > 0;
+  if (!changed && local.length === lastLocalCount && !claimsShowing) return;
   lastLocalCount = local.length;
   entries = {};
   for (const e of (STATE && STATE.pitEntries) || []) entries[e.team] = e;
@@ -345,7 +405,8 @@ async function main() {
   // reached this tablet only when the thirty-second poll came round.
   const nudge = coalesce(refresh, 750);
   // 'pitQuestions' is the dashboard saving the team's own questions.
-  for (const t of ['nexus', 'pits', 'pitMap', 'inspection', 'scout', 'pitQuestions']) net.on(t, nudge);
+  // 'pitClaims' is another tablet opening or closing a robot's form.
+  for (const t of ['nexus', 'pits', 'pitMap', 'inspection', 'scout', 'pitQuestions', 'pitClaims']) net.on(t, nudge);
   // Stops while the tablet is asleep or on another tab, and catches up once on
   // the way back.
   every(30000, refresh, { leading: false });

@@ -118,6 +118,13 @@
     .hdr .themebtn{font-size:0;gap:0;padding:9px}
     .hdr .m#phdr{max-width:30vw}
   }
+  /* Another pit scout has this robot open. Blue: not a problem, just news. */
+  .pit.busy rect{fill:var(--blue-bg)}
+  .pit.busy text{fill:var(--blue-label)}
+  .qrow.busy .st{color:var(--blue-label);background:var(--blue-bg)}
+  .busynote{padding:12px 16px;border-radius:20px;background:var(--blue-bg);
+    font:500 14px/1.5 var(--f-body);color:var(--t1)}
+  .busynote b{color:var(--blue-label)}
   .nocustom{font:500 13.5px/1.5 var(--f-body);color:var(--dim)}
 </style>
 </head>
@@ -154,6 +161,7 @@
     <button class="close" id="pClose">Done</button>
   </div>
   <div class="sheetbody">
+    <div class="busynote hide" id="pBusy"></div>
     <div class="grp">
       <h3>The robot</h3>
       <div class="q"><div class="lbl">Drivetrain</div>
