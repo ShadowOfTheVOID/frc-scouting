@@ -125,7 +125,9 @@ function renderMap() {
     parts.push(`<g class="${cls}" data-team="${team}" transform="${rot(pit, b)}">
       <rect x="${b.x}" y="${b.y}" width="${b.w}" height="${b.h}" rx="5"></rect>
       <text x="${b.cx}" y="${b.cy - 3}" text-anchor="middle" dominant-baseline="middle">${team}</text>
-      <text class="addr" x="${b.cx}" y="${b.cy + 13}" text-anchor="middle" dominant-baseline="middle">${esc(id)}</text></g>`);
+      <text class="addr" x="${b.cx}" y="${b.cy + 13}" text-anchor="middle" dominant-baseline="middle">${
+        // On the map, a pit someone has open says who instead of its address.
+        busy ? esc(busy.scoutId && busy.scoutId !== 'pit' ? busy.scoutId : 'in use') : esc(id)}</text></g>`);
   }
 
   host.innerHTML = `<svg class="pitmap" viewBox="0 0 ${size.x} ${size.y}"
