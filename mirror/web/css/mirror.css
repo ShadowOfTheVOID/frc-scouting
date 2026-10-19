@@ -8,8 +8,6 @@
    the same laptop - so every table here collapses to stacked rows below 720px
    rather than scrolling sideways. */
 
-@import url('/css/theme.css');
-
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 html,body{margin:0;background:var(--page);font-family:var(--f-body)}

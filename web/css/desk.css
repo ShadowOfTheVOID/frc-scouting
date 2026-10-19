@@ -5,8 +5,6 @@
    needs attention. Colours come from theme.css, so everything here works in
    both the dark and the light theme. */
 
-@import url('/css/theme.css');
-
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--page);font-family:var(--f-body)}
 body{padding:24px;color:var(--t0);min-width:1240px;font-weight:500}

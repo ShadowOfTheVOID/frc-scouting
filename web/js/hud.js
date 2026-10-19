@@ -8,6 +8,7 @@ import * as db from './db.js';
 import * as net from './net.js';
 import { every, idleWatch } from './timers.js';
 import * as fs from './fullscreen.js';
+import { SPEEDS } from './speeds.js';
 import { loadRules, phases, phaseAt, hubActive, matchSeconds, intensityBuckets, rules as gameRules } from './game2026.js';
 
 const $ = (s) => document.querySelector(s);
@@ -15,11 +16,8 @@ const SCREENS = ['seat', 'standby', 'offline', 'live', 'after', 'bumped'];
 
 // The ladder reads top-down fastest-first. Simple mode lists the same three
 // the other way up, slowest first, because there it is a question, not a dial.
-const LADDER = [
-  { id: 'dumping', label: 'Lots' },
-  { id: 'steady',  label: 'Steady' },
-  { id: 'trickle', label: 'A few' },
-];
+// The words live in speeds.js, which the practice tutorial reads too.
+const LADDER = SPEEDS;
 const speedName = (id) => (LADDER.find((b) => b.id === id) || LADDER[1]).label;
 const DRIVE = ['rough', 'okay', 'solid', 'great', 'best'];
 const DEFENSE = ['not at all', 'a little', 'some', 'a lot'];
@@ -278,6 +276,10 @@ function newEntry(match, team) {
       // whose timeline these intervals are on. The server may only re-anchor
       // to TBA's actual_time when the phone was on the shared clock.
       clockShared: false, clockBy: null,
+      // Which layout this entry was scouted in - on every entry, including
+      // the ones with no shooting runs (a no-show, a defence-only robot), so
+      // simple and pro can be compared on all of them.
+      inputMode: simple ? 'simple' : 'pro',
     },
   };
 }
@@ -571,7 +573,9 @@ function pendingRun() {
 
 function pickSpeed(id) {
   rate = id;
-  const iv = pendingRun();
+  // Mid-hold, a tap is about the run being held - it is saved at `rate` when
+  // it ends - not the one before it.
+  const iv = padHeld ? null : pendingRun();
   if (iv && iv.intensity !== id) { iv.intensity = id; autosave(); }
   buzz(); renderSpeed(); renderLadder();
 }
@@ -593,6 +597,7 @@ function hubNow() {
  * what "wasted fuel" and "stockpiles" on the dashboard are measured from.
  */
 function paintHold(holding = false, secs = 0) {
+  const changed = padHeld !== holding;
   padHeld = holding;
   const pad = $('#holdpad');
   const t = clock.elapsed();
@@ -624,7 +629,9 @@ function paintHold(holding = false, secs = 0) {
   $('#holdLabel').textContent = lb;
   $('#holdRate').textContent = big;
   $('#holdUnit').textContent = un;
-  if (simple) renderSpeed();
+  // Called every animation frame during a hold; the speed column only changes
+  // when the hold starts or ends.
+  if (simple && (changed || !holding)) renderSpeed();
 }
 
 /**
@@ -648,6 +655,7 @@ function setMode(on) {
   simple = !!on;
   try { localStorage.setItem('inputMode', simple ? 'simple' : 'pro'); } catch {}
   pending = null;
+  if (entry) entry.payload.inputMode = simple ? 'simple' : 'pro';
   buzz();
   paintMode();
   placeLive();
@@ -663,7 +671,7 @@ $('#seatMode').onclick = () => setMode(!simple);
 $('#sbMode').onclick = () => setMode(!simple);
 
 /** Hold-and-release recorder. Tap and hold only — no drags (Android owns edge swipes). */
-function holdRecorder(el, list, onPaint, { onBegin, onRecord } = {}) {
+function holdRecorder(el, list, onPaint, { onRecord } = {}) {
   let t0 = null, raf = null;
   const begin = (ev) => {
     if (t0 !== null) return;
@@ -671,7 +679,6 @@ function holdRecorder(el, list, onPaint, { onBegin, onRecord } = {}) {
     if (!clock.running) return;
     t0 = clock.elapsed();
     buzz(12);
-    onBegin && onBegin();
     const tick = () => {
       if (t0 === null) return;
       onPaint && onPaint(true, clock.elapsed() - t0);
@@ -1290,10 +1297,10 @@ async function main() {
   fs.offerHomeScreen({ el: $('#a2hs') });
 
   // Right pad records shooting; the two left utility buttons record their own runs.
+  // The question moves to a new run only once one is recorded. Clearing it on
+  // touch let a brush too short to count wipe the question about the last run.
   holdRecorder($('#holdpad'), () => entry.payload.intervals, paintHold, {
-    onBegin: () => { pending = null; },
-    // Which layout made this entry, so its accuracy can be told apart later.
-    onRecord: (i) => { entry.payload.inputMode = simple ? 'simple' : 'pro'; if (simple) pending = i; },
+    onRecord: (i) => { if (simple) pending = i; },
   });
   holdRecorder($('#btnFeeding'), () => entry.payload.feedIntervals,
     (on) => $('#btnFeeding').classList.toggle('on', on));

@@ -4,8 +4,6 @@
    the one thing that is selected. Colours come from theme.css, so every rule
    here works in both the dark and the light theme. */
 
-@import url('/css/theme.css');
-
 :root{
   /* safe box — worst case of iOS Dynamic Island (44) and Android nav bar (48) */
   --safe-l: max(env(safe-area-inset-left), 44px);

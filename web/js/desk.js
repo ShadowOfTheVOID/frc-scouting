@@ -19,6 +19,8 @@ const cap = (x) => { const t = String(x || ''); return t.charAt(0).toUpperCase()
 
 
 let STATE = null, ANALYTICS = null, CONFIG = null, ourTeam = null;
+// When the hub last answered this screen's refresh, as wall clock. null = never.
+let heardAt = null;
 const DNP = new Set(JSON.parse(localStorage.getItem('dnp') || '[]'));
 // Two boards. A first pick is the best robot left; a second pick is the best
 // complement to the two we already have, which is a different question and so
@@ -1948,15 +1950,22 @@ function renderHeader() {
     ? STATE.event.name : 'REBUILT strategy';
   const played = STATE ? (STATE.matches || []).filter((m) => m.breakdown).length : 0;
   const total = STATE ? (STATE.matches || []).length : 0;
-  const ago = net.state.lastSync ? Math.round((Date.now() - net.state.lastSync) / 1000) : null;
   $('#evSub').textContent = STATE
     ? `Qual ${played} of ${total} · ${(STATE.teams || []).length} teams`
     : 'No event · 0 teams';
-  // Whether this screen is still hearing from the hub, as a pill by the title.
+  // How old the numbers on this screen are, as a pill by the title. The age,
+  // not just whether the hub answered: a screen that stopped refreshing reads
+  // amber, with how long ago its data came in.
   const pill = $('#evSync');
   if (pill) {
-    pill.className = 'pill ' + (net.state.online ? 'ok' : 'warn');
-    pill.innerHTML = '<span class="d"></span>' + (net.state.online ? 'Connected' : "Can't reach the hub");
+    const secs = heardAt == null ? null : Math.round((Date.now() - heardAt) / 1000);
+    const fresh = secs != null && secs < 30;
+    pill.className = 'pill ' + (secs == null ? '' : fresh ? 'ok' : 'warn');
+    pill.innerHTML = '<span class="d"></span>' + (
+      secs == null ? 'Connecting…'
+      : fresh ? 'Up to date'
+      : `${net.state.online ? 'Last update' : "Can't reach the hub · last update"} ${
+          secs < 120 ? `${secs}s` : `${Math.round(secs / 60)}m`} ago`);
   }
 }
 
@@ -1990,6 +1999,8 @@ async function refresh() {
     currentTab === 'server' ? pull('/api/diag') : Promise.resolve({ changed: false }),
   ]);
 
+  // Any answer from the hub, changed or not, means what is on screen is current.
+  if (!st.failed || !an.failed) heardAt = Date.now();
   let moved = false;
   if (st.changed) { STATE = st.value; db.cacheSet('state', STATE); moved = true; }
   else if (st.failed && !STATE) { STATE = await db.cacheGet('state'); moved = true; }
@@ -1999,8 +2010,8 @@ async function refresh() {
   if (seatlog.changed) { SEATLOG = seatlog.value; moved = true; }
   if (diag.changed) { DIAG = diag.value; moved = true; }
 
-  // The header carries the sync age, which moves with the clock rather than
-  // with the data, so it is repainted either way. It is three text nodes.
+  // The header carries the data's age, which moves with the clock rather than
+  // with the data, so it is repainted either way. It is a few text nodes.
   renderHeader();
   if (moved) renderAll();
 }

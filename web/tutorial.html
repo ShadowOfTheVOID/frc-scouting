@@ -10,6 +10,8 @@
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <link rel="icon" href="/icons/icon-192.png">
 <script src="/js/theme.js"></script>
+<link rel="stylesheet" href="/css/fonts.css">
+<link rel="stylesheet" href="/css/theme.css">
 <link rel="stylesheet" href="/css/hud.css">
 <style>
   /* The real HUD above; only the teaching furniture is new. It sits OVER the
@@ -20,7 +22,8 @@
   .tut { min-height: 100%; display: flex; flex-direction: column; }
   .tbar { display: flex; align-items: center; gap: 10px; padding: 8px 14px;
     background: var(--chrome); border-bottom: 1px solid var(--line-panel); flex: none; }
-  .tbar .step { font:700 12.5px var(--f-body); color: var(--red-alert); }
+  /* .step is also the after-the-buzzer rating bar in hud.css; this one is a label. */
+  .tbar .step { display: inline; flex: none; min-height: 0; padding: 0; background: none; font:700 12.5px var(--f-body); color: var(--red-alert); }
   .tbar .ttl { font:700 13px var(--f-body); color: var(--t0); }
   .tbar .sp { flex: 1; }
   .pips { display: flex; gap: 5px; }
@@ -161,13 +164,18 @@ let RATES = [
   { id: 'steady', label: 'Steady', value: 3.5 },
   { id: 'trickle', label: 'A few', value: 1.2 },
 ];
+// The words for the three speeds are the match screen's own, from speeds.js,
+// so practice never calls a speed something the real screen does not.
+import('/js/speeds.js').then(({ SPEEDS }) => {
+  for (const r of RATES) r.label = (SPEEDS.find((x) => x.id === r.id) || r).label;
+}).catch(() => {});
 fetch('/rules2026.json').then((r) => r.json()).then((r) => {
   if (Array.isArray(r.phases) && r.phases.length) PHASES = r.phases;
   if (r.matchSeconds) MATCH_SECONDS = r.matchSeconds;
   if (Array.isArray(r.intensityBuckets)) {
     const order = { dumping: 0, steady: 1, trickle: 2 };
     RATES = r.intensityBuckets
-      .map((b) => ({ id: b.id, label: ({ dumping: 'Lots', steady: 'Steady', trickle: 'A few' })[b.id] || b.id,
+      .map((b) => ({ id: b.id, label: (RATES.find((x) => x.id === b.id) || { label: b.id }).label,
                      value: b.prior }))
       .sort((a, b) => (order[a.id] ?? 9) - (order[b.id] ?? 9));
   }
@@ -198,13 +206,47 @@ let step = 0;
 let rate = 'steady';
 let seat = { scout: '', alliance: null, station: null };
 let held = [];                   // what the practising scout recorded
+// The layout to teach is the one this phone will scout in: simple unless it
+// has been switched to the two-thumb layout, the same rule as the match screen.
+let simple = (() => { try { return localStorage.getItem('inputMode') !== 'pro'; } catch (e) { return true; } })();
+function setSimple(on) {
+  simple = !!on;
+  try { localStorage.setItem('inputMode', simple ? 'simple' : 'pro'); } catch (e) {}
+}
 let lastRun = null;
 
 // ═══════════════════════════════════════════════════════ shared pieces ═══
 /** The real ladder and hold pad, wired to whatever the step wants them for. */
 function padBlock(onRun, opts) {
   opts = opts || {};
-  const wrap = el(`
+  const wrap = simple ? el(`
+    <div class="body live simple" style="grid-template-columns:1fr 236px">
+      <div class="col">
+        <div class="holdpad" data-pad>
+          <div class="meter" data-meter></div><div class="meterline" data-line></div>
+          <div class="txt">
+            <div class="lb" data-lb>Hold while they shoot</div>
+            <div class="big" data-big></div>
+            <div class="un" data-un>Let go when they stop</div>
+          </div>
+        </div>
+        <div class="strip" data-strip></div>
+        <div class="stats" style="justify-content:center">
+          <div class="s"><div class="n tnum" data-runs>0</div><div class="l">Runs logged</div></div>
+          <div class="div"></div>
+          <div class="s"><div class="n tnum" data-secs>0</div><div class="l">Seconds held</div></div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="clockline"><div class="clockbig tnum" data-clock>0:00</div>
+          <div class="shotstate dead" data-state>Not started</div></div>
+        <div class="speed" data-speed style="flex:1">
+          <div class="q" data-q>How fast?</div>
+          <div class="opts" data-ladder></div>
+          <div class="foot" data-foot></div>
+        </div>
+      </div>
+    </div>`) : el(`
     <div class="body three" style="grid-template-columns:var(--col-l) 1fr var(--col-r)">
       <div class="col">
         <div class="caption">Left thumb · how fast</div>
@@ -235,15 +277,40 @@ function padBlock(onRun, opts) {
 
   const ladder = $('[data-ladder]', wrap);
   const pad = $('[data-pad]', wrap);
-  const paint = (on, frac) => {
+  // Simple mode: the run the "How fast was that?" question is about. A tap
+  // re-labels it, exactly as on the match screen.
+  let lastHeld = null;
+  const paint = (on, secs) => {
     pad.classList.toggle('on', !!on);
-    $('[data-meter]', wrap).style.height = on ? Math.min(100, frac * 100) + '%' : '0';
-    $('[data-line]', wrap).style.bottom = on ? Math.min(100, frac * 100) + '%' : '0';
+    if (simple) {
+      $('[data-lb]', wrap).textContent = on ? `Holding · ${(secs || 0).toFixed(1)}s` : 'Hold while they shoot';
+      $('[data-un]', wrap).textContent = on ? 'Let go when they stop shooting'
+        : lastHeld ? 'Holding again starts a new run right away' : 'Let go when they stop';
+      return;
+    }
     $('[data-lb]', wrap).textContent = on ? 'Holding' : 'Hold while they shoot';
     $('[data-big]', wrap).textContent = rateOf(rate);
   };
   const drawLadder = () => {
     ladder.innerHTML = '';
+    if (simple) {
+      const shown = lastHeld ? lastHeld.intensity : rate;
+      for (const b of [...RATES].reverse()) {
+        const d = el(`<div class="o">${b.label}</div>`);
+        d.classList.toggle('on', b.id === shown);
+        d.onclick = () => {
+          rate = b.id;
+          if (lastHeld && t0 === null) lastHeld.intensity = b.id;
+          buzz(8); drawLadder();
+        };
+        ladder.appendChild(d);
+      }
+      $('[data-q]', wrap).textContent = lastHeld ? 'How fast was that?' : 'How fast?';
+      $('[data-foot]', wrap).textContent = lastHeld
+        ? `Keeps "${(RATES.find((r) => r.id === shown) || {}).label}" if you don't tap`
+        : 'You pick this after each run';
+      return;
+    }
     for (const b of RATES) {
       const d = el(`<div class="rate"><span class="nm">${b.label}</span>
         <span class="vl">${b.value}</span></div>`);
@@ -257,16 +324,16 @@ function padBlock(onRun, opts) {
 
   // The same hold-and-release recorder the HUD uses: press, hold, release.
   // No drags - Android owns edge swipes, which is why the real one is a hold.
-  let t0 = null, raf = 0;
+  let t0 = null, raf = 0, tReal = 0;
   const now = () => (opts.clock ? opts.clock() : 0);
   const begin = (ev) => {
     if (t0 !== null) return;
     ev.preventDefault();
     if (opts.clock && !opts.running()) return;
-    t0 = now(); buzz(12);
+    t0 = now(); tReal = performance.now(); buzz(12);
     const tick = () => {
       if (t0 === null) return;
-      paint(true, Math.min(1, (now() - t0) / 5));
+      paint(true, opts.clock ? now() - t0 : (performance.now() - tReal) / 1000);
       raf = requestAnimationFrame(tick);
     };
     tick();
@@ -277,10 +344,17 @@ function padBlock(onRun, opts) {
     const a = t0, b = now(); t0 = null;
     paint(false, 0);
     if (opts.clock && b - a < 0.15) return;
+    if (!opts.clock) {
+      // No clock running: nothing is recorded, but simple mode still asks, so
+      // the question can be practised.
+      if (simple) { lastHeld = { intensity: rate }; drawLadder(); paint(false, 0); }
+      return;
+    }
     const ph = phaseAt(a);
     const run = { start: +a.toFixed(2), end: +b.toFixed(2),
                   phase: ph ? ph.id : null, intensity: rate };
     buzz(12);
+    if (simple) { lastHeld = run; drawLadder(); paint(false, 0); }
     onRun && onRun(run);
   };
   pad.addEventListener('pointerdown', begin);
@@ -341,7 +415,7 @@ const STEPS = [
 {
   id: 'seat',
   title: 'Take a seat',
-  next: 'Now the two thumbs',
+  get next() { return simple ? 'Now the button' : 'Now the two thumbs'; },
   build(stage) {
     stage.appendChild(el(`<div class="say"><h2>Once, at the start of the day.</h2>
       <p>Your initials, then the station on the sign above your chair. Try it — this is the real
@@ -394,12 +468,26 @@ const STEPS = [
 },
 {
   id: 'thumbs',
-  title: 'The two thumbs',
+  get title() { return simple ? 'The button' : 'The two thumbs'; },
   next: 'I have the idea',
   build(stage) {
-    stage.appendChild(el(`<div class="say"><h2>Left picks the rate. Right holds.</h2>
-      <p>Press and hold the red pad. Let go. Do it a few times, and change the rate on the left
+    stage.appendChild(el(simple
+      ? `<div class="say"><h2>Hold while they shoot. Then say how fast.</h2>
+      <p>Press and hold the big button. Let go. Then tap how fast that was on the right — or
+         leave it, and it keeps your last answer. Do it a few times; there is no clock running,
+         so nothing is being recorded.</p></div>`
+      : `<div class="say"><h2>Left picks how fast. Right holds.</h2>
+      <p>Press and hold the red pad. Let go. Do it a few times, and change the speed on the left
          while you are at it — there is no clock running, so nothing is being recorded.</p></div>`));
+    // The same switch as the seat screen, so a scout can try the other layout
+    // here, and the phone keeps whichever they leave it on.
+    const sw = el(`<div class="modesw${simple ? ' on' : ''}" role="switch" aria-checked="${simple}"
+      style="max-width:420px"><span class="tg"></span>
+      <span class="w"><b>Simple mode</b><span>${simple
+        ? 'One big button. Turn off for the two-thumb layout.'
+        : 'Two thumbs. Turn on for one big button.'}</span></span></div>`);
+    sw.onclick = () => { setSimple(!simple); buzz(8); go(step); };
+    stage.appendChild(sw);
     const demo = el(`<div class="demo"><div class="screen">
       <div class="hdr tinted"><span class="k">Practice</span>
         <span class="m">No clock — nothing is being recorded</span></div></div></div>`);
@@ -407,7 +495,7 @@ const STEPS = [
     $('.screen', demo).appendChild(pad);
     stage.appendChild(demo);
     stage.appendChild(el(`<div class="say">
-      <p><b>The rate is a guess, and a rough one is fine.</b> Three choices: a few, steady, or
+      <p><b>The speed is a guess, and a rough one is fine.</b> Three choices: a few, steady, or
       lots. You are telling the laptop roughly how fast fuel was going in, so that a robot that
       dumped for four seconds is not read the same as one that trickled for four.</p>
       <p><b>You do not have to be right.</b> The laptop fits everyone's guesses against the
@@ -426,8 +514,9 @@ const STEPS = [
     stage.appendChild(el(`<div class="say" style="max-width:860px">
       <h2>Eighty seconds. Hold while the lamp is red.</h2>
       <p>At a real event you watch the robot. Here a lamp stands in for it — when it lights, your
-         robot is scoring. Hold the pad for exactly as long as it is lit, and set the rate on the
-         left to match what it says. It runs at double speed, so a full match takes eighty
+         robot is scoring. Hold the ${simple ? 'button' : 'pad'} for exactly as long as it is lit,
+         and ${simple ? 'then tap how fast it was' : 'set the speed on the left'} to match what it
+         says. It runs at double speed, so a full match takes eighty
          seconds.</p></div>`));
     const robot = el(`<div class="robot"><span class="lamp"></span>
       <span class="w" data-w>Not shooting</span>
@@ -458,7 +547,7 @@ const STEPS = [
       $('[data-w]', robot).textContent = s
         ? 'Shooting — ' + (RATES.find((r) => r.id === s.rate) || {}).label : 'Not shooting';
       $('[data-h]', robot).textContent = s
-        ? 'hold the pad, and match the rate on the left'
+        ? (simple ? 'hold, then tap how fast it was' : 'hold the pad, and match the speed on the left')
         : (running ? 'let go' : 'press Start when you are ready');
       $('[data-clock]', pad).textContent = mmss(t);
       $('[data-state]', pad).textContent = running ? (s ? 'Scoring' : 'Quiet') : 'Not started';
@@ -558,7 +647,7 @@ const STEPS = [
         <div class="l">Held when it was not</div>
         <div class="s">this is the half that inflates a robot</div></div>
       <div class="card"><div class="n ${cls(rateOk, 70, 45)}">${rateOk}%</div>
-        <div class="l">Rate set right</div>
+        <div class="l">Speed set right</div>
         <div class="s">of the time you were holding</div></div>
       <div class="card"><div class="n ${missedRuns === 0 ? 'good' : missedRuns < 3 ? 'warn' : 'bad'}">${
         SCRIPT.length - missedRuns}/${SCRIPT.length}</div>
@@ -599,9 +688,12 @@ const STEPS = [
         + 'has clearly stopped.']);
     }
     if (rateOk < 50) {
-      notes.push(['The rate stayed where it was',
-        'The left ladder is a thumb-tap and it is easy to forget in a fast match. If you only '
-        + 'ever change it between volleys, that alone gets most of the value.']);
+      notes.push(['The speed stayed where it was',
+        simple
+          ? 'After each run, glance at the robot you just watched and tap how fast it was. Leaving '
+            + 'it keeps the last answer, which is only right if the robot did not change gear.'
+          : 'The left ladder is a thumb-tap and it is easy to forget in a fast match. If you only '
+            + 'ever change it between volleys, that alone gets most of the value.']);
     }
     if (!notes.length) {
       notes.push(['Nothing to fix',

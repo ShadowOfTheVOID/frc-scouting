@@ -1,26 +1,33 @@
 // Light or dark, for every page.
 //
-// Loaded as a plain script in <head>, before the stylesheet paints, so a page
-// that was left on light never flashes dark on the way in. With nothing saved
-// the page follows the device (theme.css reads prefers-color-scheme); a tap on
-// any [data-theme-toggle] saves a choice for this browser only.
+// Loaded as a plain script in <head>, before the stylesheets paint, so a page
+// that was left on light never flashes dark on the way in. It always puts the
+// theme in use on <html> as data-theme - the saved choice if there is one,
+// otherwise whatever the device is set to - so theme.css only has to describe
+// each theme once. A tap on any [data-theme-toggle] saves a choice for this
+// browser only.
 (function () {
   var KEY = 'theme';
   var root = document.documentElement;
   var light = window.matchMedia ? window.matchMedia('(prefers-color-scheme: light)') : null;
 
   function saved() {
-    try { return localStorage.getItem(KEY); } catch (e) { return null; }
+    try {
+      var t = localStorage.getItem(KEY);
+      return t === 'light' || t === 'dark' ? t : null;
+    } catch (e) { return null; }
   }
-  function isLight() {
-    var t = root.getAttribute('data-theme');
-    if (t) return t === 'light';
-    return !!(light && light.matches);
+  function resolved() {
+    return saved() || (light && light.matches ? 'light' : 'dark');
   }
-  // The browser bar on a phone takes its colour from this meta, not from CSS.
+  function isLight() { return root.getAttribute('data-theme') === 'light'; }
+
+  // The browser bar on a phone takes its colour from this meta, not from CSS,
+  // so it is copied from the page's own panel colour once the stylesheet has it.
   function paintMeta() {
     var m = document.querySelector('meta[name="theme-color"]');
-    if (m) m.setAttribute('content', isLight() ? '#fbf6e4' : '#1a1a1e');
+    var c = getComputedStyle(root).getPropertyValue('--panel').trim();
+    if (m && c) m.setAttribute('content', c);
   }
   function paintButtons() {
     var label = isLight() ? 'Dark mode' : 'Light mode';
@@ -30,22 +37,26 @@
       els[i].setAttribute('aria-label', 'Switch to ' + label.toLowerCase());
     }
   }
-  function apply(t) {
-    if (t === 'light' || t === 'dark') root.setAttribute('data-theme', t);
-    else root.removeAttribute('data-theme');
+  function apply() {
+    root.setAttribute('data-theme', resolved());
     paintMeta();
     paintButtons();
   }
 
-  apply(saved());
-  if (light && light.addEventListener) light.addEventListener('change', function () { apply(saved()); });
+  apply();
+  // A device that switches itself at sunset takes the page with it, unless a
+  // choice has been saved here.
+  if (light && light.addEventListener) light.addEventListener('change', apply);
   document.addEventListener('DOMContentLoaded', function () { paintMeta(); paintButtons(); });
+  window.addEventListener('load', paintMeta);
   document.addEventListener('click', function (e) {
     var b = e.target.closest && e.target.closest('[data-theme-toggle]');
     if (!b) return;
-    var next = isLight() ? 'dark' : 'light';
-    try { localStorage.setItem(KEY, next); } catch (err) { /* private mode: this page only */ }
-    apply(next);
+    try { localStorage.setItem(KEY, isLight() ? 'dark' : 'light'); } catch (err) { /* private mode */ }
+    if (!saved()) root.setAttribute('data-theme', isLight() ? 'dark' : 'light');   // storage refused: this page only
+    else root.setAttribute('data-theme', saved());
+    paintMeta();
+    paintButtons();
   });
 
   window.Theme = { isLight: isLight, repaint: paintButtons };
