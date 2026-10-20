@@ -12,6 +12,8 @@
  * then red on its own.
  */
 
+import { initPit, viewPit, viewQuestions } from './pit.js';
+
 const $ = (s) => document.querySelector(s);
 const TOKEN_KEY = 'mirror.token';
 
@@ -169,8 +171,8 @@ function freshness() {
   let html;
   if (secs < 300) {
     banner.className = 'banner';
-    html = `<b>This is a mirror.</b> A copy the hub pushed ${esc(ago(at))} — `
-      + 'read-only, and it never sees a scout tap. Everything live happens on the hub.';
+    html = `<b>This is a mirror.</b> A copy the hub pushed ${esc(ago(at))}. Match scouting `
+      + 'happens on the hub; pit scouting is done here, and the hub collects it every minute.';
   } else if (secs < 3600) {
     banner.className = 'banner';
     html = `<b>Last update ${esc(ago(at))}.</b> The hub may have moved networks, `
@@ -198,7 +200,7 @@ function render() {
   freshness();
   ({
     teams: viewTeams, matches: viewMatches, picklist: viewPicklist,
-    health: viewHealth, backup: viewBackup,
+    health: viewHealth, backup: viewBackup, pit: viewPit, questions: viewQuestions,
   }[state.tab] || viewTeams)();
 }
 
@@ -539,6 +541,19 @@ document.addEventListener('visibilitychange', () => {
 // one did not, so a tab left open kept rewriting the banner all afternoon.
 // Repainted on the way back so it is never showing a stale age on screen.
 setInterval(() => { if (state.bundle && !document.hidden) freshness(); }, 15000);
+
+initPit({ api, state, esc, signed });
+// A link straight to a tab - scouting.example.org/#pit - opens on it, and so
+// does changing the hash on a page that is already open.
+function tabFromHash() {
+  const t = location.hash.slice(1);
+  if (!$('#tabs').querySelector(`button[data-tab="${CSS.escape(t)}"]`)) return false;
+  state.tab = t;
+  $('#tabs').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x.dataset.tab === t));
+  return true;
+}
+tabFromHash();
+window.addEventListener('hashchange', () => { if (tabFromHash() && state.bundle) render(); });
 
 try { state.token = localStorage.getItem(TOKEN_KEY); } catch { /* private mode */ }
 boot().catch(() => showLock());

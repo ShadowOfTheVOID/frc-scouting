@@ -539,11 +539,14 @@ time:
   unplugged, closed and put in a bag between quals. `data/snapshots/` survives a corrupt
   database; it does not survive the laptop being dropped, stolen or wiped. A mirror does.
 - **Anyone can read the numbers from anywhere.** A lead in the stands on cell data, a mentor at
-  home, a driver in the queue line — none of them have to be on venue wifi, and none of them can
-  change anything. It is read-only over there.
+  home, a driver in the queue line — none of them have to be on venue wifi. The numbers are
+  read-only over there.
+- **Pit scouting happens there.** Pit scouts use the mirror on their own phones, and the hub
+  collects what they save once a minute — see [Pit scouting](#pit-scouting).
 
-The hub pushes; the mirror never asks. That is the only direction that works from behind a
-venue's network, and it means nothing on the internet can reach into the laptop.
+The hub always starts the conversation: it pushes the event, and it asks for pit scouting.
+The mirror never calls the hub. That is the only direction that works from behind a venue's
+network, and it means nothing on the internet can reach into the laptop.
 
 **On the website's host,** once:
 
@@ -617,12 +620,20 @@ they have got it.
 
 ---
 
-## Your own pit questions
+## Pit scouting
 
-On the dashboard, **Setup → Pit questions** lets you add questions of your own to pit
-scouting — pick one, yes or no, a number, or a short answer. They show up on every pit tablet
-within a few seconds, the answers appear on each team's page, and each question gets its own
-column in the pit spreadsheet. Renaming a question keeps the answers already given.
+Pit scouting is done on your team's mirror site (for example
+`scouting.systemoverload.org`), not on the hub — students open it on their own phones, enter
+the team passcode and tap **Pit scouting**. They get the venue's pit map from Nexus, a form per
+robot, and a blue *AK is on it* marker so two of them never walk to the same pit. The hub
+collects everything once a minute, and it shows on the dashboard. Answers are kept on the phone
+until they reach the mirror, so a pit aisle with no signal loses nothing.
+
+The **Pit questions** tab on the mirror adds questions of your own — pick one, yes or no, a
+number, or a short answer. Each gets its own column in the pit spreadsheet, and renaming one
+keeps the answers already given.
+
+Pit scouting needs the mirror set up with a passcode — see [mirror/README.md](mirror/README.md).
 
 ## The picklist
 

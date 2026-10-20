@@ -45,14 +45,18 @@
   <div class="tabs" id="tabs">
     <button data-tab="teams" class="on">Teams</button>
     <button data-tab="matches">Matches</button>
+    <button data-tab="pit">Pit scouting</button>
     <button data-tab="picklist">Picklist</button>
     <button data-tab="health">Health</button>
+    <button data-tab="questions">Pit questions</button>
     <button data-tab="backup">Backup</button>
   </div>
 
   <div class="wrap"><div id="view" class="stack"></div></div>
 </div>
 
+<!-- The pit form: a full-screen sheet over the Pit scouting tab. pit.js fills it. -->
+<div id="psheet" class="psheet hide"></div>
 <div id="sheet" class="sheet hide"><div class="card" id="sheetCard"></div></div>
 
 <script type="module" src="/js/mirror.js"></script>

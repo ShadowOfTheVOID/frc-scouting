@@ -105,7 +105,6 @@ AI_ASK_TOKENS = 3000
 # 304s left to give.
 STATE_SCOPES = ("events", "teams", "matches", "flags", "pit_entries",
                 "kv:nexusLive", "kv:pits", "kv:pitMap", "kv:inspection", "kv:pitQuestions",
-                "kv:pitClaims",
                 "kv:alliances", "kv:seats", "kv:matchClocks", "kv:clockFixes",
                 "kv:rankings", "kv:epa", "kv:earlyScores")
 ANALYTICS_SCOPES = ("matches", "teams", "scout_entries", "solved",
@@ -730,15 +729,39 @@ class Hub:
         w.writerows(_csv_safe(r) for r in rows)
         return buf.getvalue()
 
-    def poll_mirror(self):
-        """Push the event off-site. Never the reason anything else fails.
+    def poll_mirror(self, wait=False):
+        """Trade with the off-site mirror. Never the reason anything else fails.
 
-        Sits in the poller with the five inbound sources, and is the only one
-        that goes the other way. push_once() swallows its own failures and
-        records them; this only has to keep the status line honest.
+        The only poll that goes outward, and the only one that can take a
+        while: the mirror is on the internet, the venue uplink is shared, and
+        pit records collected from it carry photos. So it runs on a thread of
+        its own rather than inside the poller loop, where a slow mirror would
+        hold up the Nexus poll that arms the scouts' phones. One round at a
+        time - a round still going when the next minute comes round is left to
+        finish. `wait` runs it here instead, for tests and tools.
         """
         if not self.mirror().ok:
             return
+        if wait:
+            return self._mirror_round()
+        t = getattr(self, "_mirror_thread", None)
+        if t is not None and t.is_alive():
+            return
+        self._mirror_thread = threading.Thread(target=self._mirror_round, daemon=True,
+                                               name="mirror")
+        self._mirror_thread.start()
+
+    def _mirror_round(self):
+        # Pit scouting and the team's pit questions are done on the mirror;
+        # collect both first, so a save there reaches the hub within the minute.
+        try:
+            offsite.pull_questions(self)
+        except Exception as e:
+            self.note("warn", f"could not collect pit questions from the mirror: {e}")
+        try:
+            offsite.pull_pits(self)
+        except Exception as e:
+            self.note("warn", f"could not collect pit scouting from the mirror: {e}")
         res = offsite.push_once(self)
         if res.get("skipped") == "already pushing":
             return
@@ -1531,45 +1554,20 @@ class Hub:
             return (seats if touched else None), None
         self.store.mutate("seats", apply, {})
 
-    # --------------------------------------------------------- pit claims
-    #: How long an open pit form holds its robot with nobody touching it. The
-    #: tablet renews its claim every minute while the form is open, so this
-    #: is three missed renewals - a tablet that went to sleep or out of range
-    #: lets go of the robot within a few minutes rather than for the day.
-    PIT_CLAIM_SECONDS = 180
+    def accept_pit(self, rec):
+        """Merge one pit record collected from the mirror. True if it landed.
 
-    def pit_claims(self, ek):
-        """{team: {deviceId: {scoutId, at}}} - who has each robot's form open now.
-
-        More than one tablet can hold the same robot: a second scout is told
-        about the first, not stopped, and neither claim may replace the other.
+        The same path a pit tablet's sync takes: its photos filed by content
+        hash, then last write wins on its save time. Anything that is not
+        shaped like a pit record is dropped rather than half-applied.
         """
-        cut = time.time() - self.PIT_CLAIM_SECONDS
-        return _fresh_claims(self.store.get("pitClaims:%s" % ek) or {}, cut)
-
-    def claim_pit(self, ek, team, device, scout, release=False):
-        """Open (or renew) a robot's pit form for one tablet, or let it go.
-
-        A claim is a marker, not a lock: a second scout who opens the same
-        robot is told who has it and may carry on - the hub would rather two
-        people scouted a pit than nobody did because a tablet died holding it.
-        A tablet only ever adds or removes its own claim. Returns the claims as
-        they now stand.
-        """
-        key, now = str(team), time.time()
-        cut = now - self.PIT_CLAIM_SECONDS
-
-        def apply(cur):
-            cur = _fresh_claims(cur or {}, cut)
-            holders = cur.setdefault(key, {})
-            if release:
-                holders.pop(device, None)
-            else:
-                holders[device] = {"scoutId": scout, "at": now}
-            if not holders:
-                del cur[key]
-            return cur, cur
-        return self.store.mutate("pitClaims:%s" % ek, apply, default=dict)
+        try:
+            if not rec.get("eventKey") or int(rec.get("team")) <= 0:
+                return False
+            _extract_photos(self.store, rec)
+            return bool(self.store.upsert_pit(rec))
+        except (TypeError, ValueError, KeyError):
+            return False
 
     def seats(self):
         """The chairs that are still held.  A read, and only a read.
@@ -2033,78 +2031,6 @@ def _ai_provider(h, body):
             return ai.OFF
         return provider.strip() or ai.provider_for(model) or ai.OFF
     return h.ai().provider
-
-
-def _fresh_claims(claims, cut):
-    """Pit claims with every holder older than `cut` dropped, and empty teams."""
-    out = {}
-    for team, holders in (claims or {}).items():
-        if not isinstance(holders, dict):
-            continue
-        live = {d: c for d, c in holders.items()
-                if isinstance(c, dict) and (c.get("at") or 0) > cut}
-        if live:
-            out[team] = live
-    return out
-
-
-#: The kinds of question a team can add to pit scouting. A choice is a row of
-#: chips like the built-in questions; yes/no is a choice with its two answers
-#: fixed, so a spreadsheet never has to reconcile "Yes", "y" and "true".
-PIT_QUESTION_TYPES = ("choice", "yesno", "number", "text")
-#: Limits, so a pit form stays something a person can fill in walking past.
-PIT_QUESTIONS_MAX, PIT_LABEL_MAX, PIT_HINT_MAX = 30, 120, 160
-PIT_OPTIONS_MAX, PIT_OPTION_MAX = 8, 32
-
-
-def _pit_questions(raw, existing):
-    """Clean a list of custom pit questions sent by the dashboard.
-
-    Returns (questions, error). Each question keeps its id for as long as it
-    exists - the answers already given are filed under it, so renaming a
-    question must not orphan them. A new question gets a fresh id with a random
-    tail rather than one derived from its position or label alone: deleting a
-    question and adding a different one with the same words must never pick up
-    the old one's answers.
-    """
-    if not isinstance(raw, list):
-        return None, "questions must be a list"
-    if len(raw) > PIT_QUESTIONS_MAX:
-        return None, "at most %d custom questions" % PIT_QUESTIONS_MAX
-    known = {q.get("id") for q in (existing or []) if isinstance(q, dict)}
-    used, out = set(), []
-    for q in raw:
-        if not isinstance(q, dict):
-            continue
-        label = " ".join(str(q.get("label") or "").split())[:PIT_LABEL_MAX]
-        if not label:
-            continue
-        kind = q.get("type") if q.get("type") in PIT_QUESTION_TYPES else "text"
-        clean = {"label": label, "type": kind}
-        if kind == "choice":
-            opts = []
-            for o in (q.get("options") if isinstance(q.get("options"), list) else []):
-                o = " ".join(str(o).split())[:PIT_OPTION_MAX]
-                if o and o.lower() not in (x.lower() for x in opts):
-                    opts.append(o)
-            if len(opts) < 2:
-                return None, '"%s" needs at least two answers to choose from' % label
-            if len(opts) > PIT_OPTIONS_MAX:
-                return None, '"%s" has more than %d answers' % (label, PIT_OPTIONS_MAX)
-            clean["options"] = opts
-        hint = " ".join(str(q.get("hint") or "").split())[:PIT_HINT_MAX]
-        if hint:
-            clean["hint"] = hint
-        qid = q.get("id")
-        if not (isinstance(qid, str) and qid in known and qid not in used):
-            slug = re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_")[:24] or "question"
-            qid = "q_%s_%s" % (slug, secrets.token_hex(2))
-            while qid in used or qid in known:
-                qid = "q_%s_%s" % (slug, secrets.token_hex(2))
-        used.add(qid)
-        clean["id"] = qid
-        out.append(clean)
-    return out, None
 
 
 def _mirror_url(raw):
@@ -3074,8 +3000,6 @@ class Handler(BaseHTTPRequestHandler):
             return self._file("dashboard.html")
         if p == "/join":
             return self._file("join.html")
-        if p == "/pit":
-            return self._file("pit.html")
         if p == "/api/stream":
             return self._stream()
         if p == "/api/config":
@@ -3163,9 +3087,6 @@ class Handler(BaseHTTPRequestHandler):
                 # rather than on their own route so the pit tablet has them in
                 # the copy of this it keeps for when the wifi goes.
                 "pitQuestions": h.store.get("pitQuestions") or [],
-                # Which robots a pit scout has open right now, so two of them
-                # do not walk to the same pit. Stale ones are left out.
-                "pitClaims": h.pit_claims(ek),
                 "rankings": h.event_data("rankings", ek, {}),
                 "epa": h.event_data("epa", ek, {}),
                 "earlyScores": h.event_data("earlyScores", ek, {}),
@@ -3424,37 +3345,6 @@ class Handler(BaseHTTPRequestHandler):
                 time.sleep(0.6)                  # blunt the guessing rate
                 return self._json({"ok": False}, 403)
             return self._json({"ok": True, "token": h.issue_token()})
-
-        if p == "/api/pitclaim":
-            # A pit tablet opening a robot's form, renewing it once a minute
-            # while the form stays open, and letting it go on close or save.
-            ek = h.event_key()
-            team = _int(body.get("team"))
-            device = str(body.get("deviceId") or "")[:64]
-            if not ek or not team or team <= 0 or not device:
-                return self._json({"error": "needs an event, a team and a deviceId"}, 400)
-            scout = str(body.get("scoutId") or "pit")[:16]
-            claims = h.claim_pit(ek, team, device, scout, release=bool(body.get("release")))
-            h.broadcast("pitClaims", {"team": team})
-            return self._json({"ok": True, "claims": claims, "serverTime": time.time()})
-
-        if p == "/api/pitquestions":
-            # The same gate as the picklist: open on a hub with no strategy
-            # passcode, and behind it once one is set. These are the team's
-            # questions, not the hub's settings, so they are edited from the
-            # dashboard on any laptop rather than only on the hub machine.
-            if not self._unlocked():
-                return self._json({"error": "Pit questions can only be changed with the "
-                                            "strategy passcode."}, 403)
-            qs, err = _pit_questions(body.get("questions"), h.store.get("pitQuestions") or [])
-            if err:
-                return self._json({"error": err}, 400)
-            h.store.set("pitQuestions", qs)
-            h.note("info", "pit questions saved: %d custom" % len(qs))
-            # The pit tablets refetch /api/state on this, rather than waiting
-            # out their thirty-second poll.
-            h.broadcast("pitQuestions", {"count": len(qs)})
-            return self._json({"ok": True, "questions": qs})
 
         if p == "/api/picklist":
             if not self._unlocked():

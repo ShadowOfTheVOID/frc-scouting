@@ -36,7 +36,6 @@
       <div class="grp"><span class="gl">Setup</span>
         <button data-tab="crew" class="on">Crew</button>
         <button data-tab="seats">Seats</button>
-        <button data-tab="questions">Pit questions</button>
         <button data-tab="health">Health</button>
         <button data-tab="server">Server</button>
       </div>
@@ -314,38 +313,6 @@
   <div class="cols hide" id="t-team" style="grid-template-columns:1fr 340px">
     <div class="pane mid" id="tdMain"></div>
     <div class="pane" id="tdSide"></div>
-  </div>
-
-  <!-- ═════════════════════════════════════════════════════ PIT QUESTIONS ═══ -->
-  <div class="cols hide" id="t-questions" style="grid-template-columns:1fr 340px">
-    <div class="pane mid">
-      <div>
-        <div class="eyebrow">Your own pit questions</div>
-        <div class="hint" style="margin-top:4px;max-width:640px">These appear on every pit
-          tablet under <b>Our questions</b>, after the built-in ones. Answers show on each team's
-          page here and get a column of their own in the pit spreadsheet.</div>
-      </div>
-      <div id="qLock"></div>
-      <div class="qlist" id="qList"></div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <button class="qbtn" id="qAdd">+ Add a question</button>
-        <span class="sp" style="flex:1"></span>
-        <span class="hint" id="qMsg"></span>
-        <button class="qbtn" id="qUndo">Discard changes</button>
-        <button class="qbtn go" id="qSave">Save questions</button>
-      </div>
-    </div>
-    <div class="pane">
-      <div class="eyebrow">How it looks on the tablet</div>
-      <div class="qprev" id="qPreview"></div>
-      <div class="eyebrow" style="margin-top:8px">Good to know</div>
-      <ul class="hint" style="margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px">
-        <li>Renaming a question keeps the answers already given.</li>
-        <li>Removing one hides it from the tablets and the spreadsheet. The answers stay in the
-          full JSON export.</li>
-        <li>Tablets pick up a save within a few seconds. Nothing on them needs reloading.</li>
-      </ul>
-    </div>
   </div>
 
   <!-- ═══════════════════════════════════════════════════════════ SEATS ═══ -->

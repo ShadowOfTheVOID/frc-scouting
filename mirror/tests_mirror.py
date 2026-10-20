@@ -365,9 +365,135 @@ def test_open_mode(tmp):
         M.close()
 
 
+# A real 1x1 PNG: the mirror only keeps photos whose bytes are an image.
+PNG = base64.b64encode(bytes.fromhex(
+    "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+    "1f15c4890000000d4944415478da63f8cfc0f01f0005000201a5f6d3d30000000049454e44ae426082")).decode()
+
+
+def test_pit_questions_on_the_mirror(H, M, tok):
+    """The team's pit questions are edited on the mirror and reach the hub."""
+    ok = True
+    auth = {"X-Mirror-Token": tok}
+    code, doc, _ = M.req("/api/pitquestions", headers=auth)
+    ok &= check("the editor reads the questions", code == 200 and doc["rev"] == 0 and doc["editable"])
+    qs = [{"label": "Bumper colour", "type": "choice", "options": ["red", "blue"]},
+          {"label": "Spare batteries", "type": "number"}]
+    code, _, _ = M.req("/api/pitquestions", {"questions": qs, "rev": 0})
+    ok &= check("saving needs a token", code == 401)
+    code, r, _ = M.req("/api/pitquestions", {"questions": qs, "rev": 0}, headers=auth)
+    ok &= check("saving with a token works", code == 200 and r["rev"] == 1 and len(r["questions"]) == 2)
+    code, r2, _ = M.req("/api/pitquestions", {"questions": qs[:1], "rev": 0}, headers=auth)
+    ok &= check("a save from a stale copy is refused, not merged over", code == 409 and r2.get("stale"))
+    code, _, _ = M.req("/api/pitquestions/pull", {}, headers={"X-Mirror-Key": "wrong"})
+    ok &= check("the hub's pull needs the push key", code == 401)
+
+    ok &= check("the hub collects them on its minute poll",
+                offsite.pull_questions(H.hub) is True
+                and [q["id"] for q in H.store.get("pitQuestions")] == [q["id"] for q in r["questions"]])
+    ok &= check("and does not re-apply an unchanged copy", offsite.pull_questions(H.hub) is False)
+    return ok, r["questions"]
+
+
+def test_pit_scouting_on_the_mirror(H, M, tok, questions):
+    """A phone does pit scouting on the mirror; the hub gets it within a minute."""
+    ok = True
+    auth = {"X-Mirror-Token": tok}
+    team = H.store.teams(EK)[-1]["team"]
+    code, live, _ = M.req("/api/pit/live?event=" + EK, headers=auth)
+    ok &= check("the pit page can read every robot's status", code == 200 and "status" in live)
+
+    claim = {"eventKey": EK, "team": team, "deviceId": "phoneA", "scoutId": "AK"}
+    code, r, _ = M.req("/api/pitclaim", claim, headers=auth)
+    ok &= check("opening a robot claims it", code == 200 and "phoneA" in r["claims"].get(str(team), {}))
+    code, r, _ = M.req("/api/pitclaim", {**claim, "deviceId": "phoneB", "scoutId": "JM"}, headers=auth)
+    ok &= check("a second phone does not replace the first",
+                set(r["claims"][str(team)]) == {"phoneA", "phoneB"})
+    code, live, _ = M.req("/api/pit/live?event=" + EK, headers=auth)
+    ok &= check("other phones see who is on it", set(live["claims"].get(str(team), {})) == {"phoneA", "phoneB"})
+    M.req("/api/pitclaim", {**claim, "release": True}, headers=auth)
+    M.req("/api/pitclaim", {**claim, "deviceId": "phoneB", "release": True}, headers=auth)
+
+    save = {"eventKey": EK, "team": team, "deviceId": "phoneA", "scoutId": "AK",
+            "payload": {"drivetrain": "swerve", "shooter": "drum", "maxClimb": "L2",
+                        "stockpile": "yes", "notes": "very tidy pit",
+                        "custom": {questions[0]["id"]: "blue", questions[1]["id"]: 4},
+                        "photos": ["data:image/png;base64," + PNG, "data:text/html;base64,PHNjcmlwdD4="]}}
+    code, _, _ = M.req("/api/pit/save", save)
+    ok &= check("saving a pit needs a token", code == 401)
+    code, r, _ = M.req("/api/pit/save", save, headers=auth)
+    ok &= check("a phone can save a pit on the mirror", code == 200 and r.get("seq"))
+    code, e, _ = M.req("/api/pit/entry?event=%s&team=%d" % (EK, team), headers=auth)
+    photos = ((e.get("record") or {}).get("payload") or {}).get("photos") or []
+    ok &= check("the photo is kept and the page that was not an image is not", len(photos) == 1)
+    code, live, _ = M.req("/api/pit/live?event=" + EK, headers=auth)
+    ok &= check("the robot shows as done straight away",
+                live["status"].get(str(team), {}).get("done") == "done")
+
+    landed = offsite.pull_pits(H.hub)
+    pit = next((p for p in H.store.pit_entries(EK) if p["team"] == team), None)
+    ok &= check("the hub collects the pit on its minute poll", landed == 1 and pit is not None)
+    pay = (pit or {}).get("payload") or {}
+    ok &= check("answers, custom answers and the photo all arrive",
+                pay.get("drivetrain") == "swerve" and pay.get("custom", {}).get(questions[1]["id"]) == 4
+                and len(pay.get("photos") or []) == 1 and H.store.photo(pay["photos"][0])[1])
+    ok &= check("nothing is collected twice", offsite.pull_pits(H.hub) == 0)
+
+    # An edit on the mirror to a record whose photos came from the hub, where
+    # the mirror has not been sent those photos' bytes yet: the ids go back as
+    # ids, and the hub's record keeps every photo.
+    hub_photo = "ab" * 8
+    pay2 = {**pay, "notes": "tidier than we thought", "photos": list(pay["photos"]) + [hub_photo]}
+    code, _, _ = M.req("/api/pit/save", {"eventKey": EK, "team": team, "deviceId": "phoneA",
+                                         "scoutId": "AK", "payload": pay2}, headers=auth)
+    offsite.pull_pits(H.hub)
+    pit = next((p for p in H.store.pit_entries(EK) if p["team"] == team), None)
+    ok &= check("an edit never drops a photo the mirror holds no bytes for",
+                hub_photo in ((pit or {}).get("payload") or {}).get("photos", []),
+                f"({((pit or {}).get('payload') or {}).get('photos')})")
+
+    before = M.store.photo_count(EK)
+    big = {"eventKey": EK, "team": team, "deviceId": "phoneA",
+           "payload": {"notes": "x" * 70000, "photos": ["data:image/png;base64," + base64.b64encode(
+               bytes.fromhex("89504e470d0a1a0a") + b"other").decode()]}}
+    code, _, _ = M.req("/api/pit/save", big, headers=auth)
+    ok &= check("a save that is too large is refused, and files no photo",
+                code == 400 and M.store.photo_count(EK) == before)
+
+    for bad in ({"eventKey": EK, "team": "x", "deviceId": "p"}, {"eventKey": EK, "team": team},
+                {"eventKey": "nope", "team": team, "deviceId": "p"}):
+        code, _, _ = M.req("/api/pitclaim", bad, headers=auth)
+        ok &= check("a claim without a real event, team and phone is refused (%s)" % sorted(bad),
+                    code == 400)
+    M.req("/api/pitclaim", {"eventKey": EK, "team": team, "deviceId": "phoneC", "scoutId": "OLD"},
+          headers=auth)
+
+    def age(c):
+        for holders in (c or {}).values():
+            for v in holders.values():
+                v["at"] -= mirror_server.PIT_CLAIM_SECONDS + 5
+        return c, None
+    M.store.mutate("pitClaims:" + EK, age)
+    code, live, _ = M.req("/api/pit/live?event=" + EK, headers=auth)
+    ok &= check("a claim nobody renews runs out", str(team) not in live["claims"])
+    return ok
+
+
+def test_open_mirror_takes_no_writes(tmp):
+    M = LiveMirror(os.path.join(tmp, "open2"), passcode=None, open_read=True)
+    try:
+        ok = check("an open mirror refuses pit saves",
+                   M.req("/api/pit/save", {"eventKey": EK, "team": 1, "payload": {}})[0] == 403)
+        ok &= check("and edits to the questions",
+                    M.req("/api/pitquestions", {"questions": [], "rev": 0})[0] == 403)
+        return ok
+    finally:
+        M.close()
+
+
 def main():
     tmp = tempfile.mkdtemp(prefix="frc-mirror-test-")
-    for sub in ("throttle", "open"):
+    for sub in ("throttle", "open", "open2"):
         os.makedirs(os.path.join(tmp, sub), exist_ok=True)
     ok = True
     M = LiveMirror(tmp)
@@ -394,6 +520,11 @@ def main():
         ok &= test_skips_unchanged(H)
         ok &= test_photos(H, M, tok)
 
+        print("\npit scouting on the mirror")
+        good, qs = test_pit_questions_on_the_mirror(H, M, tok)
+        ok &= good
+        ok &= test_pit_scouting_on_the_mirror(H, M, tok, qs)
+
         print("\nrestoring from the mirror")
         ok &= test_restores_a_hub(M, tok, tmp)
         ok &= test_history(M, tok)
@@ -404,6 +535,7 @@ def main():
         print("\nthe public internet")
         ok &= test_throttle(tmp)
         ok &= test_open_mode(tmp)
+        ok &= test_open_mirror_takes_no_writes(tmp)
     finally:
         M.close()
         shutil.rmtree(tmp, ignore_errors=True)

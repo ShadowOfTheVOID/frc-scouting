@@ -18,15 +18,15 @@ One Python process serves all of them. Nothing is installed on any phone.
 |---|---|---|
 | `/scout` | six scouts, on phones | The match HUD. The only screen a scout ever needs. |
 | `/tutorial` | a new scout, on their own phone | **Practice.** Six steps: what the job is, taking a seat, the hold button (in whichever layout the phone is set to — simple or two-thumb, with a switch to try the other), an eighty-second practice match to hold along with, a scorecard telling them how close they were and which habit to fix, and what the screens that look broken actually mean. It writes nothing and calls no API, so it is safe to run mid-event. |
-| `/dashboard` | scout lead, strategy | Ten tabs of everything the hub knows, including the team's own pit questions. |
-| `/pit` | pit scouts, on phones | The pit map, and a form per robot. |
+| `/dashboard` | scout lead, strategy | Nine tabs of everything the hub knows. |
 | `/` | the hub laptop only | **The admin panel.** Event key, API keys, passcodes, the off-site mirror. Opens read-only and refuses to open at all from a phone. |
 | `/join` | the hub laptop screen | **One** QR code — the address this laptop reaches the network through, which is the one the phones are on. Scouts point a camera at it. A laptop with a second adapter (Ethernet as well as wifi, or a virtual one from VirtualBox, Docker or a VPN) keeps the others behind a fold, because two equal codes under a heading that says *this* is half the crew scanning an address their phone cannot reach. |
 | `/picklist/print` | the hub laptop | Paper fallback for alliance selection. |
 
 And one that is not this process at all: the **off-site mirror**, a separate website on a host
 you already own, which the hub pushes a copy of the event to about once a minute. It runs
-somewhere else, holds nothing but what it is sent, and is read-only. See below.
+somewhere else and holds what it is sent; the one thing done *on* it is
+[pit scouting](#pit-scouting-on-the-mirror), which the hub collects once a minute. See below.
 
 ---
 
@@ -223,16 +223,24 @@ touched. Two fake matches is enough to train someone.
 
 ---
 
-## The pit app
+## Pit scouting, on the mirror
 
-`/pit`, on a phone. Two views of the same thing, toggled at the top.
+Pit scouting is done on the **off-site mirror** — your team's own website, for example
+`scouting.systemoverload.org` — on the scouts' own phones over their own data. It is not on
+the hub: nobody scouting matches needs it there, and pit scouts walking the pits do not have
+to be on the venue wifi. Students open the mirror, enter the team passcode, and tap
+**Pit scouting** (a link to `…/#pit` opens straight on it). The hub collects what they save
+**once a minute** and it shows on the dashboard like any other pit record.
 
-- **Map** — the actual venue floor plan from Nexus, drawn to scale, with walls, walkway arrows
-  and area labels. Each pit is coloured by whether it has been scouted. Tap one to open the
-  form. This is the point of the app: a pit scout should see where to walk next rather than
-  read team numbers off a list.
-- **List** — the same robots, sorted unscouted-first and then by pit address, so the list reads
-  as a walking order. Works at events with no pit map.
+Two views of the same thing, toggled at the top:
+
+- **Map** — the venue's own floor plan from Nexus, drawn to scale, with walls, walkway arrows
+  and area labels. Each pit is coloured by whether it has been scouted — green done, amber
+  started — and your own team's is outlined in red. Tap one to open the form. This is the
+  point of it: a pit scout should see where to walk next rather than read team numbers off a
+  list.
+- **List** — the same robots, sorted unscouted-first and then by pit address, so the list
+  reads as a walking order. Works at events with no pit map.
 
 The form per robot:
 
@@ -243,41 +251,49 @@ The form per robot:
 | Max climb | L3 / L2 / L1 / none |
 | Can stockpile | yes / some / no |
 | Ground pickup | yes / no |
+| **Our questions** | whatever the team has added — see below |
 | Autos | free text |
 | Weight | number |
 | Notes | free text |
-| Photos | any number, from the camera |
-| **Our questions** | whatever the team has added on the dashboard — see below |
+| Photos | any number, from the camera, shrunk on the phone before sending |
+
+**Two scouts never have to walk to the same pit.** Opening a robot's form tells the mirror,
+and every other phone on the Pit scouting tab shows that robot in solid blue with the scout's
+initials — *AK is on it* — within fifteen seconds. The phone renews the claim every minute
+while the form is open and lets go on Done or Save; the mirror drops a claim nobody has
+renewed for three minutes (a phone that went to sleep or out of signal). It is a marker, not a
+lock: a second scout who opens the same robot is told who has it and can carry on.
+
+**No signal is fine.** Everything typed into a form is kept on the phone as it is entered. A
+save that does not get through says so and keeps the answers; a robot opened again later picks
+up where it left off, and only a save that reached the mirror clears it.
+
+Inspection status and pit addresses come from Nexus when the hub has a key. A progress bar
+tracks how much of the field is done.
 
 ### Your own pit questions
 
-The dashboard's **Setup → Pit questions** tab is where a team adds questions of its own. Each
-one is a **pick one** (a row of chips, two to eight answers), **yes or no**, a **number**, or a
-**short answer**, with an optional help line. They can be reordered and removed, and a preview
-beside the list shows them as the pit scout will. Up to thirty.
+The mirror's **Pit questions** tab is where a team adds questions of its own. Each one is a
+**pick one** (a row of chips, two to eight answers), **yes or no**, a **number**, or a **short
+answer**, with an optional help line. They can be reordered and removed, and a preview shows
+them as a pit scout will. Up to thirty.
 
-- They appear on every pit tablet under **Our questions**, after the built-in ones, within a
-  few seconds of saving — the hub tells the tablets, and they also arrive with the rest of the
-  event data a tablet keeps for when the wifi goes.
+- They appear on the Pit scouting tab under **Our questions**, after the built-in ones, as soon
+  as they are saved, and the hub collects them within a minute.
 - Answers are saved with the robot's pit record, keyed by the question's id rather than its
   wording, so **renaming a question keeps the answers** already given. A deleted question
-  disappears from the tablets and the spreadsheet; its answers stay in the full JSON export.
+  disappears from pit scouting and the spreadsheet; its answers stay in the full JSON export.
 - They show on each team's page on the dashboard and on the mirror, and each gets a column in
   the pit spreadsheet (`/api/export.csv?table=pit`), headed by the question as worded now.
-- Changing them uses the same gate as the picklist: open on a hub with no strategy passcode,
-  and behind it once one is set.
+- Anyone with the mirror's passcode can change them. Two people editing at once cannot undo
+  each other: the second save is refused and asked to reload.
 
-**Two scouts never have to walk to the same pit.** Opening a robot's form tells the hub, and
-every other pit tablet shows that robot in blue — *AK is on it* — within about a second. The
-tablet renews the claim every minute while the form is open and lets go on Done or Save, and
-the hub drops a claim nobody has renewed for three minutes (a tablet that went to sleep or out
-of range). It is a marker, not a lock: a second scout who opens the same robot is told who has
-it and can carry on. Saved pits reach the other tablets the same way, within a second, and
-every tablet also checks the hub every thirty seconds as a backstop.
+### What it needs
 
-Photos are resized on the phone before sending — a 12MP pit photo is not worth 4MB on venue
-wifi. Inspection status and pit address come from Nexus when a key is set. A progress bar
-tracks how much of the field is done.
+- **A mirror with a view passcode.** An `--open` mirror (no passcode) shows pit scouting but
+  refuses every save, because there "anyone with the passcode" would be anyone on the internet.
+- **The hub's mirror push key** set, so the hub can collect. See [the mirror's README](../mirror/README.md).
+- With no mirror at all there is no pit scouting; match scouting is unaffected.
 
 ---
 
@@ -405,10 +421,6 @@ from](#where-the-numbers-come-from).
 
 A **PER-SCOUT** panel sits below it, visible only to the lead. See [Who can see
 what](#who-can-see-what).
-
-### PIT QUESTIONS
-
-The editor for the team's own pit questions — see [Your own pit questions](#your-own-pit-questions).
 
 ### SEATS
 
@@ -677,8 +689,11 @@ key** is the write key: the hub proves it is the hub, and it lives in one line o
 laptop. The **view passcode** is what a person types to read the site, and it gets shared around
 a team over a weekend. If one string did both jobs, anyone it reached could overwrite the event.
 
-The mirror is read-only in the strong sense: there is no route on it that changes anything on
-the hub, and no API key of any kind is ever sent to it. Per-scout quality scores are not
+The mirror never reaches the hub: the hub starts every exchange, and no API key of any kind is
+ever sent to it. The numbers on it are read-only. The two things it accepts — pit records and
+the team's pit questions — need its view passcode, are refused outright on an `--open` mirror,
+and are cleaned again by the hub when it collects them, exactly as if a phone on the venue
+wifi had sent them. Per-scout quality scores are not
 mirrored at all — the hub's rule above is not relaxed for a public host behind one shared
 code.
 
@@ -1054,8 +1069,7 @@ Everything is JSON over plain HTTP. Useful if you want to drive another display 
 | `/api/crew`, `/api/seats`, `/api/seatlog` | GET | Who is where. |
 | `/api/diag` | GET | Server diagnostics and event log. |
 | `/api/picklist` | GET / POST | Reading is open; writing needs the passcode. |
-| `/api/pitclaim` | POST | A pit tablet opening (`{team, deviceId, scoutId}`), renewing, or closing (`release: true`) a robot's form. Read back in `/api/state` as `pitClaims`. |
-| `/api/pitquestions` | POST | Save the team's own pit questions (`{"questions": [...]}`). Same gate as the picklist. They are read back in `/api/state` as `pitQuestions`. |
+| `/api/state` → `pitQuestions` | GET | The team's own pit questions, as last collected from the mirror (they are edited there). |
 | `/api/unlock` | POST | Exchange the passcode for a token. |
 | `/api/sync` | POST | What phones send. Last-write-wins on `updatedAt`. |
 | `/api/import` / `/api/export` | POST / GET | Whole-event JSON, idempotent. |

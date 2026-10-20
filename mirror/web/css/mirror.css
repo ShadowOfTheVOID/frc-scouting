@@ -173,3 +173,122 @@ label{display:block;font:700 14px var(--f-body);color:var(--t0);margin-bottom:6p
   .tbl.stack-narrow .r>.lead::before{content:none}
   .tbl.stack-narrow .r>.lead{grid-column:1 / -1}
 }
+
+/* ------------------------------------------------------------- pit scouting
+   The Pit scouting tab: the venue's own floor plan from Nexus, a list that
+   reads as a walking order, and a full-screen form per robot. Done on phones,
+   one-handed, walking - so everything a thumb touches is at least 44px. */
+.pv{display:flex;flex-direction:column;gap:12px}
+.pv-top{display:flex;gap:10px;align-items:center}
+.pv-toggle{display:flex;gap:4px;background:var(--soft);border-radius:999px;padding:4px;flex:1;max-width:360px}
+.pv-toggle button{flex:1;min-height:40px;border:0;background:transparent;border-radius:999px;
+  font:700 15px var(--f-body);color:var(--t2);cursor:pointer}
+.pv-toggle button.on{background:var(--red);color:var(--on-red)}
+.pv-who{border:0;background:var(--soft);border-radius:999px;padding:10px 14px;cursor:pointer;
+  font:600 13.5px var(--f-body);color:var(--t2);white-space:nowrap}
+.pv-who b{color:var(--t0)}
+.pv-prog{display:flex;flex-direction:column;gap:6px}
+.pv-lbl{display:flex;justify-content:space-between;font:700 14px var(--f-body);color:var(--t1)}
+.pv-lbl #pvPct{color:var(--muted)}
+.pv-bar{height:8px;border-radius:4px;background:var(--soft2);overflow:hidden}
+.pv-bar i{display:block;height:8px;border-radius:4px;background:var(--green)}
+.pv-map{border-radius:24px;background:var(--soft);padding:10px;display:flex;justify-content:center}
+.pv-map svg.pitmap{display:block;width:100%;max-height:78vh;height:auto}
+.pv-map .pit{cursor:pointer}
+.pv-map .pit rect{fill:var(--panel);stroke:none}
+.pv-map .pit.done rect{fill:var(--green-bg)}
+.pv-map .pit.partial rect{fill:var(--amber-bg)}
+.pv-map .pit.ours rect{stroke:var(--red);stroke-width:3}
+.pv-map .pit text{font:700 13px var(--f-body);fill:var(--t0);pointer-events:none}
+.pv-map .pit.done text{fill:var(--green)}
+.pv-map .pit text.addr{font:600 11px var(--f-body);fill:var(--muted)}
+.pv-map .pit.busy rect{fill:var(--blue)}
+.pv-map .pit.busy text,.pv-map .pit.busy text.addr{fill:#fff;font-weight:800}
+.pv-map .emptypit{fill:none;stroke:rgba(var(--ink),.12);stroke-width:1;stroke-dasharray:4 4}
+.pv-map .area rect{fill:rgba(var(--ink),.04);stroke:none}
+.pv-map .area text,.pv-map text.area{font:700 11.5px var(--f-body);fill:var(--dim)}
+.pv-map .wall{fill:rgba(var(--ink),.16)}
+.pv-map .arrow{fill:rgba(var(--ink),.22)}
+.pv-list{display:flex;flex-direction:column;gap:2px}
+.pv-row{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:20px;min-height:58px;cursor:pointer}
+.pv-row:nth-child(odd){background:var(--soft)}
+.pv-row b{font:700 21px var(--f-num);min-width:52px}
+.pv-row .nm{flex:1;font:600 14px var(--f-body);color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pv-row .st{font:700 12.5px var(--f-body);padding:4px 11px;border-radius:999px;color:var(--t3);background:var(--soft2);white-space:nowrap}
+.pv-row.done .st{color:var(--green);background:var(--green-bg)}
+.pv-row.partial .st{color:var(--amber);background:var(--amber-bg)}
+.pv-row.busy .st{color:var(--blue-label);background:var(--blue-bg)}
+.pv-empty{padding:22px 16px;text-align:center;color:var(--t5);font:500 14px/1.5 var(--f-body);
+  background:var(--soft);border-radius:20px}
+
+/* the form: a full-screen sheet */
+.psheet{position:fixed;inset:0;z-index:30;background:var(--panel);overflow:hidden}
+.pv-sheet{display:flex;flex-direction:column;height:100%;max-width:720px;margin:0 auto;position:relative}
+.pv-shead{display:flex;align-items:center;gap:12px;padding:calc(12px + env(safe-area-inset-top)) 16px 10px}
+.pv-shead .no{font:700 34px/1 var(--f-num)}
+.pv-shead .mt{flex:1;min-width:0}
+.pv-shead .mt > div:first-child{font:800 14px var(--f-body);color:var(--t0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pv-shead .sub2{display:flex;align-items:center;gap:8px;margin-top:3px;font:600 13.5px var(--f-body);color:var(--muted)}
+.pv-close{min-height:42px;padding:0 18px;border-radius:999px;background:var(--soft);border:0;
+  font:800 14.5px var(--f-body);color:var(--t0);cursor:pointer}
+.pv-insp{font:700 12.5px var(--f-body);padding:4px 10px;border-radius:999px;background:var(--soft);color:var(--muted)}
+.pv-insp.complete{background:var(--green-bg);color:var(--green)}
+.pv-insp.hold{background:var(--red-bg);color:var(--red-alert)}
+.pv-sbody{flex:1;min-height:0;overflow:auto;-webkit-overflow-scrolling:touch;
+  padding:6px 16px calc(100px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:22px}
+.pv-busy{padding:12px 16px;border-radius:20px;background:var(--blue-bg);font:500 14px/1.5 var(--f-body);color:var(--t1)}
+.pv-busy b{color:var(--blue-label)}
+.pv-grp{display:flex;flex-direction:column;gap:16px}
+.pv-grp > h3{margin:0;font:800 16px var(--f-body);color:var(--t0)}
+.pv-q .lbl{font:700 14.5px/1.35 var(--f-body);color:var(--t1);margin-bottom:8px}
+.pv-q .hint2{font:500 13.5px/1.45 var(--f-body);color:var(--dim);margin-top:6px}
+.pv-chips{display:flex;gap:8px;flex-wrap:wrap}
+.pv-chip{flex:1;min-width:76px;min-height:50px;border-radius:999px;border:0;padding:0 14px;cursor:pointer;
+  background:var(--soft);font:700 15px var(--f-body);color:var(--t1)}
+.pv-chip.on{background:var(--red);color:var(--on-red);font-weight:800}
+.pv-in{width:100%;background:var(--soft);border:2px solid transparent;border-radius:18px;
+  padding:13px 16px;color:var(--t0);font:600 15px var(--f-body)}
+textarea.pv-in{resize:none;line-height:1.5}
+.pv-in:focus{outline:none;border-color:var(--red-ring)}
+.pv-in::placeholder{color:var(--dim)}
+.pv-shots{display:flex;gap:8px;flex-wrap:wrap}
+.pv-shots img{width:88px;height:88px;object-fit:cover;border-radius:20px}
+.pv-add{width:88px;height:88px;border-radius:20px;background:var(--soft);border:0;cursor:pointer;
+  font:700 14px var(--f-body);color:var(--t2)}
+.pv-savebar{position:absolute;left:0;right:0;bottom:0;padding:12px 16px calc(12px + env(safe-area-inset-bottom));
+  background:linear-gradient(180deg,transparent,var(--panel) 30%)}
+.pv-save{width:100%;min-height:58px;border-radius:999px;border:0;cursor:pointer;
+  background:var(--red);color:var(--on-red);font:800 16px var(--f-body)}
+.pv-save:disabled{opacity:.6;cursor:default}
+.pv-save.saved{background:var(--green-bg);color:var(--green);opacity:1}
+
+/* ------------------------------------------------------------ pit questions */
+.qed{display:flex;flex-direction:column;gap:14px;max-width:900px}
+.qlist{display:flex;flex-direction:column;gap:10px}
+.qcard{background:var(--soft);border-radius:22px;padding:14px 16px;display:grid;
+  grid-template-columns:1fr 160px auto;gap:10px 12px;align-items:center}
+.qcard input,.qcard select{width:100%;background:var(--panel);border:2px solid transparent;border-radius:14px;
+  padding:9px 13px;color:var(--t0);font:600 14px var(--f-body)}
+.qcard input:focus,.qcard select:focus{outline:none;border-color:var(--red-ring)}
+.qcard input::placeholder{color:var(--dim);font-weight:500}
+.qcard .wide{grid-column:1 / -1}
+.qcard .tools{display:flex;gap:4px}
+.qcard .sub{font:600 12.5px var(--f-body);color:var(--t4);margin-bottom:4px}
+.qbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.qbtn{padding:9px 16px;border-radius:999px;border:0;background:var(--soft);color:var(--t1);
+  font:700 14px var(--f-body);cursor:pointer}
+.qbtn:hover{color:var(--t0)}
+.qbtn.go{background:var(--red);color:var(--on-red);font-weight:800}
+.qbtn.sm{padding:7px 11px;font-size:13px;background:var(--panel)}
+.qbtn:disabled{opacity:.4;cursor:default}
+.qprev{display:flex;flex-direction:column;gap:14px;background:var(--soft);border-radius:22px;padding:16px}
+.qprev .lbl{font:700 14px var(--f-body);color:var(--t1);margin-bottom:6px}
+.qprev .chips{display:flex;gap:6px;flex-wrap:wrap}
+.qprev .pchip{padding:7px 14px;border-radius:999px;background:var(--panel);font:700 13px var(--f-body);color:var(--t1)}
+.qprev .box{height:38px;border-radius:14px;background:var(--panel)}
+.qprev .h2{font:500 12.5px var(--f-body);color:var(--dim);margin-top:4px}
+@media (max-width:719px){
+  .qcard{grid-template-columns:1fr auto}
+  .qcard select{grid-column:1}
+  .qcard .tools{grid-column:2;grid-row:2}
+}

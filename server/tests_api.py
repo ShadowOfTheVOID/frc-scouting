@@ -26,6 +26,7 @@ import analytics  # noqa: E402
 import envfile  # noqa: E402
 import hub  # noqa: E402
 import offsite  # noqa: E402
+import pitquestions  # noqa: E402
 import rules  # noqa: E402
 import lovat as lovat_report  # noqa: E402
 import discover  # noqa: E402
@@ -581,44 +582,43 @@ def test_csv_export(L):
 
 
 def test_custom_pit_questions(L):
-    """A team's own pit questions: saved from the dashboard, delivered to the
-    pit tablet, answered, and out the other end in the spreadsheet."""
+    """A team's own pit questions: cleaned the same way wherever they are
+    edited (the mirror, now), delivered to the pit tablet, answered, and out
+    the other end in the spreadsheet."""
     ok = True
     qs = [{"label": "  Bumper   colour ", "type": "choice", "options": ["red", "blue", "Red", " "]},
           {"label": "Battery count", "type": "number"},
           {"label": "Do they have a spare drive motor?", "type": "yesno"},
           {"label": "", "type": "text"},                       # blank: dropped
           {"label": "Programming language", "type": "nonsense"}]
-    code, r = L.req("/api/pitquestions", {"questions": qs})
-    saved = (r or {}).get("questions") or []
-    ok &= check("custom pit questions save with no passcode set", code == 200 and len(saved) == 4,
-                f"({code}, {len(saved)})")
+    saved, err = pitquestions.clean(qs, [])
+    ok &= check("questions clean to four", not err and len(saved) == 4, f"({err})")
     ok &= check("labels are tidied and duplicate answers dropped",
-                saved and saved[0]["label"] == "Bumper colour" and saved[0]["options"] == ["red", "blue"])
-    ok &= check("an unknown type becomes free text", saved and saved[3]["type"] == "text")
+                saved[0]["label"] == "Bumper colour" and saved[0]["options"] == ["red", "blue"])
+    ok &= check("an unknown type becomes free text", saved[3]["type"] == "text")
     ok &= check("every question gets its own id", len({q["id"] for q in saved}) == 4)
 
-    code, st = L.req("/api/state")
-    ok &= check("the pit tablet gets the questions in /api/state",
-                code == 200 and [q["id"] for q in st.get("pitQuestions", [])] == [q["id"] for q in saved])
-
-    # Renaming keeps the id; a new question never takes an old one's.
     battery = saved[1]
-    edit = [{**battery, "label": "Batteries"}, {"label": "Bumper colour", "type": "text"}]
-    code, r = L.req("/api/pitquestions", {"questions": edit})
-    again = r["questions"]
+    again, _ = pitquestions.clean([{**battery, "label": "Batteries"},
+                                   {"label": "Bumper colour", "type": "text"}], saved)
     ok &= check("renaming a question keeps its id, so its answers stay with it",
                 again[0]["id"] == battery["id"] and again[0]["label"] == "Batteries")
-    ok &= check("a re-added question with old words gets a new id",
-                again[1]["id"] != saved[0]["id"])
+    ok &= check("a re-added question with old words gets a new id", again[1]["id"] != saved[0]["id"])
+    ok &= check("a choice with one answer is refused",
+                bool(pitquestions.clean([{"label": "Pick", "type": "choice", "options": ["only"]}], [])[1]))
+    ok &= check("too many questions are refused",
+                bool(pitquestions.clean([{"label": "x%d" % i} for i in range(31)], [])[1]))
+    ok &= check("ids from elsewhere are checked, not believed",
+                [q["id"] for q in pitquestions.trusted(
+                    again + [{"id": "<script>", "label": "x"}, {"id": again[0]["id"], "label": "dup"}])]
+                == [q["id"] for q in again])
+    ok &= check("the hub no longer edits questions itself",
+                L.req("/api/pitquestions", {"questions": []})[0] == 404)
 
-    code, r = L.req("/api/pitquestions", {"questions": [{"label": "Pick one", "type": "choice",
-                                                         "options": ["only"]}]})
-    ok &= check("a choice with one answer is refused", code == 400)
-    code, r = L.req("/api/pitquestions", {"questions": [{"label": "x%d" % i} for i in range(31)]})
-    ok &= check("too many questions are refused", code == 400)
-    code, r = L.req("/api/pitquestions", {"questions": "junk"})
-    ok &= check("a list that is not a list is refused", code == 400)
+    L.store.set("pitQuestions", again)
+    code, st = L.req("/api/state")
+    ok &= check("the pit tablet gets the questions in /api/state",
+                code == 200 and [q["id"] for q in st.get("pitQuestions", [])] == [q["id"] for q in again])
 
     # Answers: kept when they are a number or a short string, dropped otherwise.
     L.req("/api/sync", {"pit": [{
@@ -638,52 +638,8 @@ def test_custom_pit_questions(L):
     ok &= check("the pit spreadsheet has a column per custom question, answered",
                 head.endswith(",Batteries,Bumper colour") and row.endswith(",6,orange"),
                 f"({head[-40:]} | {row[-20:]})")
-
-    # Behind the strategy passcode once there is one.
-    L.req("/api/config", {"strategyPin": "4821"})
-    code, _ = L.req("/api/pitquestions", {"questions": []})
-    ok &= check("with a passcode set, changing questions needs it", code == 403)
-    code, r = L.req("/api/unlock", {"pin": "4821"})
-    code, _ = L.req("/api/pitquestions", {"questions": []},
-                    headers={"X-Strategy-Token": r.get("token")})
-    ok &= check("...and works with it", code == 200)
-    L.req("/api/config", {"strategyPin": ""})
     return ok
 
-
-def test_pit_claims(L):
-    """Two pit scouts should not walk to the same pit: an open form is shown
-    on every other tablet, renewed each minute, and gone once it closes."""
-    ok = True
-    L.store.set("eventKey", EK)
-    code, r = L.req("/api/pitclaim", {"team": 9982, "deviceId": "tabA", "scoutId": "AK"})
-    ok &= check("a pit tablet can claim the robot it opened",
-                code == 200 and r["claims"].get("9982", {}).get("tabA", {}).get("scoutId") == "AK")
-    code, st = L.req("/api/state")
-    ok &= check("other tablets see the claim in /api/state",
-                code == 200 and "tabA" in (st.get("pitClaims") or {}).get("9982", {}))
-    code, r = L.req("/api/pitclaim", {"team": 9982, "deviceId": "tabB", "scoutId": "JM"})
-    ok &= check("a second tablet opening the same robot does not replace the first",
-                set(r["claims"]["9982"]) == {"tabA", "tabB"})
-    code, r = L.req("/api/pitclaim", {"team": 9982, "deviceId": "tabB", "release": True})
-    ok &= check("closing the second leaves the first's claim alone",
-                set(r["claims"].get("9982", {})) == {"tabA"})
-    code, r = L.req("/api/pitclaim", {"team": 9982, "deviceId": "tabA", "release": True})
-    ok &= check("the claiming tablet can release it", "9982" not in r["claims"])
-
-    L.req("/api/pitclaim", {"team": 9983, "deviceId": "tabA", "scoutId": "AK"})
-    def age(c):
-        for holders in c.values():
-            for v in holders.values():
-                v["at"] -= hub.Hub.PIT_CLAIM_SECONDS + 5
-        return c, None
-    L.store.mutate("pitClaims:" + EK, age, default=dict)
-    ok &= check("a claim nobody renews runs out", "9983" not in L.hub.pit_claims(EK))
-
-    for bad in ({"team": "x", "deviceId": "t"}, {"team": 9982}, {"team": -4, "deviceId": "t"}):
-        code, _ = L.req("/api/pitclaim", bad)
-        ok &= check("a claim without a real team and device is refused (%s)" % sorted(bad), code == 400)
-    return ok
 
 def test_hostile_input(L):
     """Anything on the venue wifi can POST here. None of it may take a thread down.
@@ -2038,8 +1994,7 @@ def test_scope_lists_are_complete(L):
              h.nexus_data("pits", EK, {}), h.nexus_data("pitMap", EK),
              h.nexus_data("inspection", EK, {}), h.nexus_data("alliances", EK, []),
              st.flags(EK), h.seats(), st.get("matchClocks"), st.get("clockFixes"),
-             st.pit_entries(EK), st.get("pitQuestions"), h.pit_claims(EK),
-             h.event_data("rankings", EK, {}),
+             st.pit_entries(EK), st.get("pitQuestions"), h.event_data("rankings", EK, {}),
              h.event_data("epa", EK, {}), h.event_data("earlyScores", EK, {}))),
         ("ANALYTICS_SCOPES", hub.ANALYTICS_SCOPES,
          {"matches", "teams", "scout_entries", "solved"},
@@ -2997,7 +2952,6 @@ def main():
                    test_collection_path_is_intact,
                    test_after_screen_extras_reach_the_dashboard,
                    test_custom_pit_questions,
-                   test_pit_claims,
                    test_one_climb_cannot_also_be_a_fall, test_event_picker_survives_junk,
                    test_env_file_survives_a_failed_write,
                    test_both_halves_read_a_key_the_same_way,
