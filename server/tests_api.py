@@ -26,6 +26,7 @@ import analytics  # noqa: E402
 import envfile  # noqa: E402
 import hub  # noqa: E402
 import offsite  # noqa: E402
+import pitquestions  # noqa: E402
 import rules  # noqa: E402
 import lovat as lovat_report  # noqa: E402
 import discover  # noqa: E402
@@ -577,6 +578,66 @@ def test_csv_export(L):
     ok &= check("pit csv answers even with no pit data", code == 200)
     code, r = L.req("/api/export.csv?table=nonsense")
     ok &= check("an unknown table is a 400, not a stack trace", code == 400)
+    return ok
+
+
+def test_custom_pit_questions(L):
+    """A team's own pit questions: cleaned the same way wherever they are
+    edited (the mirror, now), delivered to the pit tablet, answered, and out
+    the other end in the spreadsheet."""
+    ok = True
+    qs = [{"label": "  Bumper   colour ", "type": "choice", "options": ["red", "blue", "Red", " "]},
+          {"label": "Battery count", "type": "number"},
+          {"label": "Do they have a spare drive motor?", "type": "yesno"},
+          {"label": "", "type": "text"},                       # blank: dropped
+          {"label": "Programming language", "type": "nonsense"}]
+    saved, err = pitquestions.clean(qs, [])
+    ok &= check("questions clean to four", not err and len(saved) == 4, f"({err})")
+    ok &= check("labels are tidied and duplicate answers dropped",
+                saved[0]["label"] == "Bumper colour" and saved[0]["options"] == ["red", "blue"])
+    ok &= check("an unknown type becomes free text", saved[3]["type"] == "text")
+    ok &= check("every question gets its own id", len({q["id"] for q in saved}) == 4)
+
+    battery = saved[1]
+    again, _ = pitquestions.clean([{**battery, "label": "Batteries"},
+                                   {"label": "Bumper colour", "type": "text"}], saved)
+    ok &= check("renaming a question keeps its id, so its answers stay with it",
+                again[0]["id"] == battery["id"] and again[0]["label"] == "Batteries")
+    ok &= check("a re-added question with old words gets a new id", again[1]["id"] != saved[0]["id"])
+    ok &= check("a choice with one answer is refused",
+                bool(pitquestions.clean([{"label": "Pick", "type": "choice", "options": ["only"]}], [])[1]))
+    ok &= check("too many questions are refused",
+                bool(pitquestions.clean([{"label": "x%d" % i} for i in range(31)], [])[1]))
+    ok &= check("ids from elsewhere are checked, not believed",
+                [q["id"] for q in pitquestions.trusted(
+                    again + [{"id": "<script>", "label": "x"}, {"id": again[0]["id"], "label": "dup"}])]
+                == [q["id"] for q in again])
+    ok &= check("the hub no longer edits questions itself",
+                L.req("/api/pitquestions", {"questions": []})[0] == 404)
+
+    L.store.set("pitQuestions", again)
+    code, st = L.req("/api/state")
+    ok &= check("the pit tablet gets the questions in /api/state",
+                code == 200 and [q["id"] for q in st.get("pitQuestions", [])] == [q["id"] for q in again])
+
+    # Answers: kept when they are a number or a short string, dropped otherwise.
+    L.req("/api/sync", {"pit": [{
+        "eventKey": EK, "team": 9983, "scoutId": "PT", "deviceId": "test",
+        "updatedAt": time.time(),
+        "payload": {"drivetrain": "tank", "custom": {
+            battery["id"]: 6, "junk": {"a": 1}, "flag": True, "x" * 60: "too long a key",
+            again[1]["id"]: "orange"}}}]})
+    pit = next((e for e in L.store.pit_entries(EK) if e["team"] == 9983), None)
+    custom = (pit or {}).get("payload", {}).get("custom", {})
+    ok &= check("custom answers are stored, junk ones dropped",
+                custom == {battery["id"]: 6, again[1]["id"]: "orange"}, f"({custom})")
+
+    code, body = L.req("/api/export.csv?table=pit", raw=True)
+    head = body.splitlines()[0] if code == 200 else ""
+    row = next((l for l in body.splitlines() if l.startswith("9983,")), "")
+    ok &= check("the pit spreadsheet has a column per custom question, answered",
+                head.endswith(",Batteries,Bumper colour") and row.endswith(",6,orange"),
+                f"({head[-40:]} | {row[-20:]})")
     return ok
 
 
@@ -1452,7 +1513,7 @@ def test_admin_panel(L):
 
     code, r = L.req("/api/config", {"ourTeam": "254"})
     ok &= check("a save without it is refused, and says which button to press",
-                code == 403 and r.get("locked") is True and "UNLOCK" in r["error"],
+                code == 403 and r.get("locked") is True and "Unlock" in r["error"],
                 f"({code} {r})")
     ok &= check("and changed nothing", L.store.get("ourTeam") == "6059")
     for path in ("/api/keycheck", "/api/keytest"):
@@ -1933,7 +1994,7 @@ def test_scope_lists_are_complete(L):
              h.nexus_data("pits", EK, {}), h.nexus_data("pitMap", EK),
              h.nexus_data("inspection", EK, {}), h.nexus_data("alliances", EK, []),
              st.flags(EK), h.seats(), st.get("matchClocks"), st.get("clockFixes"),
-             st.pit_entries(EK), h.event_data("rankings", EK, {}),
+             st.pit_entries(EK), st.get("pitQuestions"), h.event_data("rankings", EK, {}),
              h.event_data("epa", EK, {}), h.event_data("earlyScores", EK, {}))),
         ("ANALYTICS_SCOPES", hub.ANALYTICS_SCOPES,
          {"matches", "teams", "scout_entries", "solved"},
@@ -2890,6 +2951,7 @@ def main():
                    test_vendor_backoff_is_remembered,
                    test_collection_path_is_intact,
                    test_after_screen_extras_reach_the_dashboard,
+                   test_custom_pit_questions,
                    test_one_climb_cannot_also_be_a_fall, test_event_picker_survives_junk,
                    test_env_file_survives_a_failed_write,
                    test_both_halves_read_a_key_the_same_way,

@@ -5,7 +5,7 @@
 | What | Where | License |
 |---|---|---|
 | [qrcode-generator](https://github.com/kazuhikoarase/qrcode-generator) 1.4.4 | `web/js/vendor/qrcode.js` | MIT |
-| [Barlow](https://fonts.google.com/specimen/Barlow), [Barlow Condensed](https://fonts.google.com/specimen/Barlow+Condensed), [JetBrains Mono](https://www.jetbrains.com/lp/mono/) | `web/fonts/` | SIL Open Font License 1.1 |
+| [Nunito](https://fonts.google.com/specimen/Nunito), [Barlow](https://fonts.google.com/specimen/Barlow), [Barlow Condensed](https://fonts.google.com/specimen/Barlow+Condensed), [JetBrains Mono](https://www.jetbrains.com/lp/mono/) | `web/fonts/` | SIL Open Font License 1.1 |
 
 Fonts are self-hosted rather than loaded from Google Fonts so typography is
 identical at a venue with no internet. Only the latin subset is included.

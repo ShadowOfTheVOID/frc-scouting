@@ -440,24 +440,34 @@ Practice with a fake event before you are standing in a venue. See
 
 That is it. From here on they tap the icon.
 
+### Light or dark
+
+Every page has a **Light mode / Dark mode** button (on the phone it is on the seat screen). It
+starts out following the device's own setting, and a choice is remembered per browser.
+
 ### During matches
 
 Scouts do not have to do anything except watch their robot:
 
-- **Left thumb** picks how fast the robot is shooting — *a trickle*, *steady*, *dumping*.
-- **Right thumb** holds the big pad while the robot is actually shooting. That is the whole job.
+- **Simple mode** (the default for a new phone): hold the one big button while the robot is
+  actually shooting, then tap how fast it was — *a few*, *steady*, *lots* — or leave it and the
+  last answer is kept. That is the whole job.
+- **Pro mode** (switch on the seat screen): the two-thumb layout. Left thumb picks how fast,
+  right thumb holds the pad. Same data either way.
+- When their hub is off the button goes grey, but holding it still counts: those shots score
+  nothing, and they are how the dashboard measures wasted fuel.
 - The first scout to tap the pad starts the clock **for everyone on that match**. The others'
   phones jump straight into the match on the same clock.
 - **Tapping late is fine.** Really. Tell them to tap when they notice the match started, not to
   race the buzzer — the hub corrects the timing afterwards from official results.
 - **Before the buzzer**, while the robot is lining up, the waiting screen asks two things in one
   tap each: where it starts, and how much fuel it is carrying. Both can be left blank.
-- **CLIMB** is one button that cycles the level, and it now also records *when* it was tapped —
+- **Climb** is one button that cycles the level, and it now also records *when* it was tapped —
   the second of the match this robot left to go and climb, which is the first thing an alliance
   captain asks about a robot that says it climbs. Nothing extra for the scout to do.
 - After the buzzer: a few taps for driving, how much of it went in, defence, anything that went
-  wrong, then **SEND IT IN**.
-- **A FEW MORE THINGS** on that screen opens a second page of optional one-tap questions: which
+  wrong, then **Send it in**.
+- **A few more things** on that screen opens a second page of optional one-tap questions: which
   lane it started in, how it crosses the field, whether it got stuck and on what, whether it
   shoots on the move or knocks shots down, and where on the tower it climbed. Skipping them
   costs nothing — an unanswered question reads as *not asked* everywhere, never as a no. Two of
@@ -529,11 +539,14 @@ time:
   unplugged, closed and put in a bag between quals. `data/snapshots/` survives a corrupt
   database; it does not survive the laptop being dropped, stolen or wiped. A mirror does.
 - **Anyone can read the numbers from anywhere.** A lead in the stands on cell data, a mentor at
-  home, a driver in the queue line — none of them have to be on venue wifi, and none of them can
-  change anything. It is read-only over there.
+  home, a driver in the queue line — none of them have to be on venue wifi. The numbers are
+  read-only over there.
+- **Pit scouting happens there.** Pit scouts use the mirror on their own phones, and the hub
+  collects what they save once a minute — see [Pit scouting](#pit-scouting).
 
-The hub pushes; the mirror never asks. That is the only direction that works from behind a
-venue's network, and it means nothing on the internet can reach into the laptop.
+The hub always starts the conversation: it pushes the event, and it asks for pit scouting.
+The mirror never calls the hub. That is the only direction that works from behind a venue's
+network, and it means nothing on the internet can reach into the laptop.
 
 **On the website's host,** once:
 
@@ -606,6 +619,21 @@ behaves exactly as it will in a real one — and nothing they do is saved. Two f
 they have got it.
 
 ---
+
+## Pit scouting
+
+Pit scouting is done on your team's mirror site (for example
+`scouting.systemoverload.org`), not on the hub — students open it on their own phones, enter
+the team passcode and tap **Pit scouting**. They get the venue's pit map from Nexus, a form per
+robot, and a blue *AK is on it* marker so two of them never walk to the same pit. The hub
+collects everything once a minute, and it shows on the dashboard. Answers are kept on the phone
+until they reach the mirror, so a pit aisle with no signal loses nothing.
+
+The **Pit questions** tab on the mirror adds questions of your own — pick one, yes or no, a
+number, or a short answer. Each gets its own column in the pit spreadsheet, and renaming one
+keeps the answers already given.
+
+Pit scouting needs the mirror set up with a passcode — see [mirror/README.md](mirror/README.md).
 
 ## The picklist
 

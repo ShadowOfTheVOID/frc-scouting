@@ -38,6 +38,15 @@ CREATE TABLE IF NOT EXISTS photos (
   photo_id TEXT PRIMARY KEY, event_key TEXT, team INTEGER,
   mime TEXT, data BLOB, updated_at REAL NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_photo_event ON photos(event_key);
+
+-- Pit scouting done on this site, waiting for the hub to collect it. One row
+-- per robot per event, the newest save; `seq` only ever goes up, so the hub
+-- asks for "everything after the last seq I took" and nothing is sent twice.
+CREATE TABLE IF NOT EXISTS pit_inbox (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_key TEXT NOT NULL, team INTEGER NOT NULL,
+  updated_at REAL NOT NULL, record TEXT NOT NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pit_inbox ON pit_inbox(event_key, team);
 """
 
 
@@ -192,6 +201,66 @@ class Store:
             q = "SELECT photo_id FROM photos WHERE photo_id IN (%s)" % ",".join("?" * len(chunk))
             have.update(r["photo_id"] for r in self.conn().execute(q, chunk).fetchall())
         return have
+
+    def latest_part(self, event_key, key, default=None):
+        """One top-level part of the newest bundle for an event, cached per revision.
+
+        The pit scouting page polls every fifteen seconds from every phone in
+        the pits, and reading the newest bundle means unpacking the whole
+        event. Its parts only change when a new bundle arrives, so the bundle
+        is unpacked once per arrival and only the small parts asked for are
+        kept.
+        """
+        r = self.conn().execute(
+            "SELECT id FROM revisions WHERE event_key=? ORDER BY id DESC LIMIT 1",
+            (event_key,)).fetchone()
+        if not r:
+            return default
+        cache = self.__dict__.setdefault("_part_cache", {})
+        hit = cache.get(event_key)
+        if not hit or hit[0] != r["id"]:
+            b = self.revision(event_key, r["id"]) or {}
+            hit = (r["id"], {"pit": b.get("pit") or [], "pitQuestions": b.get("pitQuestions") or []})
+            cache[event_key] = hit
+        return hit[1].get(key, default)
+
+    # ----------------------------------------------------------- pit inbox
+    def put_pit(self, rec):
+        """Keep the newest save for one robot. Returns its new seq.
+
+        Replaced rather than updated, so the row takes a fresh seq and the hub,
+        asking for everything after the last seq it collected, picks it up.
+        """
+        with self._write:
+            c = self.conn()
+            # One transaction: a reader never sees the robot missing between
+            # the two statements, and a crash never loses the save.
+            c.execute("BEGIN IMMEDIATE")
+            try:
+                c.execute("DELETE FROM pit_inbox WHERE event_key=? AND team=?",
+                          (rec["eventKey"], int(rec["team"])))
+                cur = c.execute(
+                    "INSERT INTO pit_inbox(event_key,team,updated_at,record) VALUES(?,?,?,?)",
+                    (rec["eventKey"], int(rec["team"]), float(rec["updatedAt"]),
+                     json.dumps(rec, separators=(",", ":"))))
+                c.execute("COMMIT")
+            except Exception:
+                c.execute("ROLLBACK")
+                raise
+            return cur.lastrowid
+
+    def pits_since(self, seq, limit=10):
+        """[(seq, record)] saved after `seq`, oldest first."""
+        rows = self.conn().execute(
+            "SELECT seq, record FROM pit_inbox WHERE seq>? ORDER BY seq LIMIT ?",
+            (int(seq or 0), int(limit))).fetchall()
+        return [(r["seq"], json.loads(r["record"])) for r in rows]
+
+    def pits_for(self, event_key):
+        """{team: record} for one event, every robot saved here."""
+        rows = self.conn().execute("SELECT team, record FROM pit_inbox WHERE event_key=?",
+                                   (event_key,)).fetchall()
+        return {r["team"]: json.loads(r["record"]) for r in rows}
 
     def photo_count(self, event_key):
         r = self.conn().execute("SELECT COUNT(*) AS n FROM photos WHERE event_key=?",

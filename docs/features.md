@@ -17,22 +17,22 @@ One Python process serves all of them. Nothing is installed on any phone.
 | Address | Who opens it | What it is |
 |---|---|---|
 | `/scout` | six scouts, on phones | The match HUD. The only screen a scout ever needs. |
-| `/tutorial` | a new scout, on their own phone | **Practice.** Six steps: what the job is, taking a seat, the two thumbs, an eighty-second practice match to hold along with, a scorecard telling them how close they were and which habit to fix, and what the screens that look broken actually mean. It writes nothing and calls no API, so it is safe to run mid-event. |
-| `/dashboard` | scout lead, strategy | Seven tabs of everything the hub knows. |
-| `/pit` | pit scouts, on phones | The pit map, and a form per robot. |
+| `/tutorial` | a new scout, on their own phone | **Practice.** Six steps: what the job is, taking a seat, the hold button (in whichever layout the phone is set to — simple or two-thumb, with a switch to try the other), an eighty-second practice match to hold along with, a scorecard telling them how close they were and which habit to fix, and what the screens that look broken actually mean. It writes nothing and calls no API, so it is safe to run mid-event. |
+| `/dashboard` | scout lead, strategy | Nine tabs of everything the hub knows. |
 | `/` | the hub laptop only | **The admin panel.** Event key, API keys, passcodes, the off-site mirror. Opens read-only and refuses to open at all from a phone. |
 | `/join` | the hub laptop screen | **One** QR code — the address this laptop reaches the network through, which is the one the phones are on. Scouts point a camera at it. A laptop with a second adapter (Ethernet as well as wifi, or a virtual one from VirtualBox, Docker or a VPN) keeps the others behind a fold, because two equal codes under a heading that says *this* is half the crew scanning an address their phone cannot reach. |
 | `/picklist/print` | the hub laptop | Paper fallback for alliance selection. |
 
 And one that is not this process at all: the **off-site mirror**, a separate website on a host
 you already own, which the hub pushes a copy of the event to about once a minute. It runs
-somewhere else, holds nothing but what it is sent, and is read-only. See below.
+somewhere else and holds what it is sent; the one thing done *on* it is
+[pit scouting](#pit-scouting-on-the-mirror), which the hub collects once a minute. See below.
 
 ---
 
 ## The scout phone
 
-Landscape, two thumbs, six screens. The app moves between them on its own — a scout never
+Landscape, six screens, in a simple one-button layout or a two-thumb one. The app moves between them on its own — a scout never
 navigates.
 
 ### TAKE A SEAT
@@ -100,29 +100,45 @@ battery; see [Battery](how-it-works.md#battery).
 
 ### LIVE MATCH
 
-The only screen that matters, and it has two controls.
+The only screen that matters. It comes in two layouts, picked with the **Simple mode** switch
+on the seat screen (and on standby). Both record exactly the same thing — when the robot was
+shooting, and roughly how fast — so the solver cannot tell them apart, and each entry carries
+`inputMode` (`simple` or `pro`) so their accuracy can be compared later.
 
-- **Left thumb — the rate ladder.** `DUMPING` / `STEADY` / `A TRICKLE`. How hard the robot is
-  shooting right now.
-- **Right thumb — the hold pad.** Held down for as long as the robot is actually shooting.
-  That is the whole job.
+- **Simple mode** (on by default for a phone that has never chosen). One big button: hold it
+  while the robot shoots. When it is let go the run is saved straight away at the last speed
+  picked, and the column beside it asks **How fast was that?** — *A few* / *Steady* / *Lots*. A
+  tap there re-labels that run; ignoring it keeps the speed. Holding the button again starts
+  the next run immediately, so a robot that shoots twice in a row is never missed while the
+  scout reads. Simulated against the solver, picking the speed after the run instead of during
+  it costs about one point of per-match error (13% → 14%), well under what a beginner
+  fighting the two-thumb layout costs.
+- **Pro mode.** The two-thumb layout. **Left thumb** picks how fast — *Lots* / *Steady* /
+  *A few*, with their balls-per-second priors beside them. **Right thumb** holds the pad while
+  the robot is actually shooting.
 
-Everything else on the screen is read-only feedback: a running ball estimate, the shift strip
-showing whether this alliance's hub is live or dead right now, and a bar of every run logged so
-far.
+The middle of the screen only shows what a scout needs mid-match: the robot, the clock, and a
+pill saying whether shots count right now — **Hub on**, **Hub off**, or just the shift when
+the phone does not know who won auto yet. The running ball estimate, the run count and the
+timeline of runs are on the after-the-buzzer screen instead.
+
+When the hub is off the button turns grey and says so, but it is **never blocked**: holding it
+still records the run. Those runs score nothing (the official count for an off shift is zero,
+so the split gives them nothing), and they are what *wasted fuel* and *stockpiles* on the
+dashboard are measured from.
 
 The first tap on the pad also **starts the match clock for everyone watching that match** — the
-other five phones adopt the same timeline and show `CLOCK FROM AK` so nobody wonders whose
+other five phones adopt the same timeline and show `Clock from AK` so nobody wonders whose
 clock they are on. Tapping late costs nothing; the hub re-anchors afterwards from the official
 start time.
 
-Two smaller pads:
+Smaller buttons, in both layouts:
 
-- **FEEDING** and **DEFENDING** — held the same way as the main pad, recording when the robot
+- **Feeding** and **Defending** — held the same way as the main pad, recording when the robot
   was doing something other than scoring.
-- **UNDO** takes back the most recently finished run of any kind — shooting, feeding or
+- **Undo** (top bar) takes back the most recently finished run of any kind — shooting, feeding or
   defending.
-- **CLIMB** cycles `None → L1 → L2 → L3`. During auto it is a single toggle, because the auto
+- **Climb** (top bar) cycles `None → L1 → L2 → L3`. During auto it is a single toggle, because the auto
   tower is Level 1 only. The tap is also **timed**: the first press of a climb records the
   second of the match it happened on, which is the one number an alliance captain always asks
   for — how long before the buzzer does this robot have to leave? Cycling `L1 → L2` keeps the
@@ -207,16 +223,24 @@ touched. Two fake matches is enough to train someone.
 
 ---
 
-## The pit app
+## Pit scouting, on the mirror
 
-`/pit`, on a phone. Two views of the same thing, toggled at the top.
+Pit scouting is done on the **off-site mirror** — your team's own website, for example
+`scouting.systemoverload.org` — on the scouts' own phones over their own data. It is not on
+the hub: nobody scouting matches needs it there, and pit scouts walking the pits do not have
+to be on the venue wifi. Students open the mirror, enter the team passcode, and tap
+**Pit scouting** (a link to `…/#pit` opens straight on it). The hub collects what they save
+**once a minute** and it shows on the dashboard like any other pit record.
 
-- **MAP** — the actual venue floor plan from Nexus, drawn to scale, with walls, walkway arrows
-  and area labels. Each pit is coloured by whether it has been scouted. Tap one to open the
-  form. This is the point of the app: a pit scout should see where to walk next rather than
-  read team numbers off a list.
-- **LIST** — the same robots, sorted unscouted-first and then by pit address, so the list reads
-  as a walking order. Works at events with no pit map.
+Two views of the same thing, toggled at the top:
+
+- **Map** — the venue's own floor plan from Nexus, drawn to scale, with walls, walkway arrows
+  and area labels. Each pit is coloured by whether it has been scouted — green done, amber
+  started — and your own team's is outlined in red. Tap one to open the form. This is the
+  point of it: a pit scout should see where to walk next rather than read team numbers off a
+  list.
+- **List** — the same robots, sorted unscouted-first and then by pit address, so the list
+  reads as a walking order. Works at events with no pit map.
 
 The form per robot:
 
@@ -227,14 +251,49 @@ The form per robot:
 | Max climb | L3 / L2 / L1 / none |
 | Can stockpile | yes / some / no |
 | Ground pickup | yes / no |
+| **Our questions** | whatever the team has added — see below |
 | Autos | free text |
 | Weight | number |
 | Notes | free text |
-| Photos | any number, from the camera |
+| Photos | any number, from the camera, shrunk on the phone before sending |
 
-Photos are resized on the phone before sending — a 12MP pit photo is not worth 4MB on venue
-wifi. Inspection status and pit address come from Nexus when a key is set. A progress bar
+**Two scouts never have to walk to the same pit.** Opening a robot's form tells the mirror,
+and every other phone on the Pit scouting tab shows that robot in solid blue with the scout's
+initials — *AK is on it* — within fifteen seconds. The phone renews the claim every minute
+while the form is open and lets go on Done or Save; the mirror drops a claim nobody has
+renewed for three minutes (a phone that went to sleep or out of signal). It is a marker, not a
+lock: a second scout who opens the same robot is told who has it and can carry on.
+
+**No signal is fine.** Everything typed into a form is kept on the phone as it is entered. A
+save that does not get through says so and keeps the answers; a robot opened again later picks
+up where it left off, and only a save that reached the mirror clears it.
+
+Inspection status and pit addresses come from Nexus when the hub has a key. A progress bar
 tracks how much of the field is done.
+
+### Your own pit questions
+
+The mirror's **Pit questions** tab is where a team adds questions of its own. Each one is a
+**pick one** (a row of chips, two to eight answers), **yes or no**, a **number**, or a **short
+answer**, with an optional help line. They can be reordered and removed, and a preview shows
+them as a pit scout will. Up to thirty.
+
+- They appear on the Pit scouting tab under **Our questions**, after the built-in ones, as soon
+  as they are saved, and the hub collects them within a minute.
+- Answers are saved with the robot's pit record, keyed by the question's id rather than its
+  wording, so **renaming a question keeps the answers** already given. A deleted question
+  disappears from pit scouting and the spreadsheet; its answers stay in the full JSON export.
+- They show on each team's page on the dashboard and on the mirror, and each gets a column in
+  the pit spreadsheet (`/api/export.csv?table=pit`), headed by the question as worded now.
+- Anyone with the mirror's passcode can change them. Two people editing at once cannot undo
+  each other: the second save is refused and asked to reload.
+
+### What it needs
+
+- **A mirror with a view passcode.** An `--open` mirror (no passcode) shows pit scouting but
+  refuses every save, because there "anyone with the passcode" would be anyone on the internet.
+- **The hub's mirror push key** set, so the hub can collect. See [the mirror's README](../mirror/README.md).
+- With no mirror at all there is no pit scouting; match scouting is unaffected.
 
 ---
 
@@ -630,8 +689,11 @@ key** is the write key: the hub proves it is the hub, and it lives in one line o
 laptop. The **view passcode** is what a person types to read the site, and it gets shared around
 a team over a weekend. If one string did both jobs, anyone it reached could overwrite the event.
 
-The mirror is read-only in the strong sense: there is no route on it that changes anything on
-the hub, and no API key of any kind is ever sent to it. Per-scout quality scores are not
+The mirror never reaches the hub: the hub starts every exchange, and no API key of any kind is
+ever sent to it. The numbers on it are read-only. The two things it accepts — pit records and
+the team's pit questions — need its view passcode, are refused outright on an `--open` mirror,
+and are cleaned again by the hub when it collects them, exactly as if a phone on the venue
+wifi had sent them. Per-scout quality scores are not
 mirrored at all — the hub's rule above is not relaxed for a public host behind one shared
 code.
 
@@ -1007,6 +1069,7 @@ Everything is JSON over plain HTTP. Useful if you want to drive another display 
 | `/api/crew`, `/api/seats`, `/api/seatlog` | GET | Who is where. |
 | `/api/diag` | GET | Server diagnostics and event log. |
 | `/api/picklist` | GET / POST | Reading is open; writing needs the passcode. |
+| `/api/state` → `pitQuestions` | GET | The team's own pit questions, as last collected from the mirror (they are edited there). |
 | `/api/unlock` | POST | Exchange the passcode for a token. |
 | `/api/sync` | POST | What phones send. Last-write-wins on `updatedAt`. |
 | `/api/import` / `/api/export` | POST / GET | Whole-event JSON, idempotent. |

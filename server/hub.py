@@ -104,7 +104,7 @@ AI_ASK_TOKENS = 3000
 # would move a single global counter every ten seconds and there would be no
 # 304s left to give.
 STATE_SCOPES = ("events", "teams", "matches", "flags", "pit_entries",
-                "kv:nexusLive", "kv:pits", "kv:pitMap", "kv:inspection",
+                "kv:nexusLive", "kv:pits", "kv:pitMap", "kv:inspection", "kv:pitQuestions",
                 "kv:alliances", "kv:seats", "kv:matchClocks", "kv:clockFixes",
                 "kv:rankings", "kv:epa", "kv:earlyScores")
 ANALYTICS_SCOPES = ("matches", "teams", "scout_entries", "solved",
@@ -584,7 +584,7 @@ class Hub:
         steps = []
         if not ek:
             steps.append(step("event", "Name the event", False,
-                              "Type your team number into OUR TEAM and press FIND MY EVENTS: "
+                              "Type your team number into Our team and press Find my events: "
                               "the hub looks up what you are registered for and fills the key "
                               "and the level in. It needs no API key for that. Failing that, "
                               "EVENT KEY is the code on frc.events or The Blue Alliance, like "
@@ -596,11 +596,11 @@ class Hub:
         else:
             steps.append(step("event", "Name the event", True,
                               f"{ek} is saved, but no teams have arrived yet. That needs a key "
-                              "below and one poll - or the key is wrong, which only TEST KEYS "
+                              "below and one poll - or the key is wrong, which only Test keys "
                               "can tell you."))
 
         steps.append(step("nexus", "Paste the Nexus key", nexus_set,
-                          "Saved. TEST KEYS below is what says whether it works."
+                          "Saved. Test keys below is what says whether it works."
                           if nexus_set else
                           "Free, from frc.nexus/api. It is the one key worth stopping for: its "
                           '"on field" is what arms the scouting screen on all six phones. '
@@ -619,23 +619,23 @@ class Hub:
             # An `unset` box has nothing to answer and a `down` vendor has
             # nothing to say yet; only `bad` is a key that is wrong, and this is
             # the one place in the app that can tell those three apart.
-            steps.append(step("test", "Press TEST KEYS", False,
+            steps.append(step("test", "Press Test keys", False,
                               f"Tested {ago()}: {listed('bad')} came back wrong. Fix that box "
                               "and test again - a wrong key and a quiet service look identical "
                               "everywhere else in the app, on purpose."))
         elif listed("ok"):
-            steps.append(step("test", "Press TEST KEYS", True,
+            steps.append(step("test", "Press Test keys", True,
                               f"{listed('ok')} answered, tested {ago()}."
                               + (f" {listed('down')} had nothing to say - that is a service "
                                  "being quiet, not a key being wrong."
                                  if listed("down") else "")))
         elif states:
-            steps.append(step("test", "Press TEST KEYS", False,
+            steps.append(step("test", "Press Test keys", False,
                               f"Tested {ago()}, and nothing answered. Either no key is saved "
                               "yet, or this laptop has no internet right now."))
         else:
-            steps.append(step("test", "Press TEST KEYS", False,
-                              "SAVE & REFRESH first, then TEST KEYS asks each vendor whether "
+            steps.append(step("test", "Press Test keys", False,
+                              "Save & refresh first, then Test keys asks each vendor whether "
                               "the key actually works. Do it at home: a key that turns out to "
                               "be wrong is not a thing you can replace on a Saturday morning."))
 
@@ -671,7 +671,7 @@ class Hub:
                     "until you do.",
                     "A password on this panel: stop the hub and run  python3 server/hub.py "
                     "--set-admin-password  in the same window it was started from. Without one, "
-                    "UNLOCK is just the button.",
+                    "Unlock is just the button.",
                     "The off-site mirror, at the bottom of this page, if your team has a host "
                     "with a domain name. setup.md Part B.",
                 ]}
@@ -729,15 +729,39 @@ class Hub:
         w.writerows(_csv_safe(r) for r in rows)
         return buf.getvalue()
 
-    def poll_mirror(self):
-        """Push the event off-site. Never the reason anything else fails.
+    def poll_mirror(self, wait=False):
+        """Trade with the off-site mirror. Never the reason anything else fails.
 
-        Sits in the poller with the five inbound sources, and is the only one
-        that goes the other way. push_once() swallows its own failures and
-        records them; this only has to keep the status line honest.
+        The only poll that goes outward, and the only one that can take a
+        while: the mirror is on the internet, the venue uplink is shared, and
+        pit records collected from it carry photos. So it runs on a thread of
+        its own rather than inside the poller loop, where a slow mirror would
+        hold up the Nexus poll that arms the scouts' phones. One round at a
+        time - a round still going when the next minute comes round is left to
+        finish. `wait` runs it here instead, for tests and tools.
         """
         if not self.mirror().ok:
             return
+        if wait:
+            return self._mirror_round()
+        t = getattr(self, "_mirror_thread", None)
+        if t is not None and t.is_alive():
+            return
+        self._mirror_thread = threading.Thread(target=self._mirror_round, daemon=True,
+                                               name="mirror")
+        self._mirror_thread.start()
+
+    def _mirror_round(self):
+        # Pit scouting and the team's pit questions are done on the mirror;
+        # collect both first, so a save there reaches the hub within the minute.
+        try:
+            offsite.pull_questions(self)
+        except Exception as e:
+            self.note("warn", f"could not collect pit questions from the mirror: {e}")
+        try:
+            offsite.pull_pits(self)
+        except Exception as e:
+            self.note("warn", f"could not collect pit scouting from the mirror: {e}")
         res = offsite.push_once(self)
         if res.get("skipped") == "already pushing":
             return
@@ -1530,6 +1554,21 @@ class Hub:
             return (seats if touched else None), None
         self.store.mutate("seats", apply, {})
 
+    def accept_pit(self, rec):
+        """Merge one pit record collected from the mirror. True if it landed.
+
+        The same path a pit tablet's sync takes: its photos filed by content
+        hash, then last write wins on its save time. Anything that is not
+        shaped like a pit record is dropped rather than half-applied.
+        """
+        try:
+            if not rec.get("eventKey") or int(rec.get("team")) <= 0:
+                return False
+            _extract_photos(self.store, rec)
+            return bool(self.store.upsert_pit(rec))
+        except (TypeError, ValueError, KeyError):
+            return False
+
     def seats(self):
         """The chairs that are still held.  A read, and only a read.
 
@@ -2258,15 +2297,19 @@ def _csv_table(h, ek, table):
         return header, rows
 
     if table == "pit":
+        # The team's own questions follow the built-in ones, a column each,
+        # headed by the question as it is worded now.
+        extra = [q for q in (h.store.get("pitQuestions") or []) if isinstance(q, dict)]
         header = ["team", "scoutId", "drivetrain", "shooter", "maxClimb", "stockpile",
-                  "groundPickup", "weight", "autos", "notes", "photos"]
+                  "groundPickup", "weight", "autos", "notes", "photos"] + [q["label"] for q in extra]
         rows = []
         for e in sorted(h.store.pit_entries(ek), key=lambda x: x["team"]):
             p = e.get("payload") or {}
+            custom = p.get("custom") if isinstance(p.get("custom"), dict) else {}
             rows.append([e["team"], e.get("scoutId"), p.get("drivetrain"), p.get("shooter"),
                          p.get("maxClimb"), p.get("stockpile"), p.get("groundPickup"),
                          p.get("weight"), p.get("autos"), p.get("notes"),
-                         len(p.get("photos") or [])])
+                         len(p.get("photos") or [])] + [custom.get(q["id"]) for q in extra])
         return header, rows
 
     raise KeyError(table)
@@ -2802,7 +2845,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _locked_out(self):
         return self._json({
-            "error": "The hub settings are locked. Press UNLOCK on the admin page and "
+            "error": "The hub settings are locked. Press Unlock on the admin page and "
                      "enter the admin password.",
             "locked": True,
         }, 403)
@@ -2957,8 +3000,6 @@ class Handler(BaseHTTPRequestHandler):
             return self._file("dashboard.html")
         if p == "/join":
             return self._file("join.html")
-        if p == "/pit":
-            return self._file("pit.html")
         if p == "/api/stream":
             return self._stream()
         if p == "/api/config":
@@ -3042,6 +3083,10 @@ class Handler(BaseHTTPRequestHandler):
                 "matchClocks": h.store.get("matchClocks") or {},
                 "clockFixes": h.store.get("clockFixes") or {},
                 "pitEntries": h.store.pit_entries(ek),
+                # The team's own pit questions, beside the built-in ones. Here
+                # rather than on their own route so the pit tablet has them in
+                # the copy of this it keeps for when the wifi goes.
+                "pitQuestions": h.store.get("pitQuestions") or [],
                 "rankings": h.event_data("rankings", ek, {}),
                 "epa": h.event_data("epa", ek, {}),
                 "earlyScores": h.event_data("earlyScores", ek, {}),
@@ -3851,7 +3896,7 @@ def main():
         print("  Admin password: loaded from %s\n"
               % (".env" if envfile.ADMIN in from_file else "the environment"))
     else:
-        print("  Admin password: none set - UNLOCK on the admin page is one button.\n"
+        print("  Admin password: none set - Unlock on the admin page is one button.\n"
               "                  `python3 server/hub.py --set-admin-password` sets one.\n")
 
     # Where the keys are, in a line, because it is a file now and files get

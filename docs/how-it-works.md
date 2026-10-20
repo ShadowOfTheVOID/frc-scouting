@@ -68,9 +68,10 @@ it *worse* (23.6% → 25.3% in simulation), so those are left alone and the matc
 
 A drum shooter empties faster than anyone can tap, so nobody counts balls.
 
-**The scout answers "who was shooting, when, and roughly how hard."** Left thumb picks a rate off
-the ladder (a trickle / steady / dumping). Right thumb holds the pad while the robot shoots. That
-is the whole interaction.
+**The scout answers "who was shooting, when, and roughly how hard."** The scout holds a button while
+the robot shoots and says roughly how fast (a few / steady / lots) — with the other thumb during
+the run in pro mode, or right after letting go in simple mode. That is the whole interaction,
+and both layouts produce the same intervals.
 
 **The server turns that into numbers.** TBA publishes the official fuel count per alliance *per
 window* (auto, transition, shift 1–4, endgame). `server/solve.py` distributes each official total

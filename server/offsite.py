@@ -27,6 +27,7 @@ import urllib.error
 import urllib.request
 
 import analytics
+import pitquestions
 import sources
 
 #: Bumped when the bundle's shape changes in a way a mirror has to know about.
@@ -92,7 +93,7 @@ BUNDLE_SCOPES = ("events", "teams", "matches", "flags", "scout_entries",
                  "kv:rankings", "kv:epa", "kv:lovat", "kv:alliances", "kv:pits",
                  "kv:pitMap", "kv:inspection", "kv:matchClocks", "kv:clockFixes",
                  "kv:multipliers", "kv:multipliersFittedFrom", "kv:picklist",
-                 "kv:ourTeam", "kv:hubId")
+                 "kv:ourTeam", "kv:hubId", "kv:pitQuestions")
 
 
 def build_bundle(hub, event_key):
@@ -152,6 +153,8 @@ def build_bundle(hub, event_key):
         "analytics": summary,
         "scout": store.scout_entries(event_key),
         "pit": store.pit_entries(event_key),
+        # So the mirror can label the answers to the team's own pit questions.
+        "pitQuestions": store.get("pitQuestions") or [],
         "photoIds": store.photo_ids(event_key),
         "csv": csv,
     }
@@ -260,6 +263,14 @@ class Mirror:
     def push(self, bundle):
         return self._post("/api/push", bundle)
 
+    def pull_questions(self):
+        """The team's pit questions as last saved on the mirror, or (None, code)."""
+        return self._post("/api/pitquestions/pull", {}, gzipped=False)
+
+    def pull_pits(self, inbox, since):
+        """Pit scouting saved on the mirror after `since`, or (None, code)."""
+        return self._post("/api/pit/pull", {"inboxId": inbox, "since": since}, gzipped=False)
+
     def push_photos(self, event_key, photos):
         return self._post("/api/photos", {"eventKey": event_key, "photos": photos},
                           gzipped=False)      # already-compressed image bytes
@@ -358,6 +369,79 @@ def _push_once(hub, force=False):
     return {"ok": True, "revision": state["revision"], "bytes": state["bytes"],
             "photosSent": sent, "photosPending": state["photosPending"],
             "pushedAt": state["pushedAt"], "url": m.url}
+
+
+def pull_questions(hub):
+    """Collect the team's pit questions from the mirror, where they are edited.
+
+    Run beside every push, once a minute, whether or not the push had anything
+    to send - the questions are the one thing that flows the other way, and a
+    hub that has nothing new to push still has to hear about a question added
+    from home. Returns True when the hub's copy changed.
+
+    The mirror's copy wins whenever it is a different document or a newer
+    revision of the same one. "A different document" covers a mirror whose
+    database was rebuilt: its revision counter starts again from one, and
+    comparing numbers alone would ignore it for ever.
+    """
+    m = hub.mirror()
+    if not m.ok:
+        return False
+    body, code = m.pull_questions()
+    # 404: a mirror older than this hub, with no editor. Nothing to collect.
+    if code != 200 or not isinstance(body, dict):
+        return False
+    doc_id, rev = body.get("id"), body.get("rev")
+    if not isinstance(doc_id, str) or not isinstance(rev, int) or rev < 1:
+        return False                    # nothing has ever been saved there
+    have = hub.store.get("pitQuestionsFrom") or {}
+    if have.get("id") == doc_id and (have.get("rev") or 0) >= rev:
+        return False
+    qs = pitquestions.trusted(body.get("questions"))
+    hub.store.set("pitQuestions", qs)
+    hub.store.set("pitQuestionsFrom", {"id": doc_id, "rev": rev, "at": time.time()})
+    hub.note("info", "pit questions updated from the mirror: %d custom" % len(qs))
+    # Pit tablets refetch on this rather than waiting out their poll.
+    hub.broadcast("pitQuestions", {"count": len(qs)})
+    return True
+
+
+def pull_pits(hub, rounds=5):
+    """Collect pit scouting done on the mirror. Returns how many records landed.
+
+    Pit scouts do their work on the mirror, over their own phones' data, so
+    the hub never needs them on the venue wifi. The mirror numbers every save,
+    and the hub asks for everything after the last number it took - ten at a
+    time, a few batches a minute, so a morning of photos never arrives as one
+    request. A record is merged exactly as one synced from a pit tablet would
+    be: its photos filed, then last write wins by its save time.
+    """
+    m = hub.mirror()
+    if not m.ok:
+        return 0
+    cursor = hub.store.get("mirrorPitCursor") or {}
+    landed = 0
+    started = time.time()
+    for _ in range(rounds):
+        # The rest waits for next minute rather than holding up the push.
+        if time.time() - started > 30:
+            break
+        body, code = m.pull_pits(cursor.get("inboxId"), cursor.get("seq") or 0)
+        # 404: a mirror older than this hub, which takes no pit scouting.
+        if code != 200 or not isinstance(body, dict):
+            break
+        for rec in body.get("records") or []:
+            if isinstance(rec, dict) and hub.accept_pit(rec):
+                landed += 1
+        cursor = {"inboxId": body.get("inboxId"), "seq": body.get("seq") or 0}
+        hub.store.set("mirrorPitCursor", cursor)
+        if not body.get("more"):
+            break
+    if landed:
+        hub.record_writes(landed)
+        hub.note("info", "collected %d pit record(s) from the mirror" % landed)
+        hub.broadcast("scout", {"applied": landed, "matches": []})
+    return landed
 
 
 def _explain(code, body):

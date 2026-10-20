@@ -1,5 +1,11 @@
 # FRC Scouting UI — Implementation Handoff
 
+> **Superseded for look and feel.** The app has since moved to a softer design: sentence-case
+> labels, no outlines, pill-shaped controls, a light theme beside the dark one, and a simple
+> one-button match screen for new scouts. Colours and type now live in `web/css/theme.css`.
+> These files still describe what each screen is *for* and what it holds, but no longer what
+> it looks like pixel for pixel.
+
 **Read this whole file before writing any code.**
 
 These 12 HTML files are not inspiration. They are the specification. Build the app so that a

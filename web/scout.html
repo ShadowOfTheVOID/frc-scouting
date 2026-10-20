@@ -3,24 +3,27 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no,maximum-scale=1">
-<meta name="theme-color" content="#05060a">
+<meta name="theme-color" content="#1a1a1e">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Scout · REBUILT</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<script src="/js/theme.js"></script>
+<link rel="stylesheet" href="/css/fonts.css">
+<link rel="stylesheet" href="/css/theme.css">
 <link rel="stylesheet" href="/css/hud.css">
 </head>
 <body class="landscape-only">
 
-<div id="toosmall">This screen is too small to scout on.<br>Rotate to landscape, or use a larger phone.</div>
+<div id="toosmall">This screen is too small to scout on.<br>Turn your phone sideways, or use a bigger phone.</div>
 
 <!-- ══════════════════════════ ADD TO HOME SCREEN (iPhone) ═════════════ -->
 <div class="a2hs hide" id="a2hs">
   <div class="a2hscard">
     <div class="col" style="gap:8px;min-width:0">
-      <div class="eyebrow">DO THIS BEFORE YOUR FIRST MATCH</div>
+      <div class="eyebrow">Do this before your first match</div>
       <h2>Put Scout on your home screen.</h2>
       <ol class="a2hssteps">
         <li>Tap <b>Share</b> — the square with an arrow coming out of the top.</li>
@@ -32,7 +35,7 @@
       <div class="amberbox">iPhone keeps this tab and the home-screen icon
         <b>completely separate</b>. Anything you log here before you add it stays stuck
         in Safari and never reaches the hub — so add it now, not after a match.</div>
-      <div class="obtn ghost" id="a2hsSkip">CAN'T RIGHT NOW — SCOUT IN SAFARI</div>
+      <div class="obtn ghost" id="a2hsSkip">I can't right now, scout in Safari</div>
     </div>
   </div>
 </div>
@@ -40,42 +43,46 @@
 <!-- ══════════════════════════════════════ TAKE A SEAT ══════════════════ -->
 <div class="screen hide" id="s-seat">
   <div class="hdr">
-    <span class="k">TAKE A SEAT</span>
-    <span class="m" id="seatEvent">LOOKING FOR THE HUB</span>
+    <span class="k">Take a seat</span>
+    <span class="m" id="seatEvent">Looking for the hub</span>
     <span class="sp"></span>
     <span class="m fshint" id="fsHint"></span>
+    <button type="button" class="themebtn" data-theme-toggle></button>
     <span class="dot" id="seatDot"></span>
   </div>
   <div class="body seat">
     <div class="col" style="gap:8px">
-      <div class="caption plain">WHO ARE YOU</div>
+      <div class="caption plain">Who are you?</div>
       <div class="initials" id="btnInitials">
         <div class="v" id="myInitials">--</div>
-        <div class="h">TAP TO CHANGE INITIALS</div>
+        <div class="h">Tap to change your initials</div>
       </div>
-      <div class="caption plain" style="margin-top:4px">SET IT ONCE</div>
-      <div class="dashfill">Your team number gets filled in for every match after this.
-        You never pick a match or type a number again.</div>
+      <div class="modesw" id="seatMode" role="switch" aria-checked="true">
+        <span class="tg"></span>
+        <span class="w"><b>Simple mode</b><span>One big button. Best if you're new.</span></span>
+      </div>
+      <div class="dashfill">Your team number fills itself in for every match after this.
+        You never pick a match or type a number.</div>
     </div>
 
     <div class="col" style="gap:8px">
-      <div class="caption plain">READ THE SIGN ABOVE YOUR CHAIR AND TAP THE SAME ONE</div>
+      <div class="caption plain">Tap the station on the sign above your chair</div>
       <div class="stations" id="stations"></div>
-      <div class="dashnote">No field map on purpose — the sign over your chair says
-        <b id="signExample">RED 2</b>, so tap RED 2. Nothing to mirror, nothing to get backwards.</div>
+      <div class="dashnote">No field map on purpose. The sign over your chair says
+        <b id="signExample">Red 2</b>, so tap that one.</div>
     </div>
 
     <div class="col" style="gap:8px">
-      <div class="panel" style="flex:1;padding:14px;border-radius:16px">
-        <div class="caption plain">YOUR SEAT WILL WATCH</div>
-        <div style="font:700 40px/1.1 'Barlow Condensed',sans-serif;margin-top:6px" id="seatTeam">—</div>
-        <div style="font:500 12.5px/1.5 Barlow,sans-serif;color:var(--body);margin-top:6px" id="seatBlurb">
+      <div class="panel" style="flex:1;padding:16px 18px">
+        <div class="caption plain">You'll watch</div>
+        <div style="font:700 40px/1.1 var(--f-num);margin-top:4px" id="seatTeam">—</div>
+        <div style="font:600 13px/1.5 var(--f-body);color:var(--body);margin-top:4px" id="seatBlurb">
           pick a station to see who you'll watch</div>
-        <div class="caption plain" style="margin-top:12px">HUB</div>
-        <div style="font:500 12.5px/1.5 Barlow,sans-serif;color:var(--body);margin-top:4px" id="seatHub">
+        <div class="caption plain" style="margin-top:12px">Hub</div>
+        <div style="font:600 13px/1.5 var(--f-body);color:var(--body);margin-top:2px" id="seatHub">
           searching…</div>
       </div>
-      <div class="cta" id="btnSit"><span class="a">SIT DOWN</span><span class="b" id="sitSub">pick a station first</span></div>
+      <div class="cta" id="btnSit"><span class="a">Sit down</span><span class="b" id="sitSub">pick a station first</span></div>
     </div>
   </div>
 </div>
@@ -83,40 +90,40 @@
 <!-- ══════════════════════════════════════ STANDBY ═════════════════════ -->
 <div class="screen hide" id="s-standby">
   <div class="hdr">
-    <span class="k" id="sbSeat">RED 2</span>
+    <span class="k" id="sbSeat">Red 2</span>
     <span class="m" id="sbMeta">AK</span>
     <span class="sp"></span>
-    <span class="m" id="sbSync">EVERYTHING SENT</span>
+    <div class="hbtn" id="sbMode">Simple mode <span class="b" id="sbModeState">on</span></div>
+    <span class="m" id="sbSync">Everything sent</span>
     <span class="dot" id="sbDot"></span>
   </div>
   <div class="body split-260">
     <div class="bigpanel">
-      <div class="glow"></div>
-      <div class="eyebrow">NOTHING TO DO YET</div>
+      <div class="eyebrow">Nothing to do yet</div>
       <div class="countdown" id="sbCountdown">--:--</div>
-      <div class="until" id="sbUntil">WAITING FOR THE SCHEDULE</div>
-      <div style="margin-top:12px;display:flex;align-items:flex-end;gap:14px">
-        <div style="font:700 54px/.9 'Barlow Condensed',sans-serif" id="sbTeam">—</div>
-        <div style="padding-bottom:6px">
-          <div style="font:700 11px Barlow,sans-serif;letter-spacing:.14em;color:var(--muted)">YOUR NEXT ROBOT</div>
-          <div style="font:600 12.5px Barlow,sans-serif;color:#9aa2b0" id="sbTeamMeta">—</div>
+      <div class="until" id="sbUntil">Waiting for the schedule</div>
+      <div style="margin-top:10px;display:flex;align-items:flex-end;gap:14px">
+        <div style="font:700 54px/.9 var(--f-num)" id="sbTeam">—</div>
+        <div style="padding-bottom:4px">
+          <div style="font:700 13px var(--f-body);color:var(--muted)">Your next robot</div>
+          <div style="font:600 14px var(--f-body);color:var(--body)" id="sbTeamMeta">—</div>
         </div>
       </div>
-      <div class="pill">this opens itself when the field says the match is on</div>
-      <div class="cta flat" style="min-height:52px;margin-top:8px" id="btnOpenMatch">
-        <span class="a">THEY'RE ON THE FIELD</span>
+      <div class="pill">This opens by itself when the match starts</div>
+      <div class="cta flat" style="min-height:52px;margin-top:6px" id="btnOpenMatch">
+        <span class="a">They're on the field</span>
         <span class="b" id="openMatchSub">open the match screen now</span></div>
     </div>
     <div class="col" style="gap:8px">
-      <div class="caption plain">WHERE DO THEY START</div>
+      <div class="caption plain">Where do they start?</div>
       <div class="picks" id="sbStart"></div>
-      <div class="caption plain" style="margin-top:6px">FUEL LOADED BEFORE THE BUZZER</div>
+      <div class="caption plain" style="margin-top:4px">Fuel loaded before the buzzer</div>
       <div class="picks" id="sbPreload"></div>
-      <div class="caption plain" style="margin-top:6px">WHAT YOU LOGGED TODAY</div>
+      <div class="caption plain" style="margin-top:4px">What you logged today</div>
       <div class="list" id="sbList"></div>
-      <div class="pair" style="gap:6px">
-        <div class="cta flat" style="min-height:56px;flex:1" id="btnFixPast"><span class="a">FIX A PAST MATCH</span></div>
-        <div class="cta flat" style="min-height:56px;flex:1" id="btnHandover"><span class="a">HAND OVER</span><span class="b">someone else takes this chair</span></div>
+      <div class="pair">
+        <div class="cta flat" style="min-height:54px;flex:1" id="btnFixPast"><span class="a">Fix a past match</span></div>
+        <div class="cta flat" style="min-height:54px;flex:1" id="btnHandover"><span class="a">Hand over</span><span class="b">someone else sits here</span></div>
       </div>
     </div>
   </div>
@@ -125,31 +132,31 @@
 <!-- ══════════════════════════════════════ OFFLINE ═════════════════════ -->
 <div class="screen hide" id="s-offline">
   <div class="hdr">
-    <span class="k amber">CAN'T REACH THE HUB</span>
-    <span class="m" id="offSeat">RED 2</span>
+    <span class="k amber">Can't reach the hub</span>
+    <span class="m" id="offSeat">Red 2</span>
     <span class="sp"></span>
     <span class="dot amber"></span>
   </div>
   <div class="body split-300">
     <div class="offpanel">
-      <h2>Keep scouting — nothing is lost.</h2>
+      <h2>Keep scouting. Nothing is lost.</h2>
       <p id="offBlurb">Everything you enter is saved on this phone and will send itself the moment
         the hub is back. You don't need to do anything.</p>
       <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:4px">
-        <div class="obtn" id="btnOffOpenMatch">THEY'RE ON THE FIELD</div>
-        <div class="obtn ghost" id="btnRetry">TRY AGAIN NOW</div>
-        <div class="obtn ghost" id="btnBackup">SAVE A BACKUP FILE</div>
+        <div class="obtn" id="btnOffOpenMatch">They're on the field</div>
+        <div class="obtn ghost" id="btnRetry">Try again now</div>
+        <div class="obtn ghost" id="btnBackup">Save a backup file</div>
       </div>
-      <div style="margin-top:6px;font:600 12px Barlow,sans-serif;color:var(--muted)" id="offLast">
+      <div style="margin-top:4px;font:600 13px var(--f-body);color:var(--muted)" id="offLast">
         retrying every 8s</div>
     </div>
     <div class="col" style="gap:8px">
-      <div class="caption plain">WAITING ON THIS PHONE</div>
+      <div class="caption plain">Waiting on this phone</div>
       <div class="list" id="offList"></div>
-      <div class="amberbox">Wifi in the stands is usually the problem, not you.
+      <div class="amberbox">The wifi in the stands is usually the problem, not you.
         The hub picks everything up in order.<br><br>
-        <b>Do not reload this page</b> until you are back in range. Everything above is saved on
-        this phone and is safe — but the page itself will not load again out of range.</div>
+        <b>Don't reload this page</b> until you're back in range. Everything above is saved on
+        this phone and is safe, but the page itself won't load again out of range.</div>
     </div>
   </div>
 </div>
@@ -157,7 +164,7 @@
 <!-- ══════════════════════════════════════ BUMPED ══════════════════════ -->
 <div class="screen hide" id="s-bumped">
   <div class="hdr">
-    <span class="k amber">YOU ARE NOT SCOUTING</span>
+    <span class="k amber">You're not scouting</span>
     <span class="m" id="bumpSeat"></span>
     <span class="sp"></span>
     <span class="dot amber"></span>
@@ -165,79 +172,74 @@
   <div class="body split-300">
     <div class="offpanel">
       <h2 id="bumpTitle">Someone else took this chair.</h2>
-      <p id="bumpBody">Stop logging — two phones on one robot means neither set of data is
-        trustworthy. Everything you already saved is safe and has been sent.</p>
+      <p id="bumpBody">Stop logging — two phones on one robot means neither set of data can be
+        trusted. Everything you already saved is safe and has been sent.</p>
       <div style="display:flex;gap:10px;margin-top:4px">
-        <div class="obtn" id="btnTakeBack">IT'S STILL MY CHAIR</div>
-        <div class="obtn ghost" id="btnPickSeat">PICK A DIFFERENT STATION</div>
+        <div class="obtn" id="btnTakeBack">It's still my chair</div>
+        <div class="obtn ghost" id="btnPickSeat">Pick a different station</div>
       </div>
-      <div style="margin-top:6px;font:600 12px Barlow,sans-serif;color:var(--muted)" id="bumpWait"></div>
+      <div style="margin-top:4px;font:600 13px var(--f-body);color:var(--muted)" id="bumpWait"></div>
     </div>
     <div class="col" style="gap:8px">
-      <div class="caption plain">WHAT YOU LOGGED TODAY</div>
+      <div class="caption plain">What you logged today</div>
       <div class="list" id="bumpList"></div>
     </div>
   </div>
 </div>
 
-<!-- ══════════════════════════════════════ LIVE MATCH ══════════════════ -->
+<!-- ══════════════════════════════════════ LIVE MATCH ══════════════════
+     Two layouts. hud.js puts .simple on the screen and its body for simple
+     mode and moves the clock, the hub pill and the feeding/defending pair to
+     where that layout wants them. -->
 <div class="screen hide" id="s-live">
-  <div class="hdr tinted">
-    <span class="k" id="lvSeat">RED 2</span>
-    <span class="m" id="lvMeta">QUAL — · —</span>
+  <div class="hdr">
+    <span class="k" id="lvSeat">Red 2</span>
+    <span class="m" id="lvMeta">Qual — · —</span>
     <span class="sp"></span>
-    <span class="m" id="lvLink">STATION LINKED</span>
+    <span class="m" id="lvLink"></span>
     <span class="dot" id="lvDot"></span>
+    <span class="simpleonly" id="lvHdrClock" style="align-items:center;gap:10px"></span>
+    <div class="hbtn" id="btnUndo">Undo</div>
+    <div class="hbtn" id="btnClimb"><span class="a">Climb</span><span class="b" id="climbSub"></span></div>
   </div>
-  <div class="body three">
+  <div class="body live" id="lvBody">
 
-    <div class="col">
-      <div class="caption">LEFT THUMB · RATE</div>
+    <div class="col proonly" id="lvLeft">
+      <div class="caption">Left thumb · how fast</div>
       <div class="ladder" id="ladder"></div>
-      <div class="pair">
-        <div class="ubtn" id="btnFeeding"><span class="a">FEEDING</span><span class="b">HOLD</span></div>
-        <div class="ubtn" id="btnDefending"><span class="a">DEFENDING</span><span class="b">HOLD</span></div>
+      <div class="pair" id="fdPair">
+        <div class="ubtn" id="btnFeeding"><span class="a">Feeding</span><span class="b">hold</span></div>
+        <div class="ubtn" id="btnDefending"><span class="a">Defending</span><span class="b">hold</span></div>
       </div>
     </div>
 
-    <div class="centre">
+    <div class="centre proonly" id="lvCentre">
       <div class="teamline">
         <div class="teamno" id="lvTeam">—</div>
         <div class="teammeta">
-          <div id="lvTeamName">—</div>
-          <div id="lvMatchOf">—</div>
+          <div id="lvTeamName"></div>
+          <div id="lvMatchOf"></div>
         </div>
       </div>
-      <div class="clockline">
-        <div class="clockbig" id="lvClock">0:00</div>
-        <div class="shotstate" id="lvShotState">NOT STARTED</div>
-      </div>
-      <div class="strip" id="lvStrip"></div>
-      <div class="stats">
-        <div class="s"><div class="n" id="lvBalls">0</div><div class="l">BALLS SO FAR</div></div>
-        <div class="div"></div>
-        <div class="s"><div class="n red" id="lvClimb">—</div><div class="l">CLIMB SET</div></div>
-        <div class="div"></div>
-        <div class="s"><div class="n" id="lvRuns">0</div><div class="l">RUNS LOGGED</div></div>
-      </div>
-      <div class="runbar" id="lvRunbar"></div>
+      <div class="clockbig" id="lvClock">0:00</div>
+      <div class="shotstate unknown" id="lvShotState">Not started</div>
     </div>
 
     <div class="col">
-      <div class="caption r">RIGHT THUMB · SHOOTING</div>
+      <div class="caption r proonly">Right thumb · hold</div>
       <div class="holdpad" id="holdpad">
-        <div class="meter" id="holdMeter"></div>
-        <div class="meterline" id="holdLine"></div>
         <div class="txt">
-          <div class="lb" id="holdLabel">HOLD WHILE SHOOTING</div>
+          <div class="lb" id="holdLabel">Hold while they shoot</div>
           <div class="big" id="holdRate">3.5</div>
-          <div class="un">BALLS PER SECOND</div>
+          <div class="un" id="holdUnit">balls per second</div>
         </div>
       </div>
-      <div class="pair">
-        <div class="ubtn" id="btnUndo"><span class="a">UNDO</span><span class="b">LAST RUN</span></div>
-        <div class="ubtn" id="btnClimb"><span class="a">CLIMB</span><span class="b" id="climbSub">NOT SET</span></div>
-      </div>
+    </div>
+
+    <div class="speed simpleonly" id="speed">
+      <div class="q" id="speedQ">How fast?</div>
+      <div class="opts" id="speedOpts"></div>
+      <div class="foot" id="speedFoot"></div>
     </div>
   </div>
 </div>
@@ -245,26 +247,26 @@
 <!-- ══════════════════════════════════ AFTER THE BUZZER ════════════════ -->
 <div class="screen hide" id="s-after">
   <div class="hdr">
-    <span class="k" id="afTitle">MATCH DONE</span>
+    <span class="k" id="afTitle">Match done</span>
     <span class="m" id="afMeta">—</span>
     <span class="sp"></span>
-    <span class="m" id="afNext">NEXT: —</span>
+    <span class="m" id="afNext">Next: —</span>
   </div>
   <div class="body after">
-    <div class="col" id="afPage1a" style="gap:10px">
-      <div class="caption plain">HOW WAS THEIR DRIVING</div>
+    <div class="col" id="afPage1a" style="gap:8px">
+      <div class="caption plain">How was their driving?</div>
       <div class="steps" id="driveSteps"></div>
-      <div class="caption plain" style="margin-top:2px">DID THEY GET IN THE WAY</div>
+      <div class="caption plain" style="margin-top:2px">Did they get in the way?</div>
       <div class="steps" id="defSteps"></div>
-      <div class="caption plain" style="margin-top:2px">HOW MUCH OF IT WENT IN</div>
+      <div class="caption plain" style="margin-top:2px">How much of it went in?</div>
       <div class="steps" id="afAccuracy"></div>
     </div>
 
-    <div class="col" id="afPage1b" style="gap:10px">
-      <div class="caption plain">ANYTHING GO WRONG</div>
+    <div class="col" id="afPage1b" style="gap:8px">
+      <div class="caption plain">Anything go wrong?</div>
       <div class="wrongs" id="wrongs"></div>
       <div class="notebox">
-        <span class="lb">note</span>
+        <span class="lb">Note</span>
         <textarea id="afNote" rows="2" placeholder="dead 20s in shift 2, came back fine"></textarea>
       </div>
     </div>
@@ -272,40 +274,41 @@
     <!-- Page two. Everything here is optional and nothing here is asked twice:
          a scout who sends without opening it leaves these unknown, which is not
          the same as a no. -->
-    <div class="col hide" id="afPage2a" style="gap:10px">
-      <div class="caption plain">WHERE DID THEY START</div>
+    <div class="col hide" id="afPage2a" style="gap:8px">
+      <div class="caption plain">Where did they start?</div>
       <div class="picks" id="afStart"></div>
-      <div class="caption plain" style="margin-top:2px">WHICH LANE</div>
+      <div class="caption plain" style="margin-top:2px">Which lane?</div>
       <div class="picks" id="afLane"></div>
       <div id="afDefWrap" class="hide">
-        <div class="caption plain" style="margin-top:8px">WHO WERE THEY BLOCKING</div>
+        <div class="caption plain" style="margin-top:8px">Who were they blocking?</div>
         <div class="picks" id="afDefTarget"></div>
       </div>
       <div id="afClimbWrap" class="hide">
-        <div class="caption plain" style="margin-top:8px">WHERE ON THE TOWER</div>
+        <div class="caption plain" style="margin-top:8px">Where on the tower?</div>
         <div class="picks" id="afClimbSpot"></div>
       </div>
     </div>
 
-    <div class="col hide" id="afPage2b" style="gap:10px">
-      <div class="caption plain">HOW DID THEY GET ACROSS</div>
+    <div class="col hide" id="afPage2b" style="gap:8px">
+      <div class="caption plain">How did they get across?</div>
       <div class="picks" id="afTraversal"></div>
-      <div class="caption plain" style="margin-top:2px">DID THEY GET STUCK</div>
+      <div class="caption plain" style="margin-top:2px">Did they get stuck?</div>
       <div class="picks" id="afBeached"></div>
-      <div class="caption plain" style="margin-top:2px">ANYTHING ELSE</div>
+      <div class="caption plain" style="margin-top:2px">Anything else?</div>
       <div class="picks" id="afFlags"></div>
     </div>
 
     <div class="col" style="gap:8px">
       <div class="summary">
-        <div class="caption plain">THIS MATCH</div>
+        <div class="caption plain" style="padding:0">This match</div>
         <div class="big"><span class="n" id="afBalls">0</span><span class="u">balls, roughly</span></div>
+        <div class="runbar" id="afRunbar" title="When they were shooting"></div>
         <div class="srow"><span>climb</span><b id="afClimb">—</b></div>
         <div class="srow"><span>auto climb</span><span class="w" id="afAuto">no</span></div>
         <div class="srow"><span>runs logged</span><span class="w" id="afRuns">0</span></div>
       </div>
-      <div class="cta flat" id="btnAfMore"><span class="a">A FEW MORE THINGS</span><span class="b" id="afMoreSub">optional</span></div>
-      <div class="cta" id="btnSend"><span class="a">SEND IT IN</span><span class="b" id="sendSub">both thumbs free</span></div>
+      <div class="cta flat" id="btnAfMore"><span class="a">A few more things</span><span class="b" id="afMoreSub">optional</span></div>
+      <div class="cta" id="btnSend"><span class="a">Send it in</span><span class="b" id="sendSub">both thumbs free</span></div>
     </div>
   </div>
 </div>

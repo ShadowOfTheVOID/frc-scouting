@@ -582,6 +582,21 @@ def _payload(v):
     #
     # Dropped rather than corrected, so the field reads as "nobody said" - the
     # same thing an unanswered question already means everywhere downstream.
+    # Answers to the team's own pit questions: {question id: answer}. Each is
+    # a number or a short string; anything else is dropped the same way as
+    # the fields above, so a junk answer reads as "nobody said".
+    if "custom" in v:
+        raw = v["custom"]
+        clean = {}
+        if isinstance(raw, dict):
+            for k, val in list(raw.items())[:_CUSTOM_MAX]:
+                if not isinstance(k, str) or not k or len(k) > 48:
+                    continue
+                if isinstance(val, str):
+                    clean[k] = val[:1000]
+                elif isinstance(val, (int, float)) and not isinstance(val, bool):
+                    clean[k] = val
+        v["custom"] = clean
     for k in _NUMERIC:
         val = v.get(k)
         if k in v and (isinstance(val, bool) or not isinstance(val, (int, float))):
@@ -595,6 +610,10 @@ def _payload(v):
     return v
 
 
+#: How many custom answers one record may carry - comfortably over the number
+#: of questions the dashboard lets a team add.
+_CUSTOM_MAX = 60
+
 #: Answers that are read as numbers. A bool is an int in Python and is never
 #: one of these, so it is dropped with the rest.
 _NUMERIC = ("driverRating", "defenseRating", "accuracyRating", "preload",
@@ -605,7 +624,8 @@ _NUMERIC = ("driverRating", "defenseRating", "accuracyRating", "preload",
 #: to stop something that is not the phone making every answer in the event
 #: carry a megabyte. `note` is what a scout actually typed and gets room.
 _TEXT = {"endgameTower": 32, "autoTower": 32, "startPosition": 32, "startLane": 32,
-         "traversal": 32, "beached": 32, "climbSpot": 32, "clockBy": 32, "note": 2000}
+         "traversal": 32, "beached": 32, "climbSpot": 32, "clockBy": 32, "inputMode": 16,
+         "note": 2000}
 
 
 def _finite(v):

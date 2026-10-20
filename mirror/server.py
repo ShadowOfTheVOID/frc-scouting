@@ -56,14 +56,21 @@ try:
     import envfile                                        # noqa: E402
 except ImportError:                                       # pragma: no cover
     envfile = None
+# The rules for a pit question, from the same checkout as the hub, so the two
+# can never disagree about what one is. Without them the editor is off and
+# everything else on the mirror still works.
+try:
+    import pitquestions                                   # noqa: E402
+except ImportError:                                       # pragma: no cover
+    pitquestions = None
 
 WEB_ROOT = os.path.join(_HERE, "web")
-#: The fonts and the font declarations are the hub's, byte for byte, so the
-#: mirror reads as the same application rather than a lookalike. Nothing else
-#: is served from there - the dashboard's CSS assumes a 1240px laptop, and this
-#: page has to work on a phone in a stands.
+#: The fonts, the colours of both themes and the light/dark switch are the
+#: hub's, byte for byte, so the mirror reads as the same application rather
+#: than a lookalike. Nothing else is served from there - the dashboard's CSS
+#: assumes a 1240px laptop, and this page has to work on a phone in a stands.
 SHARED_ROOT = os.path.abspath(os.path.join(_HERE, "..", "web"))
-SHARED_OK = ("/fonts/", "/css/fonts.css")
+SHARED_OK = ("/fonts/", "/css/fonts.css", "/css/theme.css", "/js/theme.js")
 
 PROTOCOL = 1
 PORT = 8060
@@ -83,6 +90,18 @@ TOKEN_HOURS = 16
 #: enough on its own.
 UNLOCK_FAILS = 8
 UNLOCK_WINDOW = 600
+
+#: Pit scouting done on this site. How long an open pit form holds its robot
+#: with nobody renewing it (the page renews once a minute), and the limits on
+#: what one save may carry - a pit record is a handful of answers and a few
+#: phone photos, already shrunk on the phone.
+PIT_CLAIM_SECONDS = 180
+PIT_PHOTOS_MAX = 12
+PIT_PHOTO_BYTES = 4 * 1024 * 1024
+PIT_PAYLOAD_BYTES = 64 * 1024
+PHOTO_ID = re.compile(r"^[0-9a-f]{8,40}$")
+#: The built-in pit questions. A robot with four of these answered is done.
+PIT_FIELDS = ("drivetrain", "shooter", "maxClimb", "stockpile", "groundPickup")
 
 
 class Mirror:
@@ -314,6 +333,41 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"events": st.events(), "lastReceivedAt": st.last_received(),
                                "serverTime": time.time()})
 
+        if p == "/api/pit/live":
+            # What the pit scouting page polls: every robot's status, merged
+            # from what the hub last pushed and what was saved here since, and
+            # who has which robot open right now. Small on purpose - it is
+            # fetched every fifteen seconds by every phone in the pits.
+            ek = (q.get("event") or [None])[0] or _default_event(st)
+            pits = _pit_records(st, ek) if ek else {}
+            return self._json({
+                "eventKey": ek,
+                "status": {str(t): {"done": _pit_done(r), "scoutId": r.get("scoutId"),
+                                    "updatedAt": r.get("updatedAt")}
+                           for t, r in pits.items()},
+                "claims": _fresh_claims(st.get("pitClaims:%s" % ek) or {}) if ek else {},
+                "serverTime": time.time()})
+
+        if p == "/api/pit/entry":
+            # One robot's pit record, to open its form with.
+            ek = (q.get("event") or [None])[0] or _default_event(st)
+            try:
+                team = int((q.get("team") or [""])[0])
+            except ValueError:
+                return self._json({"error": "which team?"}, 400)
+            rec = (_pit_records(st, ek) if ek else {}).get(team)
+            return self._json({"eventKey": ek, "team": team, "record": rec})
+
+        if p == "/api/pitquestions":
+            # The editor's copy. Before anything has been saved here, it starts
+            # from the questions the hub last pushed, so moving the editor to
+            # the mirror never begins with an empty list.
+            doc = _questions_doc(st)
+            return self._json({**doc, "editable": bool(pitquestions) and m.locked(),
+                               "why": None if pitquestions else "this mirror cannot find "
+                                      "server/pitquestions.py beside it",
+                               "serverTime": time.time()})
+
         if p == "/api/snapshot":
             ek = (q.get("event") or [None])[0] or _default_event(st)
             b = st.revision(ek, (q.get("rev") or [None])[0]) if ek else None
@@ -399,6 +453,122 @@ class Handler(BaseHTTPRequestHandler):
                                "lastReceivedAt": m.store.last_received(),
                                "locked": m.locked()})
 
+        if p == "/api/pitquestions":
+            # Saving the team's pit questions. A team member with the view
+            # passcode may do it - but only on a mirror that has one: on an
+            # open mirror "a team member" is anybody on the internet.
+            if not pitquestions:
+                return self._json({"error": "this mirror cannot edit pit questions"}, 501)
+            if not m.locked():
+                return self._json({"error": "Set a view passcode on this mirror before "
+                                            "questions can be edited here."}, 403)
+            if not m.token_ok(self._token(parse_qs(u.query))):
+                return self._json({"error": "locked"}, 401)
+            body = self._body()
+            sent_rev = body.get("rev")
+
+            def save(cur):
+                cur = cur or _questions_doc(m.store)
+                # Two people editing at once: the second save is refused rather
+                # than quietly undoing the first.
+                if sent_rev != cur.get("rev"):
+                    return None, ("stale", cur)
+                qs, err = pitquestions.clean(body.get("questions"), cur.get("questions"))
+                if err:
+                    return None, ("bad", err)
+                new = {"id": cur.get("id") or secrets.token_hex(8),
+                       "rev": int(cur.get("rev") or 0) + 1,
+                       "questions": qs, "savedAt": time.time()}
+                return new, ("ok", new)
+            kind, out = m.store.mutate("pitQuestions", save)
+            if kind == "stale":
+                return self._json({"error": "Somebody else saved the questions while you were "
+                                            "editing. Reload to see theirs, then redo yours.",
+                                   "stale": True, "current": out}, 409)
+            if kind == "bad":
+                return self._json({"error": out}, 400)
+            return self._json({"ok": True, **out})
+
+        if p in ("/api/pit/save", "/api/pitclaim"):
+            # Pit scouting from a phone: the one thing besides the pit
+            # questions that this read-only copy accepts. Same rule: only a
+            # mirror with a passcode, only with a token from it.
+            if not m.locked():
+                return self._json({"error": "Set a view passcode on this mirror before "
+                                            "pit scouting can be done here."}, 403)
+            if not m.token_ok(self._token(parse_qs(u.query))):
+                return self._json({"error": "locked"}, 401)
+            body = self._body()
+            ek = body.get("eventKey")
+            try:
+                team = int(body.get("team"))
+            except (TypeError, ValueError):
+                team = 0
+            if not isinstance(ek, str) or ek not in {e.get("eventKey") for e in m.store.events()} \
+                    or team <= 0:
+                return self._json({"error": "needs an event this mirror has, and a team"}, 400)
+            if p == "/api/pitclaim":
+                device = str(body.get("deviceId") or "")[:64]
+                if not device:
+                    return self._json({"error": "needs a deviceId"}, 400)
+                claims = _claim_pit(m.store, ek, team, device,
+                                    str(body.get("scoutId") or "")[:16] or "pit",
+                                    release=bool(body.get("release")))
+                return self._json({"ok": True, "claims": claims, "serverTime": time.time()})
+            rec, err = _pit_record(m.store, ek, team, body)
+            if err:
+                return self._json({"error": err}, 400)
+            seq = m.store.put_pit(rec)
+            return self._json({"ok": True, "seq": seq, "updatedAt": rec["updatedAt"]})
+
+        if p == "/api/pit/pull":
+            # The hub, collecting pit scouting done here: everything saved
+            # after the last seq it took, photos inlined as data: URIs so the
+            # hub files them exactly as it files one from a phone on its wifi.
+            if not m.push_ok(self.headers.get("X-Mirror-Key")):
+                time.sleep(0.5)
+                return self._json({"error": "bad push key"}, 401)
+            body = self._body()
+            inbox = m.store.get("pitInboxId")
+            if not inbox:
+                inbox = secrets.token_hex(8)
+                m.store.set("pitInboxId", inbox)
+            # A hub that last read a different inbox (this database was
+            # rebuilt) starts again from the beginning.
+            since = body.get("since") if body.get("inboxId") == inbox else 0
+            rows = m.store.pits_since(since if isinstance(since, int) else 0, limit=10)
+            out = []
+            for seq, rec in rows:
+                rec = dict(rec)
+                payload = dict(rec.get("payload") or {})
+                # Only a photo taken on this site travels as bytes. Every other
+                # id came from the hub, which already holds it under the same
+                # content hash - so it goes back as the id, and is never dropped
+                # for want of bytes this mirror has not been sent yet.
+                fresh = set(rec.get("newPhotos") or [])
+                photos = []
+                for pid in payload.get("photos") or []:
+                    mime, data = m.store.photo(pid) if pid in fresh else (None, None)
+                    photos.append("data:%s;base64,%s" % (mime, base64.b64encode(data).decode())
+                                  if data else pid)
+                payload["photos"] = photos
+                rec.pop("newPhotos", None)
+                rec["payload"] = payload
+                out.append(rec)
+            return self._json({"inboxId": inbox, "records": out,
+                               "seq": rows[-1][0] if rows else since or 0,
+                               "more": len(rows) == 10})
+
+        if p == "/api/pitquestions/pull":
+            # The hub, collecting what was saved here. Same key as a push: the
+            # hub is the only thing that has it.
+            if not m.push_ok(self.headers.get("X-Mirror-Key")):
+                time.sleep(0.5)
+                return self._json({"error": "bad push key"}, 401)
+            doc = m.store.get("pitQuestions") or {}
+            return self._json({"id": doc.get("id"), "rev": int(doc.get("rev") or 0),
+                               "questions": doc.get("questions") or []})
+
         if p == "/api/push":
             if not m.push_ok(self.headers.get("X-Mirror-Key")):
                 time.sleep(0.5)
@@ -453,6 +623,133 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True, "stored": stored})
 
         return self._json({"error": "not found"}, 404)
+
+
+def _fresh_claims(claims, now=None):
+    """{team: {deviceId: {scoutId, at}}} with stale holders and empty teams gone."""
+    cut = (now or time.time()) - PIT_CLAIM_SECONDS
+    out = {}
+    for team, holders in (claims or {}).items():
+        if isinstance(holders, dict):
+            live = {d: c for d, c in holders.items()
+                    if isinstance(c, dict) and (c.get("at") or 0) > cut}
+            if live:
+                out[team] = live
+    return out
+
+
+def _claim_pit(store, ek, team, device, scout, release=False):
+    """Open, renew or let go of one robot's pit form for one phone.
+
+    A marker, not a lock - a second scout is told who has it and may carry on -
+    and each phone only ever adds or removes its own claim, the same rules as
+    the hub's pit tablets.
+    """
+    key, now = str(team), time.time()
+
+    def apply(cur):
+        cur = _fresh_claims(cur or {}, now)
+        holders = cur.setdefault(key, {})
+        if release:
+            holders.pop(device, None)
+        else:
+            holders[device] = {"scoutId": scout, "at": now}
+        if not holders:
+            del cur[key]
+        return cur, cur
+    return store.mutate("pitClaims:%s" % ek, apply)
+
+
+def _pit_records(store, ek):
+    """{team: record} - what the hub last pushed, overlaid by saves made here.
+
+    Whichever is newer wins, so a robot scouted here shows straight away, and
+    once the hub has collected it and pushed it back the hub's copy (with its
+    photos filed) takes over.
+    """
+    out = {}
+    pushed = store.latest_part(ek, "pit", [])
+    for r in pushed:
+        if isinstance(r, dict) and r.get("team") is not None:
+            try:
+                out[int(r["team"])] = r
+            except (TypeError, ValueError):
+                continue
+    for team, r in store.pits_for(ek).items():
+        have = out.get(team)
+        if not have or float(r.get("updatedAt") or 0) >= float(have.get("updatedAt") or 0):
+            out[team] = r
+    return out
+
+
+def _pit_done(rec):
+    p = (rec or {}).get("payload") or {}
+    n = sum(1 for f in PIT_FIELDS if p.get(f))
+    return "done" if n >= 4 else "partial" if n else ""
+
+
+def _pit_record(store, ek, team, body):
+    """A pit save from a phone, made safe to keep. Returns (record, error).
+
+    Photos arrive as data: URIs and are filed in the photo table here, under
+    the same content-hash id the hub would give them, and the record keeps
+    only the ids. A photo id already on the record (one the hub pushed) is
+    kept as it is. Everything else in the payload is bounded in size, and
+    the hub cleans every field again when it collects the record.
+    """
+    payload = body.get("payload")
+    if not isinstance(payload, dict):
+        return None, "no answers in that save"
+    payload = dict(payload)
+    # Size is checked before any photo is filed, so a refused save leaves
+    # nothing behind in the photo table.
+    if len(json.dumps({k: v for k, v in payload.items() if k != "photos"})) > PIT_PAYLOAD_BYTES:
+        return None, "that save is too large"
+    # Photos taken on this site and not yet collected by the hub, carried from
+    # the last save of this robot so an edit that keeps them keeps them owed.
+    prev = (store.pits_for(ek).get(team) or {})
+    owed = set(prev.get("newPhotos") or [])
+    fresh = []
+    photos = []
+    for src in (payload.get("photos") if isinstance(payload.get("photos"), list) else [])[:PIT_PHOTOS_MAX]:
+        if isinstance(src, str) and src.startswith("data:"):
+            try:
+                raw = base64.b64decode(src.split(",", 1)[1], validate=True)
+            except (binascii.Error, ValueError, IndexError):
+                continue
+            if not raw or len(raw) > PIT_PHOTO_BYTES:
+                continue
+            mime = _image_mime(None, raw)
+            if not mime.startswith("image/"):
+                continue
+            pid = hashlib.sha1(raw).hexdigest()[:16]
+            store.put_photo(pid, ek, team, mime, raw)
+            photos.append(pid)
+            fresh.append(pid)
+        elif isinstance(src, str) and PHOTO_ID.fullmatch(src):
+            photos.append(src)
+            if src in owed:
+                fresh.append(src)
+    payload["photos"] = photos
+    return {"eventKey": ek, "team": team, "newPhotos": fresh,
+            "scoutId": str(body.get("scoutId") or "")[:16] or "mirror",
+            "deviceId": "mirror:" + str(body.get("deviceId") or "")[:48],
+            "updatedAt": time.time(), "payload": payload}, None
+
+
+def _questions_doc(store):
+    """The pit questions as saved here, or - before any save - as last pushed.
+
+    rev 0 means nothing has been saved on the mirror yet; the hub ignores a
+    document at rev 0, so its own copy stands until somebody saves here.
+    """
+    doc = store.get("pitQuestions")
+    if isinstance(doc, dict) and doc.get("rev"):
+        return {"id": doc.get("id"), "rev": int(doc["rev"]),
+                "questions": doc.get("questions") or [], "savedAt": doc.get("savedAt")}
+    ek = _default_event(store)
+    pushed = store.latest_part(ek, "pitQuestions", []) if ek else []
+    return {"id": None, "rev": 0, "questions": pushed or [], "savedAt": None}
 
 
 def _default_event(store):

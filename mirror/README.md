@@ -163,6 +163,30 @@ Three things do **not**:
   a copy on the public internet behind one shared code is not the place to relax
   that. Everything on the mirror is about robots.
 
+### The other way: pit scouting and pit questions
+
+Pit scouting is done **on the mirror** — students open it on their own phones,
+enter the view passcode and tap **Pit scouting** — and so are the team's own pit
+questions, on the **Pit questions** tab. These are the only things the mirror
+accepts from a browser, and only on a mirror with a view passcode: an `--open`
+mirror refuses every save, because there the "team" is the internet.
+
+The hub collects them. Once a minute, on its own thread so a slow mirror never
+holds up the Nexus poll, it asks for the questions (`/api/pitquestions/pull`)
+and for every pit record saved since the last one it took (`/api/pit/pull`),
+both with the push key. Records come ten at a time with the photos taken on the
+mirror inlined; a photo the hub sent in the first place goes back as its id, so
+nothing crosses twice and an edit can never drop one. The hub merges them by
+last-write-wins, exactly as it would a pit record from a phone on its own wifi.
+
+While a scout has a robot's form open, the mirror shows it on every other phone
+as *AK is on it*; phones poll every fifteen seconds and renew their own claim
+every minute, and an unrenewed claim runs out after three.
+
+The mirror needs `server/pitquestions.py` from the same checkout to do any of
+this — the systemd unit already runs it from one. Without it, everything else
+still works and the editor says why it is off.
+
 No API key ever leaves the hub. The mirror has no use for one — it never calls
 The Blue Alliance, Nexus, Statbotics, Lovat or any model.
 

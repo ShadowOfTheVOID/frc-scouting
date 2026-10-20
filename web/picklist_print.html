@@ -10,28 +10,30 @@
   fail, and it runs on one laptop. This is the paper fallback - the board as the
   lead last saw it, the exact fields behind each rank, and who is flagged.
 -->
+<link rel="stylesheet" href="/css/fonts.css">
 <style>
-  :root{color-scheme:light}
+  /* Paper is always light: this page defines its own two fonts and colours. */
+  :root{color-scheme:light;--f-body:Nunito,system-ui,sans-serif;--f-num:'Barlow Condensed',Nunito,system-ui,sans-serif}
   *{box-sizing:border-box}
   body{margin:0;padding:18px 22px;background:#fff;color:#111;
-    font:13px/1.4 Barlow,system-ui,sans-serif;font-variant-numeric:tabular-nums}
-  h1{margin:0;font:800 20px Barlow,system-ui,sans-serif;letter-spacing:.02em}
-  .sub{margin:2px 0 14px;font:500 12px Barlow,system-ui,sans-serif;color:#555}
+    font:13px/1.4 var(--f-body);font-variant-numeric:tabular-nums}
+  h1{margin:0;font:800 20px var(--f-body)}
+  .sub{margin:2px 0 14px;font:500 13px var(--f-body);color:#555}
   .bar{display:flex;align-items:baseline;justify-content:space-between;gap:16px}
   .print{padding:8px 14px;border:1px solid #999;border-radius:6px;background:#fff;
-    font:700 11px Barlow,system-ui,sans-serif;letter-spacing:.1em;cursor:pointer}
+    font:700 13.5px var(--f-body);cursor:pointer}
   table{width:100%;border-collapse:collapse}
-  th{text-align:left;font:800 9.5px Barlow,system-ui,sans-serif;letter-spacing:.12em;
+  th{text-align:left;font:700 12px var(--f-body);
     color:#555;border-bottom:1.5px solid #111;padding:5px 6px}
   td{padding:4px 6px;border-bottom:1px solid #ddd}
   td.n,th.n{text-align:right}
   tr.dnp td{color:#999;text-decoration:line-through}
   tr.taken td{color:#aaa}
-  .rk{font:800 13px Barlow,system-ui,sans-serif;width:26px}
-  .tno{font:800 14px Barlow,system-ui,sans-serif;width:52px}
+  .rk{font:700 14px var(--f-body);width:26px}
+  .tno{font:800 14px var(--f-body);width:52px}
   .nm{color:#444}
-  .foot{margin-top:14px;font:500 11px Barlow,system-ui,sans-serif;color:#666}
-  .flag{margin-top:12px;font:600 11.5px Barlow,system-ui,sans-serif}
+  .foot{margin-top:14px;font:500 13.5px var(--f-body);color:#666}
+  .flag{margin-top:12px;font:600 14px var(--f-body)}
   .flag b{font-weight:800}
   @media print{
     body{padding:0}
@@ -44,17 +46,17 @@
 <body>
 <div class="bar">
   <div>
-    <h1 id="title">PICKLIST</h1>
+    <h1 id="title">Picklist</h1>
     <div class="sub" id="sub">loading…</div>
   </div>
-  <button class="print" onclick="window.print()">PRINT</button>
+  <button class="print" onclick="window.print()">Print</button>
 </div>
 
 <table>
   <thead><tr>
-    <th class="n">#</th><th>TEAM</th><th>NAME</th>
-    <th class="n">CLIMB</th><th class="n">RANK</th><th class="n">OPR</th><th class="n">EPA</th>
-    <th class="n">FUEL</th><th class="n">STOCK</th><th class="n">DIED</th><th class="n">SCORE</th>
+    <th class="n">#</th><th>Team</th><th>Name</th>
+    <th class="n">Climb</th><th class="n">Rank</th><th class="n">OPR</th><th class="n">EPA</th>
+    <th class="n">Fuel</th><th class="n">Stock</th><th class="n">Died</th><th class="n">Score</th>
   </tr></thead>
   <tbody id="rows"></tbody>
 </table>
@@ -102,7 +104,7 @@ if (order.length) {
 }
 
 $('#title').textContent =
-  `${SECOND ? 'SECOND PICK' : 'PICKLIST'} · ${(cfg.eventKey || '').toUpperCase()}`;
+  `${SECOND ? 'Second pick' : 'Picklist'} · ${(cfg.eventKey || '').toUpperCase()}`;
 $('#sub').textContent =
   `${ranked.length} teams ranked · ${order.length ? 'hand-ordered' : 'computed'} · ` +
   `printed ${new Date().toLocaleString()}`;
@@ -126,7 +128,7 @@ $('#rows').innerHTML = ranked.map(({ t, s }, i) => {
 }).join('');
 
 $('#dnp').innerHTML = dnp.size
-  ? `<b>DO NOT PICK:</b> ${[...dnp].sort((a, b) => a - b).join(' · ')}`
+  ? `<b>Do not pick:</b> ${[...dnp].sort((a, b) => a - b).join(' · ')}`
   : '';
 $('#foot').textContent =
   `Weights — ${Object.entries(weights).map(([k, v]) => `${k} ${v}`).join(' · ')}. ` +

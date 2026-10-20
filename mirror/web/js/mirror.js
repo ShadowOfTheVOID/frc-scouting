@@ -12,6 +12,8 @@
  * then red on its own.
  */
 
+import { initPit, viewPit, viewQuestions } from './pit.js';
+
 const $ = (s) => document.querySelector(s);
 const TOKEN_KEY = 'mirror.token';
 
@@ -123,7 +125,7 @@ async function boot() {
   if (!state.events.length) {
     $('#lock').classList.add('hide');
     $('#app').classList.remove('hide');
-    $('#evSub').textContent = 'NOTHING MIRRORED YET';
+    $('#evSub').textContent = 'Nothing mirrored yet';
     $('#banner').className = 'banner cold';
     $('#banner').innerHTML = '<b>No hub has pushed to this mirror.</b> On the hub laptop, '
       + 'open the setup page and fill in the mirror address and push key.';
@@ -158,10 +160,10 @@ function freshness() {
   const at = b.capturedAt;
   const el = $('#freshness');
   const secs = at ? Math.max(0, nowServer() - at) : Infinity;
-  const label = at ? ago(at) : 'NO DATA';
+  const label = at ? ago(at) : 'No data';
   if (el.textContent !== label) el.textContent = label;
   el.className = secs < 300 ? '' : secs < 3600 ? 'stale' : 'cold';
-  $('#freshSub').textContent = 'FROM THE HUB';
+  $('#freshSub').textContent = 'From the hub';
 
   const banner = $('#banner');
   // Under five minutes the hub is plainly still pushing, and a banner that is
@@ -169,8 +171,8 @@ function freshness() {
   let html;
   if (secs < 300) {
     banner.className = 'banner';
-    html = `<b>This is a mirror.</b> A copy the hub pushed ${esc(ago(at))} — `
-      + 'read-only, and it never sees a scout tap. Everything live happens on the hub.';
+    html = `<b>This is a mirror.</b> A copy the hub pushed ${esc(ago(at))}. Match scouting `
+      + 'happens on the hub; pit scouting is done here, and the hub collects it every minute.';
   } else if (secs < 3600) {
     banner.className = 'banner';
     html = `<b>Last update ${esc(ago(at))}.</b> The hub may have moved networks, `
@@ -188,17 +190,17 @@ function freshness() {
 function render() {
   const b = state.bundle || {};
   const ev = b.event || {};
-  $('#evName').textContent = (ev.name || b.eventKey || 'SCOUTING MIRROR').toUpperCase();
+  $('#evName').textContent = ev.name || b.eventKey || 'Scouting mirror';
   const teams = Object.keys(b.analytics?.teams || {}).length;
   const played = (b.matches || []).filter((m) => m.breakdown).length;
   $('#evSub').textContent = [
-    b.eventKey, `${teams} TEAMS`, `${played}/${(b.matches || []).length} MATCHES PLAYED`,
-    `${num(b.analytics?.coverage?.pct, 0)}% COVERAGE`,
+    b.eventKey, `${teams} teams`, `${played} of ${(b.matches || []).length} matches played`,
+    `${num(b.analytics?.coverage?.pct, 0)}% coverage`,
   ].join(' · ');
   freshness();
   ({
     teams: viewTeams, matches: viewMatches, picklist: viewPicklist,
-    health: viewHealth, backup: viewBackup,
+    health: viewHealth, backup: viewBackup, pit: viewPit, questions: viewQuestions,
   }[state.tab] || viewTeams)();
 }
 
@@ -233,17 +235,17 @@ function viewTeams() {
     return a === c ? x.team - y.team : (a > c ? 1 : -1) * state.sort.dir;
   });
   const cols = 'grid-template-columns:64px minmax(0,1fr) 62px 78px 60px 56px';
-  const hd = [['team', 'TEAM'], ['name', 'NAME'], ['rank', 'RANK'], ['fuel', 'FUEL'],
-    ['epa', 'EPA'], ['scouted', 'SEEN']];
+  const hd = [['team', 'Team'], ['name', 'Name'], ['rank', 'Rank'], ['fuel', 'Fuel'],
+    ['epa', 'EPA'], ['scouted', 'Seen']];
 
   $('#view').innerHTML = `
     ${eventPicker()}
-    <div class="narrow-only"><label>SORT BY</label><select id="sortPick">${
+    <div class="narrow-only"><label>Sort by</label><select id="sortPick">${
       SORT_ORDER.map(([k, dir, label]) =>
         `<option value="${k}:${dir}"${state.sort.key === k && state.sort.dir === dir
           ? ' selected' : ''}>${label}</option>`).join('')}</select></div>
     <div class="tbl stack-narrow">
-      <div class="cap"><span class="t">TEAMS</span>
+      <div class="cap"><span class="t">Teams</span>
         <span class="n">${list.length} · tap a row for the detail</span></div>
       <div class="hd" style="${cols}">
         ${hd.map(([k, label]) => (SORTS[k]
@@ -276,17 +278,17 @@ function teamRow(t, cols) {
   const fuel = est.matches ? `${num(est.avgFuel, 0)} <span class="band">±${num(est.band, 0)}</span>` : '—';
   return `<div class="r tap${t.team === ourTeam() ? ' ours' : ''}" style="${cols}" data-team="${t.team}">
     <span class="tno lead">${t.team}</span>
-    <span class="nm" data-k="NAME">${esc(t.name || '')}</span>
-    <span class="num tnum" data-k="RANK">${ex.rank ?? '—'}</span>
-    <span class="num tnum" data-k="FUEL">${fuel}</span>
+    <span class="nm" data-k="Name">${esc(t.name || '')}</span>
+    <span class="num tnum" data-k="Rank">${ex.rank ?? '—'}</span>
+    <span class="num tnum" data-k="Fuel">${fuel}</span>
     <span class="num tnum" data-k="EPA">${num(t.epa?.epa, 0)}</span>
-    <span class="num tnum" data-k="SEEN">${t.matchesScouted}</span>
+    <span class="num tnum" data-k="Seen">${t.matchesScouted}</span>
   </div>`;
 }
 
 function eventPicker() {
   if (state.events.length < 2) return '';
-  return `<div><label>EVENT</label><select id="evPick">${state.events.map((e) =>
+  return `<div><label>Event</label><select id="evPick">${state.events.map((e) =>
     `<option value="${esc(e.eventKey)}"${e.eventKey === state.eventKey ? ' selected' : ''}>${
       esc(e.eventName || e.eventKey)} — ${esc(ago(e.receivedAt))}</option>`).join('')}</select></div>`;
 }
@@ -307,13 +309,13 @@ function viewMatches() {
   const us = ourTeam();
   const mark = (list) => (list || []).map((t) => (t === us ? `<b>${t}</b>` : String(t))).join('  ');
   $('#view').innerHTML = `${eventPicker()}
-    <div class="eyebrow">MATCHES — MOST RECENT FIRST</div>
+    <div class="eyebrow">Matches — most recent first</div>
     ${ms.length ? ms.map((m) => {
       const bd = m.breakdown || null;
       const rs = bd?.red?.totalPoints; const bs = bd?.blue?.totalPoints;
       return `<div class="mrow${bd ? ' played' : ''}">
         <div class="top"><span>${esc(m.label || m.matchKey)}</span>
-          <span>${bd ? 'FINAL' : (m.status || 'SCHEDULED').toUpperCase()}</span></div>
+          <span>${bd ? 'Final' : esc(m.status || 'Scheduled')}</span></div>
         <div class="sides">
           <div class="teams red">${mark(m.red)}</div>
           <div class="sc${bd && rs > bs ? ' win' : ''}">${rs ?? ''}</div>
@@ -341,8 +343,8 @@ function viewPicklist() {
         return `<div class="r${Number(team) === ourTeam() ? ' ours' : ''}" style="${cols}">
           <span class="tnum" style="color:var(--t5)">${i + 1}</span>
           <span class="tno lead">${team}</span>
-          <span class="nm" data-k="NAME">${esc(t.name || '')}</span>
-          <span class="num tnum" data-k="FUEL">${t.estimated?.matches ? num(t.estimated.avgFuel, 0) : '—'}</span>
+          <span class="nm" data-k="Name">${esc(t.name || '')}</span>
+          <span class="num tnum" data-k="Fuel">${t.estimated?.matches ? num(t.estimated.avgFuel, 0) : '—'}</span>
         </div>`;
       }).join('') : '<div class="empty">Empty — nothing ordered on the hub yet.</div>'}
     </div>`;
@@ -350,10 +352,10 @@ function viewPicklist() {
   $('#view').innerHTML = `${eventPicker()}
     <div class="hint">The board as the strategy lead last left it on the hub. Read-only here —
       ordering happens on the dashboard, and this copy follows within the minute.</div>
-    ${listOf(pl.order, 'FIRST PICK', 'best robot left')}
-    ${listOf(pl.order2, 'SECOND PICK', 'best complement to ours')}
+    ${listOf(pl.order, 'First pick', 'best robot left')}
+    ${listOf(pl.order2, 'Second pick', 'best complement to ours')}
     <div class="tbl">
-      <div class="cap"><span class="t">DO NOT PICK</span><span class="n">${(pl.dnp || []).length}</span></div>
+      <div class="cap"><span class="t">Do not pick</span><span class="n">${(pl.dnp || []).length}</span></div>
       ${(pl.dnp || []).length
         ? `<div class="r" style="grid-template-columns:1fr">${(pl.dnp || []).map((t) => `<span class="chip bad" style="margin-right:6px">${t}</span>`).join('')}</div>`
         : '<div class="empty">Nobody excluded.</div>'}
@@ -370,13 +372,13 @@ function viewHealth() {
   const hot = rep.biasPct;
   $('#view').innerHTML = `${eventPicker()}
     <div class="tiles">
-      <div class="tile"><div class="k">COVERAGE</div><div class="v tnum">${num(cov.pct, 0)}<small>%</small></div>
+      <div class="tile"><div class="k">Coverage</div><div class="v tnum">${num(cov.pct, 0)}<small>%</small></div>
         <div class="c">${cov.robotsScouted || 0} of ${cov.robotsExpected || 0} robot-matches</div></div>
-      <div class="tile"><div class="k">SCOUTS VS OFFICIAL</div><div class="v tnum">${num(rep.medianPct, 0)}<small>%</small></div>
+      <div class="tile"><div class="k">Scouts vs official</div><div class="v tnum">${num(rep.medianPct, 0)}<small>%</small></div>
         <div class="c">median over ${rep.compared || 0} alliance-matches</div></div>
-      <div class="tile"><div class="k">CALIBRATION</div><div class="v tnum">${b.multipliersFittedFrom || 0}</div>
+      <div class="tile"><div class="k">Calibration</div><div class="v tnum">${b.multipliersFittedFrom || 0}</div>
         <div class="c">${b.multipliersFittedFrom ? 'windows fitted' : 'priors only — not yet fitted'}</div></div>
-      <div class="tile${flags.length ? ' alert' : ''}"><div class="k">FLAGGED MATCHES</div>
+      <div class="tile${flags.length ? ' alert' : ''}"><div class="k">Flagged matches</div>
         <div class="v tnum">${flags.length}</div><div class="c">${flags.length ? 'listed below' : 'nothing flagged'}</div></div>
     </div>
     ${hot == null ? '' : `<div class="hint">Scouts are calling shooting
@@ -384,11 +386,11 @@ function viewHealth() {
       totals. The solver corrects for it either way — this is the number to mention at a
       scout briefing, not a reason to distrust a fuel column.</div>`}
     <div class="tbl stack-narrow">
-      <div class="cap"><span class="t">FLAGS</span><span class="n">${flags.length}</span></div>
+      <div class="cap"><span class="t">Flags</span><span class="n">${flags.length}</span></div>
       ${flags.length ? flags.map((f) => `<div class="r" style="grid-template-columns:minmax(0,1fr) 120px">
           <span class="lead">${esc(f.match_key || f.matchKey || '')}
             <span class="chip warn" style="margin-left:6px">${esc(f.kind)}</span></span>
-          <span class="nm" data-k="DETAIL">${esc(f.detail || '')}</span>
+          <span class="nm" data-k="Detail">${esc(f.detail || '')}</span>
         </div>`).join('') : '<div class="empty">No match has been flagged.</div>'}
     </div>
     <div class="hint">Per-scout quality scores are not mirrored. They name people and grade
@@ -402,24 +404,24 @@ async function viewBackup() {
   const b = state.bundle;
   const ek = encodeURIComponent(state.eventKey);
   $('#view').innerHTML = `${eventPicker()}
-    <div class="eyebrow">IF THE HUB IS GONE</div>
+    <div class="eyebrow">If the hub is gone</div>
     <div class="hint">These are the files that put the event back. The JSON is the same shape
       the hub's own export is, so it goes straight into <b>/api/import</b> on a fresh laptop —
       re-importing is a no-op if some of it is already there, so it is always safe to try.
       The CSVs are the dashboard's, carried across unchanged.</div>
     <div class="btns">
-      <a class="btn go" href="${esc(signed(`/api/export?event=${ek}`))}" download>DOWNLOAD JSON — RESTORES A HUB</a>
-      <a class="btn" href="${esc(signed(`/api/export.csv?event=${ek}&table=teams`))}" download>TEAM SUMMARY CSV</a>
-      <a class="btn" href="${esc(signed(`/api/export.csv?event=${ek}&table=lovat`))}" download>LOVAT CSV</a>
+      <a class="btn go" href="${esc(signed(`/api/export?event=${ek}`))}" download>Download JSON — restores a hub</a>
+      <a class="btn" href="${esc(signed(`/api/export.csv?event=${ek}&table=teams`))}" download>Team summary CSV</a>
+      <a class="btn" href="${esc(signed(`/api/export.csv?event=${ek}&table=lovat`))}" download>Lovat CSV</a>
     </div>
     <div class="tiles">
-      <div class="tile"><div class="k">SCOUT ENTRIES HELD</div><div class="v tnum">${(b.scout || []).length}</div></div>
-      <div class="tile"><div class="k">PIT ENTRIES HELD</div><div class="v tnum">${(b.pit || []).length}</div></div>
-      <div class="tile"><div class="k">PHOTOS HELD</div><div class="v tnum">${b.mirror?.photos ?? 0}<small>/${(b.photoIds || []).length}</small></div></div>
-      <div class="tile"><div class="k">CAPTURED</div><div class="v tnum" style="font-size:19px">${esc(ago(b.capturedAt))}</div></div>
+      <div class="tile"><div class="k">Scout entries held</div><div class="v tnum">${(b.scout || []).length}</div></div>
+      <div class="tile"><div class="k">Pit entries held</div><div class="v tnum">${(b.pit || []).length}</div></div>
+      <div class="tile"><div class="k">Photos held</div><div class="v tnum">${b.mirror?.photos ?? 0}<small>/${(b.photoIds || []).length}</small></div></div>
+      <div class="tile"><div class="k">Captured</div><div class="v tnum" style="font-size:19px">${esc(ago(b.capturedAt))}</div></div>
     </div>
     <div class="tbl stack-narrow" id="hist">
-      <div class="cap"><span class="t">EVERY COPY THIS MIRROR HOLDS</span><span class="n">loading…</span></div>
+      <div class="cap"><span class="t">Every copy this mirror holds</span><span class="n">loading…</span></div>
     </div>
     <div class="hint">Older copies are kept because "the database looks wrong" is one of the
       failures this exists for. Downloading yesterday's is a link, not a recovery procedure.</div>`;
@@ -427,16 +429,16 @@ async function viewBackup() {
   const h = await api(`/api/history?event=${ek}`).catch(() => ({ revisions: [] }));
   const cols = 'grid-template-columns:minmax(0,1fr) 76px 76px 96px';
   $('#hist').innerHTML = `
-    <div class="cap"><span class="t">EVERY COPY THIS MIRROR HOLDS</span>
+    <div class="cap"><span class="t">Every copy this mirror holds</span>
       <span class="n">${(h.revisions || []).length}</span></div>
-    <div class="hd" style="${cols}"><span>RECEIVED</span><span class="num">SCOUTED</span>
-      <span class="num">PLAYED</span><span class="num">DOWNLOAD</span></div>
+    <div class="hd" style="${cols}"><span>Received</span><span class="num">Scouted</span>
+      <span class="num">Played</span><span class="num">Download</span></div>
     ${(h.revisions || []).map((r) => `<div class="r" style="${cols}">
       <span class="lead">${esc(ago(r.receivedAt))}
         <span class="band">· rev ${r.revision} · ${Math.round((r.bytes || 0) / 1024)} KB</span></span>
-      <span class="num tnum" data-k="SCOUTED">${r.scoutEntries ?? '—'}</span>
-      <span class="num tnum" data-k="PLAYED">${r.matchesPlayed ?? '—'}</span>
-      <span class="num" data-k="DOWNLOAD"><a href="${esc(signed(`/api/export?event=${ek}&rev=${r.revision}`))}" download>JSON</a></span>
+      <span class="num tnum" data-k="Scouted">${r.scoutEntries ?? '—'}</span>
+      <span class="num tnum" data-k="Played">${r.matchesPlayed ?? '—'}</span>
+      <span class="num" data-k="Download"><a href="${esc(signed(`/api/export?event=${ek}&rev=${r.revision}`))}" download>JSON</a></span>
     </div>`).join('') || '<div class="empty">Nothing stored yet.</div>'}`;
 }
 
@@ -453,49 +455,55 @@ function openTeam(team) {
 
   const cell = (k, v) => `<div><div class="k">${k}</div><div class="v tnum">${v}</div></div>`;
   $('#sheetCard').innerHTML = `
-    <button class="x" id="sheetX">CLOSE</button>
+    <button class="x" id="sheetX">Close</button>
     <h2>${team} <span style="color:var(--t4);font-size:16px">${esc(t.name || '')}</span></h2>
     <div class="who">${t.matchesScouted} match(es) scouted · ${ex.matchesWithOfficial || 0} with an official result</div>
     <div class="kv">
-      ${cell('RANK', ex.rank ?? '—')}
-      ${cell('RECORD', rec)}
-      ${cell('AVG FUEL', est.matches ? `${num(est.avgFuel, 0)}<span class="band"> ±${num(est.band, 0)}</span>` : '—')}
+      ${cell('Rank', ex.rank ?? '—')}
+      ${cell('Record', rec)}
+      ${cell('Avg fuel', est.matches ? `${num(est.avgFuel, 0)}<span class="band"> ±${num(est.band, 0)}</span>` : '—')}
       ${cell('EPA', num(t.epa?.epa, 0))}
-      ${cell('BEST CLIMB', esc(ex.bestClimb || '—'))}
-      ${cell('TOWER PTS', num(ex.avgTowerPoints, 1))}
-      ${cell('AUTO CLIMB', ex.autoClimbRate == null ? '&mdash;'
+      ${cell('Best climb', esc(ex.bestClimb || '—'))}
+      ${cell('Tower pts', num(ex.avgTowerPoints, 1))}
+      ${cell('Auto climb', ex.autoClimbRate == null ? '&mdash;'
         : `${num(ex.autoClimbRate, 0)}<small>%</small>`)}
-      ${cell('AVG RP', num(ex.avgRP, 2))}
-      ${cell('STOCKPILES', `${num(ob.stockpileRate, 0)}<small>%</small>`)}
-      ${cell('FEEDS', `${num(ob.feedRate, 0)}<small>%</small>`)}
-      ${cell('DEFENCE PLAYED', `${num(ob.defenseSecs, 0)}<small>s</small>`)}
-      ${cell('DEFENCE FACED', ob.defenseFacedSecs == null ? '—' : `${num(ob.defenseFacedSecs, 0)}<small>s</small>`)}
-      ${cell('DIED', `${num(ob.diedRate, 0)}<small>%</small>`)}
-      ${cell('NO SHOW', `${num(ob.noShowRate, 0)}<small>%</small>`)}
-      ${cell('START ZONE', esc(ob.startZone ? ob.startZone + (ob.startLane ? ` · ${ob.startLane}` : '') : '—'))}
-      ${cell('CLIMB LEAVES AT', ob.climbStartSecs == null ? '—' : `${num(ob.climbStartSecs, 0)}<small>s</small>`)}
-      ${cell('LOVAT FUEL', t.lovat?.matches ? num(t.lovat.avgFuel, 0) : '—')}
+      ${cell('Avg RP', num(ex.avgRP, 2))}
+      ${cell('Stockpiles', `${num(ob.stockpileRate, 0)}<small>%</small>`)}
+      ${cell('Feeds', `${num(ob.feedRate, 0)}<small>%</small>`)}
+      ${cell('Defence played', `${num(ob.defenseSecs, 0)}<small>s</small>`)}
+      ${cell('Defence faced', ob.defenseFacedSecs == null ? '—' : `${num(ob.defenseFacedSecs, 0)}<small>s</small>`)}
+      ${cell('Died', `${num(ob.diedRate, 0)}<small>%</small>`)}
+      ${cell('No show', `${num(ob.noShowRate, 0)}<small>%</small>`)}
+      ${cell('Start zone', esc(ob.startZone ? ob.startZone + (ob.startLane ? ` · ${ob.startLane}` : '') : '—'))}
+      ${cell('Climb leaves at', ob.climbStartSecs == null ? '—' : `${num(ob.climbStartSecs, 0)}<small>s</small>`)}
+      ${cell('Lovat fuel', t.lovat?.matches ? num(t.lovat.avgFuel, 0) : '—')}
     </div>
-    ${pit ? pitBlock(pit) : ''}
-    ${shots.length ? `<div class="eyebrow" style="margin-top:16px">PIT PHOTOS</div>
+    ${pit ? pitBlock(pit, b.pitQuestions) : ''}
+    ${shots.length ? `<div class="eyebrow" style="margin-top:16px">Pit photos</div>
       <div class="shots">${shots.map((p) =>
         `<img loading="lazy" alt="pit photo of team ${team}" src="${esc(signed(`/api/photo/${encodeURIComponent(p.photoId)}`))}">`).join('')}</div>` : ''}
-    ${(t.notes || []).length ? `<div class="eyebrow" style="margin-top:16px">SCOUT NOTES</div>
+    ${(t.notes || []).length ? `<div class="eyebrow" style="margin-top:16px">Scout notes</div>
       <div class="notes">${t.notes.slice(0, 40).map((n) => `<div class="note">
         <div class="m">${esc(n.matchKey || '')} · ${esc(n.scoutId || '')}</div>${esc(n.note)}</div>`).join('')}</div>` : ''}`;
   $('#sheet').classList.remove('hide');
   $('#sheetX').onclick = closeSheet;
 }
 
-function pitBlock(pit) {
+function pitBlock(pit, questions) {
   const p = pit.payload || {};
   const skip = new Set(['photos', 'photo', 'photoIds', 'images']);
   const fields = Object.entries(p)
     .filter(([k, v]) => !skip.has(k) && v !== null && v !== '' && typeof v !== 'object');
+  // The team's own questions, under the wording the hub has for them now.
+  const custom = (p.custom && typeof p.custom === 'object') ? p.custom : {};
+  for (const q of (questions || [])) {
+    const v = q && custom[q.id];
+    if (v != null && v !== '') fields.push([q.label, v, true]);
+  }
   if (!fields.length) return '';
-  return `<div class="eyebrow" style="margin-top:16px">PIT SCOUTING</div>
-    <div class="kv">${fields.map(([k, v]) =>
-      `<div><div class="k">${esc(k.replace(/([A-Z])/g, ' $1').toUpperCase())}</div>
+  return `<div class="eyebrow" style="margin-top:16px">Pit scouting</div>
+    <div class="kv">${fields.map(([k, v, asIs]) =>
+      `<div><div class="k">${esc(asIs ? k : (k.charAt(0).toUpperCase() + k.slice(1)).replace(/([A-Z])/g, ' $1').trim().replace(/ (\w)/g, (_, c) => ' ' + c.toLowerCase()))}</div>
        <div class="v" style="font-size:15px">${esc(typeof v === 'boolean' ? (v ? 'yes' : 'no') : v)}</div></div>`).join('')}</div>`;
 }
 
@@ -533,6 +541,19 @@ document.addEventListener('visibilitychange', () => {
 // one did not, so a tab left open kept rewriting the banner all afternoon.
 // Repainted on the way back so it is never showing a stale age on screen.
 setInterval(() => { if (state.bundle && !document.hidden) freshness(); }, 15000);
+
+initPit({ api, state, esc, signed });
+// A link straight to a tab - scouting.example.org/#pit - opens on it, and so
+// does changing the hash on a page that is already open.
+function tabFromHash() {
+  const t = location.hash.slice(1);
+  if (!$('#tabs').querySelector(`button[data-tab="${CSS.escape(t)}"]`)) return false;
+  state.tab = t;
+  $('#tabs').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x.dataset.tab === t));
+  return true;
+}
+tabFromHash();
+window.addEventListener('hashchange', () => { if (tabFromHash() && state.bundle) render(); });
 
 try { state.token = localStorage.getItem(TOKEN_KEY); } catch { /* private mode */ }
 boot().catch(() => showLock());

@@ -4,23 +4,28 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=1240">
 <title>Hub admin · REBUILT</title>
+<script src="/js/theme.js"></script>
+<link rel="stylesheet" href="/css/fonts.css">
+<link rel="stylesheet" href="/css/theme.css">
 <link rel="stylesheet" href="/css/desk.css">
 <style>
   .form{display:flex;flex-direction:column;gap:14px;max-width:560px}
-  .f label{display:block;font:800 10px Barlow,sans-serif;letter-spacing:.14em;color:var(--t4);margin-bottom:5px}
-  .f input,.f select{width:100%;background:var(--raised);border:1px solid var(--btn);border-radius:8px;
-    padding:10px 12px;color:var(--t0);font:500 13.5px Barlow,sans-serif}
-  .f .h{font:500 11.5px Barlow,sans-serif;color:var(--t6);margin-top:4px}
-  .go{padding:11px 18px;border-radius:8px;background:var(--red);border:none;color:#fff;
-    font:800 11.5px Barlow,sans-serif;letter-spacing:.1em;cursor:pointer}
-  .lk{display:inline-block;padding:9px 16px;border-radius:8px;border:1px solid var(--btn);
-    font:800 11px Barlow,sans-serif;letter-spacing:.1em;color:var(--t1)}
+  .f label{display:block;font:700 14px var(--f-body);color:var(--t0);margin-bottom:6px}
+  .f input,.f select{width:100%;background:var(--soft);border:2px solid transparent;border-radius:16px;
+    padding:11px 15px;color:var(--t0);font:500 15px var(--f-body)}
+  .f input:focus,.f select:focus{outline:none;border-color:var(--red-ring)}
+  .f .h{font:500 13.5px/1.5 var(--f-body);color:var(--t5);margin-top:6px}
+  .go{padding:11px 22px;border-radius:999px;background:var(--red);border:none;color:var(--on-red);
+    font:800 15px var(--f-body);cursor:pointer}
+  .lk{display:inline-block;padding:8px 16px;border-radius:999px;background:var(--soft);
+    font:700 14px var(--f-body);color:var(--t1)}
+  .lk:hover{color:var(--t0);text-decoration:none}
   /* The mirror pane is the full width of the page rather than half of it, and
      a paragraph 1200px wide is a paragraph nobody finishes. */
   #mirrorPane>*{max-width:720px}
   /* What the hub made of what was pasted, under the box it was pasted into.
      A key that is wrong has no other symptom anywhere in this app. */
-  .say{margin-top:5px;font:500 11.5px Barlow,sans-serif;line-height:1.5}
+  .say{margin-top:5px;font:500 14px var(--f-body);line-height:1.5}
   .say:empty{display:none}
   .say.bad{color:var(--red-alert)}
   .say.warn{color:var(--amber)}
@@ -29,49 +34,49 @@
   .say b{font-weight:800}
   .f.bad input{border-color:var(--red-alert)}
   .f.ok input{border-color:var(--green-border)}
-  .tag{float:right;font:800 9px Barlow,sans-serif;letter-spacing:.12em;color:var(--t6)}
+  .tag{float:right;font:700 11.5px var(--f-body);color:var(--t6)}
   .tag.on{color:var(--green-soft)}
   .forget{margin-left:8px;background:none;border:none;padding:0;cursor:pointer;
-    font:800 9px Barlow,sans-serif;letter-spacing:.12em;color:var(--t5);text-decoration:underline}
+    font:700 11.5px var(--f-body);color:var(--t5);text-decoration:underline}
   .forget:hover{color:var(--red-alert)}
   /* The lock bar, and what a locked page looks like: readable, obviously not
      editable, and one button away from being editable. */
   .lockbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-  .lockbar input{background:var(--raised);border:1px solid var(--btn);border-radius:8px;
-    padding:9px 12px;color:var(--t0);font:500 13px Barlow,sans-serif;width:200px}
-  .lockstate{font:800 11px Barlow,sans-serif;letter-spacing:.12em}
+  .lockbar input{background:var(--soft);border:0;border-radius:999px;
+    padding:10px 16px;color:var(--t0);font:500 14px var(--f-body);width:220px}
+  .lockstate{font:700 13.5px var(--f-body)}
   .lockstate.shut{color:var(--amber)}
   .lockstate.open{color:var(--green-soft)}
   .pane.dim{opacity:.62}
   .pane.dim input,.pane.dim select,.pane.dim button{cursor:not-allowed}
-  #switchAsk{border:1px solid var(--red-ring);border-radius:8px;padding:10px 12px;
-    margin-top:8px;color:var(--red-soft)}
+  #switchAsk{background:var(--red-bg);border-radius:22px;padding:13px 17px;
+    margin-top:8px;color:var(--red-alert)}
   #switchAsk button{margin-top:8px}
   /* The checklist. Every line is ticked off by the hub having the thing, not by
      somebody having typed it in - so this is also what the panel looks like the
      morning after, when the question is "did that work?" rather than "what now?".
      See Hub.setup_steps in server/hub.py; none of these rules live twice. */
-  #setupPane{border:1px solid var(--red-ring)}
+  #setupPane{background:var(--soft);border-radius:28px;padding:22px 26px}
   #setupPane>*{max-width:760px}
-  .steps{display:flex;flex-direction:column;gap:2px}
-  .step{display:grid;grid-template-columns:24px 1fr;gap:10px;padding:8px 10px;border-radius:8px}
-  .step.now{background:var(--raised)}
-  .step .mark{font:800 12px Barlow,sans-serif;color:var(--t5);text-align:center}
-  .step.did .mark{color:var(--green-soft)}
-  .step.now .mark{color:var(--red-soft)}
-  .step .ttl{font:800 12px Barlow,sans-serif;letter-spacing:.07em;color:var(--t3)}
+  .steps{display:flex;flex-direction:column;gap:4px}
+  .step{display:grid;grid-template-columns:28px 1fr;gap:12px;padding:10px 14px;border-radius:22px;align-items:start}
+  .step.now{background:var(--panel)}
+  .step .mark{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;
+    font:800 12.5px var(--f-body);background:var(--soft2);color:var(--t4)}
+  .step.did .mark{background:var(--green-bg);color:var(--green)}
+  .step.now .mark{background:var(--red);color:var(--on-red)}
+  .step .ttl{font:700 15px/26px var(--f-body);color:var(--t2)}
   .step.did .ttl{color:var(--t5)}
-  .step.now .ttl{color:var(--t0)}
-  .step .ln{font:500 12px/1.55 Barlow,sans-serif;color:var(--t4);margin-top:3px}
+  .step.now .ttl{color:var(--t0);font-weight:800}
+  .step .ln{font:500 14px/1.55 var(--f-body);color:var(--t4);margin-top:2px}
   .step.now .ln{color:var(--t1)}
-  .later{font:500 11.5px/1.6 Barlow,sans-serif;color:var(--t6);margin:0;padding-left:18px}
+  .later{font:500 14px/1.6 var(--f-body);color:var(--t5);margin:0;padding-left:18px}
   .later li{margin-bottom:4px}
   /* The eight optional boxes, out of the way until they are wanted. Nexus and
      the event are the two that decide whether this app works at all, and they
      used to sit in a column of twelve that all looked equally important. */
-  details.more{border-top:1px solid var(--line);padding-top:12px}
-  details.more>summary{cursor:pointer;list-style:none;font:800 11px Barlow,sans-serif;
-    letter-spacing:.14em;color:var(--t4)}
+  details.more{background:var(--soft);border-radius:22px;padding:14px 18px}
+  details.more>summary{cursor:pointer;list-style:none;font:700 14.5px var(--f-body);color:var(--t1)}
   details.more>summary::-webkit-details-marker{display:none}
   details.more>summary::before{content:"▸ ";color:var(--t5)}
   details.more[open]>summary::before{content:"▾ "}
@@ -87,19 +92,20 @@
   <div class="apphead">
     <div class="bar"></div>
     <div class="in">
-      <div><h1>HUB ADMIN</h1><div class="sub" id="sub">checking…</div></div>
+      <div><h1>Hub admin</h1><div class="sub" id="sub">checking…</div></div>
       <span class="sp"></span>
-      <div style="display:flex;gap:8px">
-        <a class="lk" href="/scout">SCOUT</a>
-        <a class="lk" href="/dashboard">DASHBOARD</a>
-        <a class="lk" href="/join">JOIN QR</a>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button type="button" class="themebtn" data-theme-toggle></button>
+        <a class="lk" href="/scout">Scout</a>
+        <a class="lk" href="/dashboard">Dashboard</a>
+        <a class="lk" href="/join">Join QR</a>
       </div>
     </div>
   </div>
 
   <div class="cols hide" style="grid-template-columns:1fr" id="setupRow">
     <div class="pane mid" id="setupPane">
-      <div class="eyebrow red" id="setupHead">START HERE</div>
+      <div class="eyebrow red" id="setupHead">Start here</div>
       <div class="steps" id="steps"></div>
       <div class="hint" id="setupDone"></div>
       <div class="hint" style="margin-top:4px">Later, and none of it in the way of a first
@@ -110,13 +116,13 @@
 
   <div class="cols" style="grid-template-columns:1fr">
     <div class="pane mid" id="lockPane">
-      <div class="eyebrow">ADMIN</div>
+      <div class="eyebrow">Admin</div>
       <div class="lockbar">
-        <span class="lockstate shut" id="lockState">SETTINGS LOCKED</span>
+        <span class="lockstate shut" id="lockState">Settings locked</span>
         <input id="adminEntry" class="hide" type="password" placeholder="admin password"
           autocomplete="off" autocapitalize="off" spellcheck="false">
-        <button class="go" id="unlock">UNLOCK</button>
-        <button class="go hide" id="lock" style="background:var(--btn)">LOCK NOW</button>
+        <button class="go" id="unlock">Unlock</button>
+        <button class="go hide" id="lock" style="background:var(--soft2);color:var(--t0)">Lock now</button>
         <span class="hint" id="lockSay"></span>
       </div>
       <div class="hint">Everything below is read-only until you unlock it, and it locks itself
@@ -129,28 +135,28 @@
 
   <div class="cols" style="grid-template-columns:1fr 1fr">
     <div class="pane mid">
-      <div class="eyebrow">EVENT</div>
+      <div class="eyebrow">Event</div>
       <div class="form">
-        <div class="f"><label>OUR TEAM</label>
+        <div class="f"><label>Our team</label>
           <div class="pair">
             <input id="ourTeam" inputmode="numeric" placeholder="6059">
-            <button class="go" id="findEvents" style="background:var(--btn);white-space:nowrap">FIND MY EVENTS</button>
+            <button class="go" id="findEvents" style="background:var(--soft2);color:var(--t0);white-space:nowrap">Find my events</button>
           </div>
           <div class="h">Highlights us in every table — and finds the event key below, so
             there is nothing to look up. Needs no API key: the list comes from Statbotics, and
             from The Blue Alliance if you have set that key.</div>
           <div class="say" id="findSay"></div></div>
-        <div class="f hide" id="eventPickRow"><label>PICK THE EVENT</label>
+        <div class="f hide" id="eventPickRow"><label>Pick the event</label>
           <select id="eventPick"></select>
           <div class="h">Fills in the key and the level below. Everything after this is one
-            press of SAVE.</div></div>
-        <div class="f" data-key="eventKey"><label>EVENT KEY</label>
+            press of Save & refresh.</div></div>
+        <div class="f" data-key="eventKey"><label>Event key</label>
           <input id="eventKey" placeholder="2026casf" autocapitalize="off" autocorrect="off" spellcheck="false">
           <div class="h">As shown on frc.events or The Blue Alliance. Nexus uses the same key.
             Paste the whole address of the event page if that is what you have — the key
             gets taken out of it.</div>
           <div class="say"></div></div>
-        <div class="f"><label>EVENT LEVEL</label>
+        <div class="f"><label>Event level</label>
           <select id="eventLevel">
             <option value="regional">Regional / District — Energized at 100 fuel</option>
             <option value="dcmp">District Championship — 240</option>
@@ -161,7 +167,7 @@
     </div>
 
     <div class="pane mid">
-      <div class="eyebrow">API KEYS</div>
+      <div class="eyebrow">API keys</div>
       <div class="hint">One of them matters and the rest are extras, so only that one is open:
         Nexus is what arms the match screen on the phones, and without it every scout opens each
         match by hand. The app runs without any of the others, just with less live data.</div>
@@ -170,7 +176,7 @@
         or a line break come with it, they get taken off and the box shows what will be
         saved. A key that belongs in another box is refused rather than stored.</div>
       <div class="form">
-        <div class="f" data-key="nexusKey"><label>NEXUS<span class="tag"></span></label>
+        <div class="f" data-key="nexusKey"><label>Nexus<span class="tag"></span></label>
           <input id="nexusKey" placeholder="Nexus-Api-Key" autocomplete="off">
           <div class="h">Required. Its "on field" is what arms the match screen on every
             phone — without it, every scout taps through by hand six times an hour. Also pit
@@ -179,32 +185,32 @@
       </div>
 
       <details class="more" id="moreKeys">
-        <summary>THE OPTIONAL ONES — ALL FREE EXCEPT THE AI</summary>
+        <summary>The optional ones — all free except the AI</summary>
         <div class="hint" style="margin-top:12px">Every one of these can wait, and a first event
           is fine without any of them. None is needed for scouting itself — they add official
           results, other teams' scouting, and the AI answers.</div>
         <div class="form">
-          <div class="f" data-key="tbaKey"><label>THE BLUE ALLIANCE<span class="tag"></span></label>
+          <div class="f" data-key="tbaKey"><label>The Blue Alliance<span class="tag"></span></label>
             <input id="tbaKey" placeholder="X-TBA-Auth-Key" autocomplete="off">
             <div class="h">Official results and per-robot climb. thebluealliance.com/account</div>
             <div class="say"></div></div>
-          <div class="f" data-key="nexusToken"><label>NEXUS WEBHOOK TOKEN<span class="tag"></span></label>
+          <div class="f" data-key="nexusToken"><label>Nexus webhook token<span class="tag"></span></label>
             <input id="nexusToken" placeholder="Nexus-Token" autocomplete="off">
             <div class="h">Only if you registered a push webhook.</div>
             <div class="say"></div></div>
-          <div class="f" data-key="frcEventsUser"><label>FRC EVENTS USERNAME<span class="tag"></span></label>
+          <div class="f" data-key="frcEventsUser"><label>FRC Events username<span class="tag"></span></label>
             <input id="frcEventsUser" placeholder="your frc-events username" autocomplete="off">
             <div class="h">Posts the official result a few minutes before TBA does. It does not
               feed the fuel solver — TBA stays the only source for that.
               frc-events.firstinspires.org</div>
             <div class="say"></div></div>
-          <div class="f" data-key="frcEventsToken"><label>FRC EVENTS TOKEN<span class="tag"></span></label>
+          <div class="f" data-key="frcEventsToken"><label>FRC Events token<span class="tag"></span></label>
             <input id="frcEventsToken" placeholder="authorization token" autocomplete="off">
             <div class="h">The token on its own. If what you have is the whole
               <code>username:token</code> pair, or the base64 one out of their documentation,
               paste that — both halves get filled in.</div>
             <div class="say"></div></div>
-          <div class="f" data-key="lovatKey"><label>LOVAT API KEY<span class="tag"></span></label>
+          <div class="f" data-key="lovatKey"><label>Lovat API key<span class="tag"></span></label>
             <input id="lovatKey" placeholder="lvt-…" autocomplete="off">
             <div class="h">Other teams' scouting for this event. Lovat has no page that makes
               one, so the hub has a script for it: copy the <code>profile</code> request from
@@ -214,21 +220,21 @@
               their 403 means. It is shown next to our own numbers, never mixed into
               them. lovat.app</div>
             <div class="say"></div></div>
-          <div class="f"><label>AI MODEL</label>
+          <div class="f"><label>AI model</label>
             <select id="aiModel"></select>
             <div class="h">Summarises scout notes, explains the picklist and answers questions
               about the event. It only ever reads the numbers already on this hub — it never
               adds any, and nothing it writes is stored as data. Prices are per million tokens;
               one answer is a few thousand. The OpenRouter group is the same models through one
               key and one bill instead of three.</div></div>
-          <div class="f hide" id="aiOtherRow"><label>MODEL ID</label>
+          <div class="f hide" id="aiOtherRow"><label>Model ID</label>
             <input id="aiOther" placeholder="e.g. claude-opus-5" autocomplete="off"
               autocapitalize="off" autocorrect="off" spellcheck="false">
             <div class="h">For a model released after this list was written, or any of the
               hundreds OpenRouter carries. The name decides where it is sent: a name with a
               slash in it — <code>anthropic/claude-opus-5</code> — goes to OpenRouter, a bare
               one goes to the company that made it.</div></div>
-          <div class="f" data-key="aiKey"><label>AI KEY<span class="tag"></span></label>
+          <div class="f" data-key="aiKey"><label>AI key<span class="tag"></span></label>
             <input id="aiKey" placeholder="api key for whoever makes the model above"
               autocomplete="off">
             <div class="h">From whichever company makes the model picked above, or from
@@ -236,7 +242,7 @@
               refused here rather than saved — that mismatch has no other symptom than every AI
               answer saying the model could not be reached.</div>
             <div class="say"></div></div>
-          <div class="f" data-key="strategyPin"><label>STRATEGY PASSCODE<span class="tag"></span></label>
+          <div class="f" data-key="strategyPin"><label>Strategy passcode<span class="tag"></span></label>
             <input id="strategyPin" placeholder="leave blank for no lock" autocomplete="off">
             <div class="h">Gates the picklist and every AI answer. Shared, not personal — the hub stores only a hash
               of the code, never who used it. Changing it signs everyone out. Spaces on the ends
@@ -247,8 +253,8 @@
 
       <div class="form">
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <button class="go" id="save">SAVE &amp; REFRESH</button>
-          <button class="go" id="test" style="background:var(--btn)">TEST KEYS</button>
+          <button class="go" id="save">Save &amp; refresh</button>
+          <button class="go" id="test" style="background:var(--soft2);color:var(--t0)">Test keys</button>
         </div>
         <div class="hint" id="status"></div>
         <div class="hint" id="testOut"></div>
@@ -258,8 +264,8 @@
 
   <div class="cols" style="grid-template-columns:1fr">
     <div class="pane mid" id="mirrorPane">
-      <div class="eyebrow">OFF-SITE MIRROR</div>
-      <div class="hint">Part of this panel, and locked with the rest of it. <b>TEST KEYS</b> above
+      <div class="eyebrow">Off-site mirror</div>
+      <div class="hint">Part of this panel, and locked with the rest of it. <b>Test keys</b> above
         checks the mirror too: whether there is really a mirror at that address, and whether it
         accepts your push key — two failures that otherwise look like the same silence, because
         a push that is failing has no symptom at the venue at all.</div>
@@ -267,16 +273,16 @@
         Every minute this hub packs the whole event — teams, matches, scouting, the picklist,
         the solved numbers — and pushes it to a site your team hosts. Two things come of that:
         the data survives this laptop, and anyone with the mirror passcode can read the numbers
-        from a phone on cell data, off the venue wifi entirely. It is read-only over there;
-        nothing on the mirror can change anything here. Nothing is sent while the event has
-        not changed.</div>
+        from a phone on cell data, off the venue wifi entirely. The numbers are read-only over
+        there. <b>Pit scouting is done on the mirror</b>, along with your own pit questions, and
+        this hub collects both every minute. Nothing is sent while the event has not changed.</div>
       <div class="form">
-        <div class="f"><label>MIRROR ADDRESS</label>
+        <div class="f"><label>Mirror address</label>
           <input id="mirrorUrl" placeholder="https://scouting.systemoverload.org" autocomplete="off"
             autocapitalize="off" autocorrect="off" spellcheck="false">
           <div class="h">The site root. A trailing slash or a pasted /api/push is fine — it
             gets trimmed. Leave blank to send nothing anywhere.</div></div>
-        <div class="f" data-key="mirrorKey"><label>MIRROR PUSH KEY<span class="tag"></span></label>
+        <div class="f" data-key="mirrorKey"><label>Mirror push key<span class="tag"></span></label>
           <input id="mirrorKey" placeholder="the key the mirror was started with" autocomplete="off">
           <div class="h">Whatever <code>MIRROR_PUSH_KEY</code> is set to on the mirror. This is
             the write key and it lives only here — it is <b>not</b> the passcode people type to
@@ -286,7 +292,7 @@
             could hand out read access to a site it does not run would be the wrong shape.</div>
           <div class="say"></div></div>
         <div class="btns" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <button class="go" id="pushNow" style="background:var(--btn)">PUSH NOW</button>
+          <button class="go" id="pushNow" style="background:var(--soft2);color:var(--t0)">Push now</button>
           <span class="hint" id="mirrorStatus"></span>
         </div>
       </div>
@@ -352,17 +358,17 @@ function showSetup(c) {
     say: adminToken
       ? 'Unlocked. It locks itself again after ten minutes, and on every reload — that is'
         + ' deliberate, not a fault.'
-      : (adminSet ? 'Type the admin password into the box below and press UNLOCK. Nothing'
+      : (adminSet ? 'Type the admin password into the box below and press Unlock. Nothing'
                   + ' further down the page can be changed until you do.'
-                  : 'Press UNLOCK below. No admin password is set on this hub, so it is just'
+                  : 'Press Unlock below. No admin password is set on this hub, so it is just'
                   + ' the button.'),
   }, ...from.steps];
 
   const left = steps.findIndex((st) => !st.done);
   const done = steps.filter((st) => st.done).length;
   $('#setupHead').textContent = left === -1
-    ? `SETUP · ALL ${steps.length} DONE`
-    : `START HERE · ${done} OF ${steps.length} DONE`;
+    ? `Setup · all ${steps.length} done`
+    : `Start here · ${done} of ${steps.length} done`;
 
   const box = $('#steps');
   box.textContent = '';
@@ -376,7 +382,7 @@ function showSetup(c) {
     mark.textContent = st.done ? '\u2713' : String(i + 1);
     const ttl = document.createElement('div');
     ttl.className = 'ttl';
-    ttl.textContent = st.title.toUpperCase();
+    ttl.textContent = st.title;
     const ln = document.createElement('div');
     ln.className = 'ln';
     ln.textContent = st.say;
@@ -406,7 +412,7 @@ function showSetup(c) {
   }
 
   $('#setupDone').textContent = left === -1
-    ? 'Nothing left. Open the JOIN QR page on this screen for the scouts, and leave the black '
+    ? 'Nothing left. Open the Join QR page on this screen for the scouts, and leave the black '
       + 'window running — closing it stops the hub.'
     : '';
 
@@ -428,7 +434,7 @@ function admin(path, opts = {}) {
 /** Everything below the lock bar, on or off. */
 function applyLock() {
   const on = !!adminToken;
-  $('#lockState').textContent = on ? 'SETTINGS UNLOCKED' : 'SETTINGS LOCKED';
+  $('#lockState').textContent = on ? 'Settings unlocked' : 'Settings locked';
   $('#lockState').className = 'lockstate ' + (on ? 'open' : 'shut');
   $('#unlock').classList.toggle('hide', on);
   $('#lock').classList.toggle('hide', !on);
@@ -467,7 +473,7 @@ function showPassword(admin) {
       + 'To change it, stop the hub and run: python3 server/hub.py --set-admin-password';
     return;
   }
-  el.textContent = 'No admin password is set, so UNLOCK is just this button. To ask for one '
+  el.textContent = 'No admin password is set, so Unlock is just this button. To ask for one '
     + 'as well, run: python3 server/hub.py --set-admin-password';
 }
 
@@ -526,14 +532,14 @@ async function reload() {
   $('#eventKey').value = c.eventKey || '';
   $('#eventLevel').value = c.eventLevel || 'regional';
   $('#ourTeam').value = c.ourTeam || '';
-  const bits = [c.keys.tba ? 'TBA SET' : 'NO TBA KEY', c.keys.nexus ? 'NEXUS SET' : 'NO NEXUS KEY'];
-  if (c.keys.frcEvents) bits.push('FRC EVENTS SET');
-  if (c.keys.lovat) bits.push('LOVAT SET');
-  bits.push(c.keys.ai ? `AI · ${(c.ai && c.ai.label) || 'ON'}` : 'NO AI');
+  const bits = [c.keys.tba ? 'TBA set' : 'No TBA key', c.keys.nexus ? 'Nexus set' : 'No Nexus key'];
+  if (c.keys.frcEvents) bits.push('FRC Events set');
+  if (c.keys.lovat) bits.push('Lovat set');
+  bits.push(c.keys.ai ? `AI · ${(c.ai && c.ai.label) || 'On'}` : 'No AI');
   buildModelPicker(c.ai || {});
-  bits.push(c.multipliersFittedFrom ? `CALIBRATED · ${c.multipliersFittedFrom} WINDOWS` : 'PRIORS ONLY');
-  bits.push(c.picklistLocked ? 'PICKLIST LOCKED' : 'PICKLIST OPEN');
-  bits.push((c.admin || {}).set ? 'ADMIN CODE SET' : 'NO ADMIN CODE');
+  bits.push(c.multipliersFittedFrom ? `Calibrated · ${c.multipliersFittedFrom} windows` : 'Priors only');
+  bits.push(c.picklistLocked ? 'Picklist locked' : 'Picklist open');
+  bits.push((c.admin || {}).set ? 'Admin code set' : 'No admin code');
   // SET means a string is stored, and has never meant more than that. TEST
   // KEYS below is the only thing on this page that knows whether one works.
   $('#sub').textContent = bits.join(' · ');
@@ -586,11 +592,11 @@ function showSaved(saved) {
     if (!r.tag) continue;
     const on = !!saved[r.field];
     r.tag.className = on ? 'tag on' : 'tag';
-    r.tag.textContent = on ? 'SAVED' : '';
+    r.tag.textContent = on ? 'Saved' : '';
     r.input.placeholder = on ? 'saved — type a new one to replace it' : r.hint;
     if (on) {
       const b = document.createElement('button');
-      b.className = 'forget'; b.textContent = 'FORGET';
+      b.className = 'forget'; b.textContent = 'Forget';
       b.onclick = () => forget(r);
       r.tag.append(b);
     }
@@ -799,7 +805,7 @@ function askSwitch(sw) {
     + `it. Switching to ${sw.to} hides all of that behind the new event — nothing is deleted, `
     + `and it comes back if you set ${sw.from} again.`;
   const go = document.createElement('button');
-  go.className = 'go'; go.textContent = `SWITCH TO ${sw.to.toUpperCase()}`;
+  go.className = 'go'; go.textContent = `Switch to ${sw.to}`;
   go.onclick = () => save({ confirmEventSwitch: true });
   box.append(p, go);
   box.classList.remove('hide');
@@ -908,7 +914,7 @@ async function findEvents() {
     if (!picked) return;
     $('#eventKey').value = picked.value;
     $('#eventLevel').value = picked.dataset.level || 'regional';
-    tell(rowFor('eventKey'), 'ok', 'Filled in from the list. Press SAVE & REFRESH.');
+    tell(rowFor('eventKey'), 'ok', 'Filled in from the list. Press Save & refresh.');
   };
   sel.onchange = apply;
   row.classList.remove('hide');
@@ -983,7 +989,7 @@ try {
     $('#lockSay').textContent = 'Unlocked itself: this hub is not set up yet and no admin '
       + 'password is set. Once it has an event it opens locked every time.';
   }
-} catch { $('#sub').textContent = 'HUB NOT REACHABLE'; }
+} catch { $('#sub').textContent = 'Hub not reachable'; }
 </script>
 </body>
 </html>

@@ -1,39 +1,26 @@
 /* FRC scouting — phone HUD.
-   Values are taken verbatim from design/Phone *.dc.html.
-   Layout uses flex/grid per the handoff; the mock files' absolute positioning
-   was only there to place the presentation bezel, which we do not build. */
 
-@import url('/css/fonts.css');
+   Soft and round on purpose: no outlines, no boxes inside boxes, red only for
+   the one thing that is selected. Colours come from theme.css, so every rule
+   here works in both the dark and the light theme. */
 
 :root{
-  /* palette — handoff README, copied exactly */
-  --page:#0b0b0d; --panel:#0a0a0c; --raised:#0f0f12; --chrome:#131317;
-  --thead:#0d0d10; --logwell:#08080a;
-  --line-panel:#1e1e24; --line-row:#16161b; --track:#2a2a31; --btn:#2f2f38; --seg:#26262d;
-  --red:#e11d2b; --red-link:#ff3b45; --red-alert:#ff5c66; --red-label:#ff7a80;
-  --red-soft:#ff8a91; --red-dim:#6d2b30; --red-ring:#4a181e; --red-dash:#3a2226;
-  --blue-rail:#3a5f8f; --blue-label:#7fa8d8;
-  --green:#34a86a; --green-soft:#5fce93; --green-border:#1f5138; --green-dot:#3ad182;
-  --amber:#f5a524;
-  --t0:#f4f4f6; --t1:#a0a0ab; --t2:#9a9aa4; --t3:#8b8b95; --t4:#7d7d88;
-  --t5:#6b6b76; --t6:#5f5f6a; --muted:#6f7684; --body:#9aa2b0;
-
   /* safe box — worst case of iOS Dynamic Island (44) and Android nav bar (48) */
   --safe-l: max(env(safe-area-inset-left), 44px);
   --safe-r: max(env(safe-area-inset-right), 48px);
-  --safe-b: 20px;
-  --hdr-h: 44px;
+  --safe-b: 16px;
+  --hdr-h: 52px;
   /* side columns hold thumb controls: a thumb does not grow with the phone */
   --col-l: 196px;
   --col-r: 196px;
-  --gap: 16px;
+  --gap: 18px;
 }
 
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;overflow:hidden}
 body{
-  background:#05060a;color:#eef1f5;
-  font-family:Barlow,system-ui,sans-serif;
+  background:var(--panel);color:var(--t0);
+  font-family:var(--f-body);font-weight:600;
   -webkit-text-size-adjust:100%;
   -webkit-tap-highlight-color:transparent;
   user-select:none; -webkit-user-select:none;
@@ -45,311 +32,321 @@ body{
 .screen{
   position:relative; height:100dvh; width:100%;
   display:flex; flex-direction:column; overflow:hidden;
-  background:#05060a;
+  background:var(--panel);
 }
-/* the two red side glows and the scanline texture from the mock */
-.screen::before{
-  content:''; position:absolute; inset:0; pointer-events:none;
-  background:
-    radial-gradient(70% 120% at 12% 50%,rgba(225,29,43,.16),transparent 60%),
-    radial-gradient(70% 120% at 88% 50%,rgba(225,29,43,.2),transparent 60%);
-}
-.screen::after{
-  content:''; position:absolute; inset:0; pointer-events:none;
-  background:repeating-linear-gradient(0deg,rgba(255,255,255,.035) 0 1px,transparent 1px 3px);
-}
-.screen > *{position:relative; z-index:1}
 
 /* header spans edge to edge; only its padding keeps text off the cutout */
 .hdr{
   flex:none; height:var(--hdr-h);
-  display:flex; align-items:center; gap:14px; padding:0 74px;
-  border-bottom:1px solid rgba(255,255,255,.07);
+  display:flex; align-items:center; gap:12px;
+  padding:0 var(--safe-r) 0 var(--safe-l);
+  font-size:14.5px; white-space:nowrap; min-width:0;
 }
-.hdr.tinted{background:linear-gradient(180deg,rgba(225,29,43,.14),transparent)}
-.hdr .k{font:800 11px Barlow,sans-serif;letter-spacing:.2em;color:var(--red-alert)}
+.hdr .k{font:800 15px var(--f-body);color:var(--red-alert)}
 .hdr .k.amber{color:var(--amber)}
-.hdr .m{font:700 11px Barlow,sans-serif;letter-spacing:.18em;color:var(--muted)}
+.hdr .m{font:600 14px var(--f-body);color:var(--muted);overflow:hidden;text-overflow:ellipsis;min-width:0}
+.hdr .m.strong{color:var(--t0);font-weight:800}
 .hdr .sp{flex:1}
-.hdr .dot{width:7px;height:7px;border-radius:50%;background:var(--green-dot);display:block}
+.hdr .dot{width:9px;height:9px;border-radius:50%;background:var(--green-dot);display:block;flex:none}
 .hdr .dot.amber{background:var(--amber)}
 .hdr .dot.red{background:var(--red)}
+.hdr .themebtn{padding:6px 12px;font-size:12.5px}
+
+/* small round header buttons: undo, climb, simple mode */
+.hbtn{
+  flex:none; min-height:40px; padding:0 16px; border-radius:999px;
+  background:var(--soft); color:var(--t1);
+  display:flex; align-items:center; gap:6px;
+  font:800 13.5px var(--f-body); touch-action:manipulation; cursor:pointer;
+}
+.hbtn .b{font-weight:600;color:var(--muted)}
+.hbtn .b:empty{display:none}
+.hbtn.on{background:var(--red);color:var(--on-red)}
+.hbtn.on .b{color:var(--on-red);opacity:.85}
 
 /* content sits inside the safe box */
 .body{
   flex:1; min-height:0;
-  padding:12px var(--safe-r) var(--safe-b) var(--safe-l);
-  display:grid; gap:12px;
+  padding:6px var(--safe-r) var(--safe-b) var(--safe-l);
+  display:grid; gap:14px;
 }
-.body.three{grid-template-columns:var(--col-l) 1fr var(--col-r); gap:var(--gap); padding-top:12px}
-.body.split-260{grid-template-columns:1fr 260px}
-.body.split-300{grid-template-columns:1fr 300px}
-/* After the buzzer: three columns, as the mock has it. It used to be
-   split-300, which is two - so the third column wrapped onto a second
-   grid row, and every question added since the mock (who they were
-   blocking, where they started) overflowed the row above it. The extra
-   questions now sit on a second page instead of a taller column,
-   because nothing on this screen may scroll. */
-/* gap 10, not the 12 the other screens use, because the mock's after-screen
-   grid is gap:10 - and at 844 those two pixels are the difference between a
-   four-choice row sitting on one line and wrapping onto two. */
-.body.after{grid-template-columns:1fr 1fr 186px;gap:10px}
+.body.split-260{grid-template-columns:1fr 260px;gap:var(--gap)}
+.body.split-300{grid-template-columns:1fr 300px;gap:var(--gap)}
+/* After the buzzer: three columns. The extra questions sit on a second page
+   rather than a taller column, because nothing on this screen may scroll. */
+.body.after{grid-template-columns:1fr 1fr 190px;gap:12px}
 /* Page two is the one place a column here may scroll. It is optional, it is
-   between matches, and on a small phone a scout who played defence AND
-   climbed can ask for more rows than the screen holds - losing a question
-   off the bottom would be worse than a scroll nobody usually sees. */
+   between matches, and losing a question off the bottom of a small phone would
+   be worse than a scroll nobody usually sees. */
 #afPage2a,#afPage2b{overflow-y:auto}
-.body.seat{grid-template-columns:218px 1fr 186px}
+.body.seat{grid-template-columns:218px 1fr 190px;gap:var(--gap)}
 
-.col{display:flex;flex-direction:column;gap:6px;min-width:0;min-height:0}
-.caption{font:800 10px Barlow,sans-serif;letter-spacing:.2em;color:var(--muted);padding-left:4px;white-space:nowrap;overflow:hidden}
-.caption.r{text-align:right;padding:0 4px 0 0}
-/* nowrap is for the HUD's tight thumb columns; the seat screen has room and
-   its instruction is a full sentence, so let it wrap as the mock shows. */
-.caption.plain{padding-left:0;white-space:normal;line-height:1.35}
-/* A row of choices has a 44px floor and a caption does not, so a column
-   with one question too many silently squashes the labels to nothing and
-   leaves the controls looking unlabelled. Keep the labels and let the
-   overflow show instead - it is the same bug, but visible. */
+.col{display:flex;flex-direction:column;gap:8px;min-width:0;min-height:0}
+.caption{font:700 13px var(--f-body);color:var(--muted);padding-left:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.caption.r{text-align:right;padding:0 6px 0 0}
+.caption.plain{padding-left:2px;white-space:normal;line-height:1.35}
+/* A row of choices has a 44px floor and a caption does not, so a column with
+   one question too many squashes the labels to nothing. Keep the labels. */
 .col .caption{flex-shrink:0}
 
+/* ===================================================== LIVE MATCH
+   Two layouts on one screen, picked by a class on .body:
+   - pro:    left thumb picks how fast, right thumb holds, team and clock between
+   - simple: one big hold button; how fast is asked after letting go
+   The match details that used to crowd the middle (balls so far, runs, the
+   timeline) are on the after-the-buzzer screen now. */
+.body.live{grid-template-columns:var(--col-l) 1fr var(--col-r);gap:var(--gap)}
+.body.live.simple{grid-template-columns:1fr 236px}
+.body.live.simple .proonly,.body.live:not(.simple) .simpleonly{display:none !important}
+.hdr .simpleonly{display:none}
+.screen.simple .hdr .simpleonly{display:flex}
+.screen.simple .hdr .proonly{display:none}
+
 /* ------------------------------------------------------------ rate ladder */
-.ladder{flex:1;display:flex;flex-direction:column;gap:6px;min-height:0}
+.ladder{flex:1;display:flex;flex-direction:column;gap:8px;min-height:0}
 .rate{
-  flex:1; position:relative; border-radius:14px;
-  background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.09);
-  display:flex; align-items:center; justify-content:space-between; padding:0 16px;
+  flex:1; position:relative; border-radius:999px;
+  background:var(--soft);
+  display:flex; align-items:center; justify-content:space-between; padding:0 20px;
   min-height:44px; touch-action:manipulation;
 }
-.rate .nm{font:800 13px Barlow,sans-serif;letter-spacing:.1em;color:#7d8492}
-.rate .vl{font:700 22px 'Barlow Condensed',sans-serif;color:#7d8492}
-.rate.on{
-  flex:1.35;
-  background:linear-gradient(100deg,#e11d2b,#a8121d);
-  border:1px solid #ff5c66; box-shadow:0 0 34px rgba(225,29,43,.4);
-}
-.rate.on .nm{font-size:14px;color:#fff}
-.rate.on .vl{font-size:26px;color:#fff}
+.rate .nm{font:800 15px var(--f-body);color:var(--t1)}
+.rate .vl{font:700 22px var(--f-num);color:var(--t1);opacity:.75}
+.rate.on{flex:1.3;background:var(--red);box-shadow:var(--shadow)}
+.rate.on .nm,.rate.on .vl{color:var(--on-red);opacity:1}
 
-/* the two square utility buttons under each thumb column */
-.pair{display:flex;gap:6px;flex:none}
+/* the round buttons under a thumb column: feeding, defending */
+.pair{display:flex;gap:8px;flex:none}
 .ubtn{
-  flex:1; min-height:52px; border-radius:14px;
-  background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1);
+  flex:1; min-height:50px; border-radius:22px;
+  background:var(--soft);
   display:flex; flex-direction:column; align-items:center; justify-content:center;
   touch-action:manipulation;
 }
-.ubtn .a{font:800 12px Barlow,sans-serif;letter-spacing:.06em;color:#fff}
-.ubtn .b{font:600 9.5px Barlow,sans-serif;color:var(--muted);letter-spacing:.1em}
-.ubtn.on{background:linear-gradient(100deg,#e11d2b,#a8121d);border-color:#ff5c66}
-.ubtn.on .b{color:#ffd0d3}
+.ubtn .a{font:800 13.5px var(--f-body);color:var(--t0)}
+.ubtn .b{font:600 11.5px var(--f-body);color:var(--muted)}
+.ubtn.on{background:var(--red)}
+.ubtn.on .a,.ubtn.on .b{color:var(--on-red)}
 
 /* ------------------------------------------------------------- hold pad */
 .holdpad{
-  flex:1; border-radius:20px; position:relative; overflow:hidden;
-  background:rgba(255,255,255,.04); border:2px solid rgba(255,255,255,.12);
+  flex:1; border-radius:36px; position:relative; overflow:hidden;
+  background:var(--red-bg);
   display:flex; flex-direction:column; align-items:center; justify-content:center;
-  min-height:44px; touch-action:none;
+  min-height:44px; touch-action:none; padding:0 18px;
 }
-.holdpad.on{
-  background:linear-gradient(180deg,rgba(225,29,43,.2),rgba(225,29,43,.55));
-  border:2px solid #ff5c66; box-shadow:0 0 40px rgba(225,29,43,.35);
-}
-.holdpad .meter{position:absolute;left:0;right:0;bottom:0;height:0;
-  background:linear-gradient(180deg,rgba(225,29,43,.5),#e11d2b)}
-.holdpad .meterline{position:absolute;left:0;right:0;bottom:0;height:2px;background:#fff;opacity:0}
-.holdpad.on .meterline{opacity:1}
-.holdpad .txt{position:relative;text-align:center}
-.holdpad .lb{font:800 11px Barlow,sans-serif;letter-spacing:.2em;color:#ffd0d3}
-.holdpad .big{font:700 62px/1 'Barlow Condensed',sans-serif;letter-spacing:-.03em;color:#fff}
-.holdpad .un{font:700 10.5px Barlow,sans-serif;letter-spacing:.16em;color:#ffd0d3}
-.holdpad:not(.on) .lb,.holdpad:not(.on) .un{color:var(--muted)}
+.holdpad.on{background:var(--red);box-shadow:var(--shadow)}
+.holdpad.off{background:var(--soft)}
+.holdpad.idle{background:var(--soft)}
+.holdpad .txt{position:relative;text-align:center;display:flex;flex-direction:column;align-items:center;gap:2px}
+.holdpad .lb{font:800 15px/1.25 var(--f-body);color:var(--red-alert)}
+.holdpad .big{font:700 56px/1 var(--f-num);letter-spacing:-.01em;color:var(--t0)}
+.holdpad .un{font:600 13px/1.4 var(--f-body);color:var(--t1);max-width:30ch}
+.holdpad.on .lb,.holdpad.on .big,.holdpad.on .un{color:var(--on-red)}
+.holdpad.on .un{opacity:.85}
+.holdpad.off .lb,.holdpad.idle .lb{color:var(--t1)}
+.holdpad.off .big,.holdpad.idle .big{display:none}
+/* simple mode: the pad is the whole screen, so its words do the explaining */
+.simple .holdpad .lb{font-size:24px}
+.simple .holdpad .un{font-size:14.5px}
+.holdpad .big:empty{display:none}
 
 /* ------------------------------------------------------------ centre HUD */
-.centre{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;min-width:0;overflow:hidden}
-.teamline{display:flex;align-items:flex-end;gap:14px}
-.teamno{font:700 74px/.85 'Barlow Condensed',sans-serif;letter-spacing:-.03em}
-.teammeta{padding-bottom:8px}
-.teammeta div{font:700 11.5px Barlow,sans-serif;letter-spacing:.14em;color:var(--muted)}
-.clockline{display:flex;align-items:baseline;gap:12px}
-.clockbig{font:700 46px/1 'Barlow Condensed',sans-serif;font-variant-numeric:tabular-nums}
-.shotstate{font:800 12px Barlow,sans-serif;letter-spacing:.16em;color:var(--red-alert)}
-.shotstate.dead{color:var(--muted)}
-.shotstate.unknown{color:var(--t4)}
+.centre{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;min-width:0;overflow:hidden;text-align:center}
+.teamline{display:flex;flex-direction:column;align-items:center;gap:6px}
+.teamno{font:700 76px/.85 var(--f-num);letter-spacing:-.01em}
+.teammeta{display:flex;justify-content:center;flex-wrap:wrap}
+.teammeta div{font:600 15px var(--f-body);color:var(--t1);white-space:nowrap}
+.teammeta div:empty{display:none}
+.teammeta div + div::before{content:'\00a0·\00a0';color:var(--muted)}
+.clockbig{font:700 46px/1 var(--f-num);font-variant-numeric:tabular-nums}
+.hdr .clockbig{font-size:30px}
 
-/* phase strip: one segment per window, flex-weighted by its duration */
-.strip{width:100%;height:10px;display:flex;gap:3px;flex:none}
-.strip span{background:rgba(255,255,255,.1);border-radius:5px;position:relative;overflow:hidden}
-.strip span.live{background:rgba(255,255,255,.22)}
-.strip span.now{background:#e11d2b}
-.strip span.now .fill{position:absolute;top:0;bottom:0;left:0;background:#fff;opacity:.5;border-radius:5px}
-
-.stats{display:flex;align-items:center;gap:26px;margin-top:2px}
-.stats .s{text-align:center}
-.stats .n{font:700 34px/1 'Barlow Condensed',sans-serif}
-.stats .n.red{color:var(--red-alert)}
-.stats .l{font:700 10px Barlow,sans-serif;letter-spacing:.14em;color:var(--muted)}
-.stats .div{width:1px;height:34px;background:rgba(255,255,255,.1)}
-
-.runbar{
-  width:100%;height:26px;border-radius:8px;background:rgba(255,255,255,.05);
-  border:1px solid rgba(255,255,255,.09);position:relative;overflow:hidden;margin-top:4px;flex:none;
+/* whether shots count right now - a pill, green when the hub is on */
+.shotstate{
+  display:inline-flex;align-items:center;gap:7px;white-space:nowrap;
+  font:700 13.5px var(--f-body);padding:6px 13px;border-radius:999px;
+  color:var(--green);background:var(--green-bg);
 }
-.runbar .r{position:absolute;top:3px;bottom:3px;border-radius:3px}
-.runbar .r.trickle{background:#7a2b32}
-.runbar .r.steady{background:#e11d2b}
-.runbar .r.dumping{background:#ff8a91}
-.runbar .cur{position:absolute;top:0;bottom:0;width:2px;background:#fff}
+.shotstate::before{content:'';width:8px;height:8px;border-radius:50%;background:currentColor}
+.shotstate.dead{color:var(--t1);background:var(--soft2)}
+.shotstate.unknown{color:var(--t1);background:var(--soft)}
+.shotstate.unknown::before{display:none}
+
+/* ------------------------------------------------- simple-mode speed column */
+.speed{display:flex;flex-direction:column;gap:8px;min-height:0;transition:opacity .15s}
+.speed.dim .opts{opacity:.4}
+.speed .q{font:700 13.5px var(--f-body);color:var(--muted);padding-left:6px}
+.speed .opts{flex:1;display:flex;flex-direction:column;gap:8px;min-height:0}
+.speed .o{
+  flex:1;min-height:40px;border-radius:999px;background:var(--soft);
+  display:flex;align-items:center;padding:0 20px;
+  font:800 16px var(--f-body);color:var(--t1);touch-action:manipulation;
+}
+.speed .o.on{background:var(--red);color:var(--on-red)}
+.speed .foot{font:600 12.5px/1.35 var(--f-body);color:var(--muted);padding-left:6px;min-height:17px}
+
+/* --------------------------------------------- run timeline (after screen) */
+.runbar{
+  width:100%;height:22px;border-radius:11px;background:var(--soft2);
+  position:relative;overflow:hidden;flex:none;
+}
+.runbar .r{position:absolute;top:4px;bottom:4px;border-radius:4px}
+.runbar .r.trickle{background:var(--red-dim)}
+.runbar .r.steady{background:var(--red)}
+.runbar .r.dumping{background:var(--red-alert)}
 
 /* ------------------------------------------------------------ seat screen */
-.panel{border-radius:20px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.09)}
+.panel{border-radius:28px;background:var(--soft)}
 .panel.pad{padding:22px 26px}
-.panel.dashed{border:1px dashed rgba(255,255,255,.14);background:transparent}
 
-.initials{
-  border-radius:16px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);
-  padding:16px 18px;
-}
-.initials{padding:14px 16px;border-radius:14px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1)}
-.initials .v{font:700 26px 'Barlow Condensed',sans-serif;color:#fff}
-.initials .h{font:600 11px Barlow,sans-serif;color:var(--muted);letter-spacing:.1em}
+.initials{padding:14px 18px;border-radius:24px;background:var(--soft);cursor:pointer}
+.initials .v{font:700 28px var(--f-num);color:var(--t0)}
+.initials .h{font:600 13px var(--f-body);color:var(--muted)}
 
-.stations{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:1fr 1fr;gap:6px;flex:1;min-height:0}
+/* simple mode switch, on the seat and standby screens */
+.modesw{display:flex;align-items:center;gap:12px;padding:12px 16px;border-radius:24px;background:var(--soft);cursor:pointer;touch-action:manipulation}
+.modesw .tg{width:44px;height:26px;border-radius:999px;background:var(--soft2);position:relative;flex:none;transition:background .15s}
+.modesw .tg::after{content:'';position:absolute;left:3px;top:3px;width:20px;height:20px;border-radius:50%;background:var(--t1);transition:transform .15s}
+.modesw.on .tg{background:var(--red)}
+.modesw.on .tg::after{transform:translateX(18px);background:var(--on-red)}
+.modesw .w{display:flex;flex-direction:column;min-width:0}
+.modesw .w b{font:800 14.5px var(--f-body)}
+.modesw .w span{font:600 12.5px/1.35 var(--f-body);color:var(--muted)}
+
+.stations{display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:1fr 1fr;gap:8px;flex:1;min-height:0}
 .st{
-  min-width:0;border-radius:14px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);
-  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:10px 6px;
-  position:relative;overflow:hidden;touch-action:manipulation;
+  min-width:0;border-radius:24px;background:var(--soft);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:10px 6px;
+  position:relative;overflow:hidden;touch-action:manipulation;cursor:pointer;
 }
-.st .bar{position:absolute;left:0;right:0;top:0;height:5px}
-.st.red .bar{background:#e11d2b}
-.st.blue .bar{background:#3f7bc4}
-.st .al{font:800 9.5px Barlow,sans-serif;letter-spacing:.16em}
-.st .nu{font:700 34px/1 'Barlow Condensed',sans-serif}
-.st .wh{font:700 9.5px Barlow,sans-serif;letter-spacing:.1em;white-space:nowrap;color:#5c6472}
-.st.red  .al{color:#a85a60} .st.red  .nu{color:#8a4a50}
-.st.blue .al{color:#5f7fa8} .st.blue .nu{color:#4f6b8c}
-.st .wh.open{color:#3ad182}
-.st.on{background:linear-gradient(180deg,#e11d2b,#a8121d);border-color:#ff5c66;box-shadow:0 0 26px rgba(225,29,43,.32)}
-.st.on .al{color:rgba(255,255,255,.9)}
-.st.on .nu{color:#fff}
-.st.on .wh{color:rgba(255,255,255,.85)}
+.st .bar{display:none}
+.st .al{font:800 13px var(--f-body)}
+.st .nu{font:700 34px/1 var(--f-num)}
+.st .wh{font:600 12px var(--f-body);white-space:nowrap;color:var(--muted)}
+.st.red  .al,.st.red  .nu{color:var(--red-alert)}
+.st.blue .al,.st.blue .nu{color:var(--blue-label)}
+.st .wh.open{color:var(--green)}
+.st.on{background:var(--red)}
+.st.on .al,.st.on .nu,.st.on .wh{color:var(--on-red)}
 
-.dashnote{padding:10px 13px;border-radius:12px;background:rgba(255,255,255,.03);
-  border:1px dashed rgba(255,255,255,.13);font:500 12px/1.45 Barlow,sans-serif;color:var(--body)}
-.dashnote b{color:#eef1f5;font-weight:700}
-.dashfill{flex:1;padding:14px 16px;border-radius:14px;background:rgba(255,255,255,.03);
-  border:1px dashed rgba(255,255,255,.13);font:500 12.5px/1.55 Barlow,sans-serif;color:var(--body)}
+.dashnote{padding:12px 16px;border-radius:22px;background:var(--soft);
+  font:600 13px/1.45 var(--f-body);color:var(--body)}
+.dashnote b{color:var(--t0);font-weight:800}
+.dashfill{flex:1;padding:14px 16px;border-radius:22px;background:var(--soft);
+  font:600 13px/1.5 var(--f-body);color:var(--body)}
 
 .note{
-  border-radius:16px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);
-  padding:14px 16px;font:500 12.5px/1.55 Barlow,sans-serif;color:var(--body);
+  border-radius:22px;background:var(--soft);
+  padding:14px 16px;font:600 13px/1.55 var(--f-body);color:var(--body);
 }
-.note b{color:#fff;font-weight:700}
+.note b{color:var(--t0);font-weight:800}
 
 .cta{
-  border-radius:16px;background:linear-gradient(100deg,#e11d2b,#a8121d);border:1px solid #ff5c66;
-  box-shadow:0 0 34px rgba(225,29,43,.4);
-  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
-  min-height:72px;touch-action:manipulation;
+  border-radius:999px;background:var(--red);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;
+  min-height:68px;touch-action:manipulation;cursor:pointer;padding:0 16px;text-align:center;
 }
-.cta .a{font:800 16px Barlow,sans-serif;letter-spacing:.1em;color:#fff}
-.cta .b{font:600 11.5px Barlow,sans-serif;color:#ffd0d3}
-.cta.flat{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.12);box-shadow:none}
-.cta.flat .a{color:var(--body)}
+.cta .a{font:800 17px var(--f-body);color:var(--on-red)}
+.cta .b{font:600 12.5px var(--f-body);color:var(--on-red);opacity:.85}
+.cta.flat{background:var(--soft)}
+.cta.flat .a{color:var(--t0);font-size:15px}
+.cta.flat .b{color:var(--muted);opacity:1}
 
 /* --------------------------------------------------------- lists / rows */
-.list{flex:1;border-radius:16px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);overflow:hidden;min-height:0}
-.lrow{display:flex;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid rgba(255,255,255,.06)}
-.lrow:last-child{border-bottom:none}
-.lrow .code{font:700 15px 'Barlow Condensed',sans-serif;min-width:40px}
-.lrow .team{font:600 13px Barlow,sans-serif;min-width:48px}
-.lrow .desc{flex:1;font:600 12.5px Barlow,sans-serif;color:var(--body);min-width:0;
+.list{flex:1;display:flex;flex-direction:column;gap:2px;overflow:hidden;min-height:0}
+.lrow{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:18px}
+.lrow:nth-child(odd){background:var(--soft)}
+.lrow .code{font:700 16px var(--f-num);min-width:40px}
+.lrow .team{font:700 14px var(--f-body);min-width:48px}
+.lrow .desc{flex:1;font:600 13px var(--f-body);color:var(--body);min-width:0;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.lrow .tag{font:700 10px Barlow,sans-serif;letter-spacing:.1em}
-.lrow .tag.sent{color:var(--green-dot)}
-.lrow .tag.queued{color:var(--amber)}
+.lrow .tag{font:700 12px var(--f-body);padding:3px 10px;border-radius:999px}
+.lrow .tag.sent{color:var(--green);background:var(--green-bg)}
+.lrow .tag.queued{color:var(--amber);background:var(--amber-bg)}
 
 /* -------------------------------------------------------- standby / offline */
-.bigpanel{border-radius:20px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.09);
+.bigpanel{border-radius:32px;background:var(--soft);
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;
-  position:relative;overflow:hidden;min-height:0}
-.bigpanel .glow{position:absolute;width:420px;height:420px;border-radius:50%;
-  background:radial-gradient(circle,rgba(225,29,43,.14),transparent 62%)}
+  position:relative;overflow:hidden;min-height:0;padding:14px}
+.bigpanel .glow{display:none}
 .bigpanel > *{position:relative}
-.eyebrow{font:800 11px Barlow,sans-serif;letter-spacing:.22em;color:var(--muted)}
-.countdown{font:700 92px/.9 'Barlow Condensed',sans-serif;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
-.until{font:700 13px Barlow,sans-serif;letter-spacing:.14em;color:var(--red-soft)}
-.pill{margin-top:16px;padding:11px 18px;border-radius:999px;background:rgba(255,255,255,.06);
-  border:1px solid rgba(255,255,255,.12);font:700 12px Barlow,sans-serif;letter-spacing:.08em;color:var(--body)}
+.eyebrow{font:700 14px var(--f-body);color:var(--muted)}
+.countdown{font:700 88px/.9 var(--f-num);letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+.until{font:700 15px var(--f-body);color:var(--red-alert);text-align:center}
+.pill{margin-top:12px;padding:8px 16px;border-radius:999px;background:var(--soft2);
+  font:600 13px var(--f-body);color:var(--body)}
 
-.offpanel{border-radius:20px;background:rgba(255,255,255,.035);border:1px solid rgba(245,165,36,.28);
+.offpanel{border-radius:32px;background:var(--amber-bg);
   padding:22px 26px;display:flex;flex-direction:column;justify-content:center;gap:12px}
-.offpanel h2{font:700 30px/1.2 Barlow,sans-serif;margin:0;color:#fff}
-.offpanel p{font:500 14.5px/1.55 Barlow,sans-serif;color:var(--body);max-width:440px;margin:0}
-.obtn{padding:14px 20px;border-radius:14px;background:rgba(255,255,255,.05);
-  border:1px solid rgba(255,255,255,.12);font:800 12.5px Barlow,sans-serif;letter-spacing:.06em;color:#fff}
-.obtn.ghost{background:transparent;font-weight:700;color:var(--body)}
-.amberbox{padding:13px 15px;border-radius:14px;border:1px dashed rgba(245,165,36,.35);
-  background:rgba(245,165,36,.07);font:500 12.5px/1.5 Barlow,sans-serif;color:var(--body)}
+.offpanel h2{font:800 28px/1.2 var(--f-body);margin:0;color:var(--t0)}
+.offpanel p{font:600 15px/1.55 var(--f-body);color:var(--body);max-width:440px;margin:0}
+.obtn{padding:13px 22px;border-radius:999px;background:var(--red);cursor:pointer;
+  font:800 14px var(--f-body);color:var(--on-red)}
+.obtn.ghost{background:var(--soft);color:var(--t1)}
+.amberbox{padding:13px 16px;border-radius:22px;
+  background:var(--amber-bg);font:600 13px/1.5 var(--f-body);color:var(--body)}
+.amberbox b{color:var(--t0)}
 
 /* --------------------------------------------------------- after the buzzer */
 .steps{display:flex;gap:8px;align-items:flex-end;flex:1;min-height:0}
 .step{
-  flex:1;border-radius:14px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.09);
-  display:flex;align-items:flex-end;justify-content:center;padding-bottom:10px;
-  font:600 11.5px Barlow,sans-serif;color:var(--t4);min-height:44px;touch-action:manipulation;
+  flex:1;border-radius:18px;background:var(--soft);
+  display:flex;align-items:flex-end;justify-content:center;padding:0 2px 10px;text-align:center;
+  font:700 12.5px/1.2 var(--f-body);color:var(--t3);min-height:44px;touch-action:manipulation;
 }
-.step.on{background:linear-gradient(180deg,#e11d2b,#a8121d);border-color:#ff5c66;
-  box-shadow:0 0 34px rgba(225,29,43,.4);color:#fff;font-weight:800}
-.step.sel{border-color:var(--red-alert);color:#fff}
+.step.on{background:var(--red);color:var(--on-red);font-weight:800}
+.step.sel{color:var(--t0)}
 
-.wrongs{display:grid;grid-template-columns:1fr 1fr;gap:10px;flex:1;min-height:0}
+.wrongs{display:grid;grid-template-columns:1fr 1fr;gap:8px;flex:1;min-height:0}
 .wrong{
-  border-radius:14px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.09);
+  border-radius:22px;background:var(--soft);
   display:flex;align-items:center;justify-content:center;text-align:center;padding:10px;
-  font:800 12.5px/1.25 Barlow,sans-serif;letter-spacing:.06em;color:var(--t3);
+  font:800 13.5px/1.25 var(--f-body);color:var(--t2);
   min-height:44px;touch-action:manipulation;
 }
-.wrong.on{background:linear-gradient(180deg,#e11d2b,#a8121d);border-color:#ff5c66;color:#fff;
-  box-shadow:0 0 34px rgba(225,29,43,.4)}
+.wrong.on{background:var(--red);color:var(--on-red)}
 
-/* A row of small choices — start zone, who they were blocking, preload.
-   Same visual language as .wrong, laid out inline instead of on a 2x2 grid. */
+/* A row of small choices — start zone, who they were blocking, preload. */
 .picks{display:flex;gap:8px;flex-wrap:wrap}
 .pick{
-  border-radius:12px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.09);
+  border-radius:999px;background:var(--soft);
   display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
-  padding:8px 12px;min-width:62px;min-height:44px;flex:1;
-  font:800 12px/1.2 Barlow,sans-serif;letter-spacing:.06em;color:var(--t3);
+  padding:6px 14px;min-width:58px;min-height:44px;flex:1;
+  font:800 13.5px/1.2 var(--f-body);color:var(--t2);
   touch-action:manipulation;
 }
-.pick .sub{font:600 9.5px Barlow,sans-serif;letter-spacing:.08em;color:var(--muted);margin-top:2px}
-.pick.on{background:linear-gradient(180deg,#e11d2b,#a8121d);border-color:#ff5c66;color:#fff;
-  box-shadow:0 0 26px rgba(225,29,43,.34)}
-.pick.on .sub{color:rgba(255,255,255,.85)}
+.pick .sub{font:600 11.5px var(--f-body);color:var(--muted);margin-top:1px}
+.pick.on{background:var(--red);color:var(--on-red)}
+.pick.on .sub{color:var(--on-red);opacity:.85}
 
-.notebox{border-radius:14px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.09);
-  padding:12px 14px;display:flex;gap:8px;align-items:flex-start;min-height:64px}
-.notebox .lb{font:700 11px Barlow,sans-serif;letter-spacing:.1em;color:var(--muted);padding-top:2px}
+.notebox{border-radius:22px;background:var(--soft);
+  padding:12px 16px;display:flex;gap:8px;align-items:flex-start;min-height:64px}
+.notebox .lb{font:700 13px var(--f-body);color:var(--muted);padding-top:1px}
 .notebox textarea{
-  flex:1;background:transparent;border:none;outline:none;resize:none;color:#fff;
-  font:600 12.5px/1.5 Barlow,sans-serif;min-height:40px;user-select:text;-webkit-user-select:text;
+  flex:1;background:transparent;border:none;outline:none;resize:none;color:var(--t0);
+  font:600 13.5px/1.5 var(--f-body);min-height:40px;user-select:text;-webkit-user-select:text;
 }
-.summary{border-radius:16px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);
-  padding:16px 18px;display:flex;flex-direction:column;gap:6px;flex:1;min-height:0}
+.notebox textarea::placeholder{color:var(--dim)}
+.summary{border-radius:28px;background:var(--soft);
+  padding:14px 18px;display:flex;flex-direction:column;gap:6px;flex:1;min-height:0}
 .summary .big{display:flex;align-items:flex-end;gap:8px}
-.summary .big .n{font:700 44px/.9 'Barlow Condensed',sans-serif}
-.summary .big .u{font:600 12.5px Barlow,sans-serif;color:var(--body);padding-bottom:5px}
-.srow{display:flex;justify-content:space-between;font:600 12.5px Barlow,sans-serif;color:var(--body)}
-.srow b{color:var(--red-alert);font-weight:700}
-.srow span.w{color:#fff;font-weight:700}
+.summary .big .n{font:700 44px/.9 var(--f-num)}
+.summary .big .u{font:600 13px var(--f-body);color:var(--body);padding-bottom:5px}
+/* the right column holds the summary and both buttons; the buttons give
+   height before the summary does */
+.body.after .cta{min-height:58px}
+.body.after .cta.flat{min-height:48px}
+.body.after .summary{padding:12px 16px;gap:4px}
+.body.after .summary .big .n{font-size:38px}
+.srow{display:flex;justify-content:space-between;font:600 13px var(--f-body);color:var(--body)}
+.srow b{color:var(--red-alert);font-weight:800}
+.srow span.w{color:var(--t0);font-weight:800}
 
 /* ------------------------------------------------------------ responsive */
 /* Side columns are fixed; the centre column is the only 1fr and absorbs
-   every extra or missing pixel. Below 780 the side columns give up 10%
-   before anything else changes. Above 932 the centre caps and letterboxes. */
-@media (max-width:779px){ body.landscape-only{--col-l:176px;--col-r:176px} }
-@media (min-width:933px){ .body.three{justify-content:center} .centre{max-width:640px;margin:0 auto;width:100%} }
+   every extra or missing pixel. Above 932 the centre caps and letterboxes. */
+@media (min-width:933px){ .body.live:not(.simple){justify-content:center} .centre{max-width:640px;margin:0 auto;width:100%} }
 
 /* A phone too small to hold the match HUD is too small to scout a match on.
    Scoped to .landscape-only so portrait screens (pit scouting) are unaffected. */
@@ -357,39 +354,40 @@ body{
 @media (max-height:300px),(max-width:640px){
   body.landscape-only .screen{display:none}
   body.landscape-only #toosmall{display:flex;align-items:center;justify-content:center;
-    height:100dvh;padding:24px;text-align:center;font:700 15px/1.5 Barlow,sans-serif;color:var(--body)}
+    height:100dvh;padding:24px;text-align:center;font:700 16px/1.5 var(--f-body);color:var(--body)}
 }
 .hide{display:none !important}
 
-/* The status text sits beside the clock and must never wrap — a reflowing
-   centre column during a match is worse than a truncated word. */
-.shotstate{white-space:nowrap}
-.clockline{min-height:46px}
-
-/* Narrow landscape (iPhone SE, 667px). Type sizes are fixed by the handoff, so
-   the only things that may give are the side columns and the stats gap.
-   NOTE: at 667px the three-stat row is still snug at 10px/.14em labels —
-   flagged for the designer rather than silently restyled. */
-.stats .l{white-space:nowrap}
-.teammeta div{white-space:nowrap}
+/* Narrow landscape. The side columns and gaps give first; every control stays
+   far above the 44px floor. */
 @media (max-width:779px){
   body.landscape-only{--col-l:172px;--col-r:172px;--gap:12px}
-  .stats{gap:14px}
-  .stats .div{height:28px}
+  .body.live.simple{grid-template-columns:1fr 206px}
+  .body.seat{grid-template-columns:176px 1fr 168px}
+  .hdr{gap:9px}
+  .hbtn{padding:0 12px}
 }
-/* iPhone SE landscape. The centre column needs ~270px to hold the 74px team
-   numeral beside its meta block, so the thumb columns give up more width here.
-   Every control stays far above the 44px floor. */
+/* iPhone SE landscape. */
 @media (max-width:700px){
-  body.landscape-only{--col-l:142px;--col-r:142px;--gap:10px}
-  .teamline{gap:8px}
-  .stats{gap:10px}
+  body.landscape-only{--col-l:146px;--col-r:146px;--gap:10px}
+  .teamno{font-size:64px}
+  .rate{padding:0 14px}
+  .rate .nm{font-size:14px}
+}
+/* Short screens: a phone with its browser bar showing. */
+@media (max-height:360px){
+  .body.seat .dashfill{display:none}
+  :root{--hdr-h:46px}
+  .teamno{font-size:60px}
+  .clockbig{font-size:38px}
+  .hdr .clockbig{font-size:26px}
+  .hbtn{min-height:36px}
 }
 
 /* Chrome-hiding affordance. Only rendered where it is actionable — it removes
    itself in standalone mode and on platforms with no Fullscreen API. */
-.fshint{font:700 9.5px Barlow,sans-serif;letter-spacing:.14em;color:var(--dim);
-  border:1px solid rgba(255,255,255,.12);border-radius:6px;padding:4px 8px;white-space:nowrap}
+.fshint{font:700 12px var(--f-body);color:var(--muted);
+  background:var(--soft);border-radius:999px;padding:5px 11px;white-space:nowrap}
 .fshint:empty{display:none}
 
 /* Add-to-Home-Screen offer. Shown only on iPhone Safari (see fullscreen.js) and
@@ -397,14 +395,14 @@ body{
    storage partition, so this has to be answered before any data is entered. */
 .a2hs{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;
   padding:16px max(env(safe-area-inset-right),16px) 16px max(env(safe-area-inset-left),16px);
-  background:rgba(5,6,10,.93);backdrop-filter:blur(6px);overflow:auto}
+  background:var(--scrim);backdrop-filter:blur(6px);overflow:auto}
 .a2hscard{display:grid;grid-template-columns:1fr 260px;gap:18px;align-items:start;
-  width:100%;max-width:720px;padding:18px 20px;border-radius:20px;
-  background:rgba(255,255,255,.035);border:1px solid rgba(245,165,36,.28)}
-.a2hscard h2{font:700 24px/1.15 Barlow,sans-serif;margin:0;color:#fff}
+  width:100%;max-width:720px;padding:20px 22px;border-radius:28px;
+  background:var(--panel);box-shadow:var(--shadow)}
+.a2hscard h2{font:800 24px/1.15 var(--f-body);margin:0;color:var(--t0)}
 .a2hssteps{margin:2px 0 0;padding-left:20px;display:flex;flex-direction:column;gap:7px;
-  font:500 13px/1.45 Barlow,sans-serif;color:var(--body)}
-.a2hssteps b{color:#eef1f5;font-weight:700}
+  font:600 14px/1.45 var(--f-body);color:var(--body)}
+.a2hssteps b{color:var(--t0);font-weight:800}
 .a2hs .obtn{text-align:center}
 /* Portrait, and the shortest landscape phones: stack rather than squeeze. */
 @media (max-width:700px), (orientation:portrait){
@@ -418,24 +416,21 @@ body{
    browser suspends the page and it can neither show that nor buzz about it.
 
    None of that requires the screen to be BRIGHT through a six-minute gap. After
-   a minute with nobody touching it, hud.js sets .idle and everything that lights
-   pixels comes off: the two full-viewport red radial gradients, the scanline
-   overlay, the panel glow and every soft-shadow halo. On the OLED panels these
-   phones have, black pixels are close to off, and that is most of the draw for
-   most of the day.
-
-   The countdown and the robot stay legible - dim, not hidden - so the phone can
-   still be read at a glance. Any touch, the match arming, or the countdown
-   coming inside a minute takes the class straight back off. */
-#s-standby.idle{background:#000}
-#s-standby.idle::before,
-#s-standby.idle::after{display:none}
-#s-standby.idle .bigpanel{background:none;border-color:rgba(255,255,255,.06)}
-#s-standby.idle .bigpanel .glow{display:none}
-#s-standby.idle .pick,
-#s-standby.idle .pill{box-shadow:none;background:rgba(255,255,255,.03)}
-#s-standby.idle .pick.on{box-shadow:none;background:rgba(225,29,43,.14)}
+   a minute with nobody touching it, hud.js sets .idle: the background goes to
+   black (near-off on the OLED panels these phones have) and the panels lose
+   their fill. The countdown and the robot stay legible - dim, not hidden. Any
+   touch, the match arming, or the countdown coming inside a minute takes the
+   class straight back off. Black in either theme: the point is the battery. */
+#s-standby.idle{background:#000;color:#f3f3f5}
+#s-standby.idle .hdr .k,#s-standby.idle .hdr .m{color:#9696a0}
+#s-standby.idle .bigpanel,#s-standby.idle .lrow,#s-standby.idle .pick,
+#s-standby.idle .pill,#s-standby.idle .cta.flat,#s-standby.idle .hbtn,#s-standby.idle .themebtn{background:rgba(255,255,255,.04);color:#9696a0}
+#s-standby.idle .pick.on{background:rgba(229,50,61,.25);color:#f3f3f5}
+#s-standby.idle .cta.flat .a{color:#c8c8cf}
+#s-standby.idle .until{color:#ff7a82}
 /* One transition, on opacity only, so coming back does not read as a glitch.
    It runs for 200ms on a tap and never again - nothing here animates on its own. */
 #s-standby{transition:opacity .2s ease-out}
 #s-standby.idle{opacity:.62}
+
+@media (prefers-reduced-motion:reduce){ *{transition:none !important} }

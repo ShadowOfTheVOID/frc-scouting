@@ -1,183 +1,187 @@
 /* Strategy dashboard, 1240px reference.
-   Values taken verbatim from design/Computer *.dc.html.
-   The macOS chrome bar in those mocks is presentation only and is not built. */
 
-@import url('/css/fonts.css');
+   Soft and open: panes are separated by space and shading rather than ruled
+   lines, controls are pill-shaped, and red marks only what is selected or
+   needs attention. Colours come from theme.css, so everything here works in
+   both the dark and the light theme. */
 
-:root{
-  --page:#0b0b0d; --panel:#0a0a0c; --raised:#0f0f12; --chrome:#131317;
-  --thead:#0d0d10; --logwell:#08080a;
-  --line:#1e1e24; --row:#16161b; --track:#2a2a31; --btn:#2f2f38; --seg:#26262d;
-  --red:#e11d2b; --red-link:#ff3b45; --red-alert:#ff5c66; --red-label:#ff7a80;
-  --red-soft:#ff8a91; --red-dim:#6d2b30; --red-ring:#4a181e; --red-dash:#3a2226;
-  --blue-rail:#3a5f8f; --blue-label:#7fa8d8;
-  --green:#34a86a; --green-soft:#5fce93; --green-border:#1f5138;
-  --amber:#f5a524;
-  --t0:#f4f4f6; --t1:#a0a0ab; --t2:#9a9aa4; --t3:#8b8b95; --t4:#7d7d88;
-  --t5:#6b6b76; --t6:#5f5f6a;
-
-  /* Chart series slots, in fixed order and never cycled: a team keeps its
-     colour when another team is dropped from the picker. Stepped for a dark
-     surface and validated as a set - every adjacent pair clears the
-     colour-vision separation floor against this page's background, which is
-     what a laptop screen in a lit venue actually needs. */
-  --s1:#3987e5; --s2:#d95926; --s3:#199e70;
-  --s4:#c98500; --s5:#d55181; --s6:#008300;
-}
 *{box-sizing:border-box}
-html,body{margin:0;background:var(--page);font-family:Barlow,system-ui,sans-serif}
-body{padding:24px;color:var(--t0);min-width:1240px}
-a{color:var(--red-link);text-decoration:none}
-a:hover{color:var(--red-label)}
+html,body{margin:0;background:var(--page);font-family:var(--f-body)}
+body{padding:24px;color:var(--t0);min-width:1240px;font-weight:500}
+a{color:var(--red-link);text-decoration:none;font-weight:700}
+a:hover{text-decoration:underline}
 .tnum{font-variant-numeric:tabular-nums}
+button{font-family:var(--f-body)}
+input,select,textarea{font-family:var(--f-body)}
 
 /* 1240px is the floor and the design canvas, not a maximum. */
 .shell{
   min-width:1240px; max-width:1600px; margin:0 auto;
-  background:var(--panel); border:1px solid var(--line); border-radius:12px;
-  overflow:hidden; box-shadow:0 30px 70px rgba(0,0,0,.6);
+  background:var(--panel); border-radius:28px;
+  overflow:hidden; box-shadow:var(--shadow);
 }
 
-.apphead{display:flex;align-items:stretch;border-bottom:1px solid var(--line);background:var(--raised)}
-.apphead .bar{width:8px;background:var(--red);flex:none}
-.apphead .in{flex:1;display:flex;align-items:center;gap:16px;padding:14px 22px}
-.apphead h1{font:700 17px/1.05 Barlow,sans-serif;letter-spacing:-.01em;margin:0}
-.apphead .sub{font:600 11.5px Barlow,sans-serif;letter-spacing:.1em;color:var(--t4);margin-top:3px}
+/* ---------------------------------------------------------------- header */
+.apphead{display:flex;flex-direction:column;gap:14px;padding:22px 28px 16px}
+.apphead .bar{display:none}
+.apphead .in{flex:1;display:flex;align-items:center;gap:16px}
+.apphead .logo{width:44px;height:44px;border-radius:50%;background:var(--red);color:var(--on-red);
+  display:grid;place-items:center;font:700 15px var(--f-num);flex:none}
+.apphead h1{font:800 20px/1.15 var(--f-body);margin:0}
+.apphead .sub{font:600 14px var(--f-body);color:var(--t4);margin-top:2px}
 .apphead .sp{flex:1}
 
-.seg{display:flex;gap:2px;background:var(--row);border:1px solid var(--seg);border-radius:8px;padding:3px}
+/* status pills: green fine, amber look soon, red act now */
+.pill{display:inline-flex;align-items:center;gap:7px;font:700 13px var(--f-body);
+  padding:6px 13px;border-radius:999px;white-space:nowrap;background:var(--soft);color:var(--t1)}
+.pill .d{width:8px;height:8px;border-radius:50%;background:currentColor}
+.pill.ok{color:var(--green);background:var(--green-bg)}
+.pill.warn{color:var(--amber);background:var(--amber-bg)}
+.pill.bad{color:var(--red-alert);background:var(--red-bg)}
+
+/* tabs: three groups of pills */
+.nav{display:flex;gap:22px;flex-wrap:wrap;align-items:center}
+.nav .grp{display:flex;gap:4px;align-items:center}
+.nav .gl{font:700 12px var(--f-body);color:var(--t5);margin-right:6px}
+.nav button{padding:8px 16px;border-radius:999px;border:0;background:transparent;cursor:pointer;
+  font:700 14.5px var(--f-body);color:var(--t2)}
+.nav button:hover{background:var(--soft);color:var(--t0)}
+.nav button.on{background:var(--red);color:var(--on-red)}
+.nav button:focus-visible{outline:2px solid var(--red);outline-offset:2px}
+
+/* segmented control - picklist modes and the like */
+.seg{display:flex;gap:2px;background:var(--soft);border-radius:999px;padding:3px}
 .seg button{
-  padding:7px 14px;border-radius:6px;border:none;background:transparent;
-  font:700 11px Barlow,sans-serif;letter-spacing:.1em;color:var(--t3);cursor:pointer;
+  padding:7px 14px;border-radius:999px;border:none;background:transparent;
+  font:700 13px var(--f-body);color:var(--t3);cursor:pointer;
 }
-.seg button.on{background:var(--red);font-weight:800;color:#fff}
-/* Same control, sized to sit inside a table caption. No mock covers a segmented
-   control in that position; the type scale matches the caption it sits in. */
+.seg button.on{background:var(--red);color:var(--on-red)}
 .seg.small{padding:2px}
-.seg.small button{padding:5px 10px;font-size:9.5px}
+.seg.small button{padding:4px 11px;font-size:12px}
 
-/* the 1px gaps are the grid background showing through */
-.cols{display:grid;gap:1px;background:var(--line)}
-.cols.live{grid-template-columns:280px 1fr 290px}
+/* panes sit side by side with space between, not ruled lines */
+.cols{display:grid;gap:28px;padding:10px 28px 28px}
+.cols.live{grid-template-columns:270px 1fr 290px}
 .cols.one{grid-template-columns:1fr}
-.pane{background:var(--panel);padding:18px 18px 22px;display:flex;flex-direction:column;gap:14px;min-width:0}
-.pane.mid{padding:18px 20px 22px;gap:14px}
+.pane{padding:0;display:flex;flex-direction:column;gap:14px;min-width:0}
+.pane.mid{gap:18px}
 
-.eyebrow{font:800 11px Barlow,sans-serif;letter-spacing:.18em;color:var(--t4)}
-.eyebrow.red{color:var(--red-soft)}
-.hint{font:500 11px Barlow,sans-serif;color:var(--t6)}
+.eyebrow{font:800 15px var(--f-body);color:var(--t0)}
+.eyebrow.red{color:var(--red-alert)}
+.hint{font:500 13px/1.5 var(--f-body);color:var(--t5)}
 
 /* ------------------------------------------------------------- on field */
-.mrow{border-left:3px solid var(--track);padding:10px 0 10px 12px}
-.mrow.now{border-left-color:var(--red);background:linear-gradient(90deg,rgba(225,29,43,.14),transparent)}
-.mrow .top{display:flex;justify-content:space-between;font:800 10.5px Barlow,sans-serif;letter-spacing:.14em}
+.mrow{border-radius:22px;padding:13px 18px}
+.mrow.now{background:var(--red-bg)}
+.mrow .top{display:flex;justify-content:space-between;font:700 13px var(--f-body)}
 .mrow .top .l{color:var(--t4)}
 .mrow .top .r{color:var(--red-alert)}
-.mrow .teams{margin-top:8px;font:700 19px/1.35 'Barlow Condensed',sans-serif;
+.mrow.now .top .l{color:var(--red-alert)}
+.mrow .teams{margin-top:4px;font:600 20px/1.3 var(--f-num);
   font-variant-numeric:tabular-nums;letter-spacing:.02em}
 .mrow .teams.red{color:var(--red-label)}
 .mrow .teams.blue{color:var(--blue-label)}
 .mrow.next .teams{font-size:18px;color:var(--t2)}
 .mrow.later .teams{font-size:18px;color:var(--t6)}
 
-.callout{margin-top:6px;padding:12px 14px;border:1px dashed var(--red-dash);border-radius:10px;
-  background:rgba(225,29,43,.06)}
-.callout .h{font:800 10.5px Barlow,sans-serif;letter-spacing:.14em;color:var(--red-soft)}
-.callout .b{font:500 12.5px/1.5 Barlow,sans-serif;color:var(--t2);margin-top:5px}
+.callout{margin-top:6px;padding:13px 17px;border-radius:22px;background:var(--amber-bg)}
+.callout .h{font:800 14px var(--f-body);color:var(--amber)}
+.callout .b{font:500 13.5px/1.5 var(--f-body);color:var(--t1);margin-top:3px}
 
-/* ---------------------------------------------------------------- tiles */
-.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line)}
-.tile{background:var(--raised);padding:12px 14px}
-.tile .k{font:800 10px Barlow,sans-serif;letter-spacing:.14em;color:var(--t4)}
-.tile .v{font:700 30px/1.1 'Barlow Condensed',sans-serif}
-.tile .v small{font-size:16px;color:var(--t6)}
-.tile .c{font:600 11px Barlow,sans-serif;color:var(--t6)}
-.tile .c.warn{color:var(--red-soft)}
-.tile.alert{box-shadow:inset 0 0 0 1px var(--red-ring)}
-.tile.alert .k{color:var(--red-soft)}
-.tile.alert .v{color:var(--red-link)}
+/* ---------------------------------------------------------------- tiles
+   Big numbers in a row, without boxes round them. */
+.tiles{display:flex;gap:40px;flex-wrap:wrap}
+.tile{padding:0;display:flex;flex-direction:column}
+.tile .v{order:1}
+.tile .c{order:3}
+.tile .k{font:600 14px var(--f-body);color:var(--t2);order:2}
+.tile .v{font:700 40px/1.05 var(--f-num)}
+.tile .v small{font-size:20px;color:var(--t6)}
+.tile .c{font:600 13px var(--f-body);color:var(--t5)}
+.tile .c.warn{color:var(--red-alert)}
+.tile.alert .k{color:var(--red-alert)}
+.tile.alert .v{color:var(--red-alert)}
 .tile.alert .c{color:var(--t4)}
 
-/* --------------------------------------------------------------- tables */
-.tbl{border:1px solid var(--line)}
-.tbl .cap{display:flex;align-items:baseline;justify-content:space-between;padding:12px 16px;
-  background:var(--raised);border-bottom:1px solid var(--line)}
-.tbl .cap .t{font:800 11px Barlow,sans-serif;letter-spacing:.16em}
-.tbl .cap .n{font:500 11.5px Barlow,sans-serif;color:var(--t4)}
+/* --------------------------------------------------------------- tables
+   A list with soft alternating rows, no grid lines. */
+.tbl{display:flex;flex-direction:column;gap:2px}
+.tbl .cap{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:0 4px 8px}
+.tbl .cap .t{font:800 16px var(--f-body)}
+.tbl .cap .n{font:500 13px var(--f-body);color:var(--t4)}
 .tbl .cap .n b{color:var(--t1)}
 .tbl .hd,.tbl .r{display:grid;align-items:center}
-.tbl .hd{padding:9px 16px;background:var(--thead);border-bottom:1px solid var(--line);
-  font:800 9.5px Barlow,sans-serif;letter-spacing:.14em;color:var(--t4)}
+.tbl .hd{padding:4px 16px;font:700 13px var(--f-body);color:var(--t5)}
 .tbl .hd span{cursor:pointer}
-.tbl .r{padding:11px 16px;border-bottom:1px solid var(--row);
-  font:500 13.5px Barlow,sans-serif;font-variant-numeric:tabular-nums}
-.tbl .r:nth-child(even){background:var(--raised)}
-.tbl .r:last-child{border-bottom:none}
+.tbl .hd span:hover{color:var(--t1)}
+.tbl .r{padding:10px 16px;border-radius:18px;
+  font:500 14.5px var(--f-body);font-variant-numeric:tabular-nums}
+.tbl .r:nth-child(odd){background:var(--soft)}
 .tbl .num{text-align:right}
-/* RANK sits immediately left of the team number and the grid has no gap, so the
-   column carries its own trailing space. 14px keeps it inside the row's 16px
-   padding rhythm. No mock covers this column. */
-.tbl .rk{text-align:right;padding-right:14px;color:var(--t4)}
-.tbl .tno{font:700 18px 'Barlow Condensed',sans-serif}
-.tbl .nm{color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.tbl .band{color:var(--t6);font-size:11.5px}
+/* RANK sits immediately left of the team number and the grid has no gap, so
+   the column carries its own trailing space. */
+.tbl .rk{text-align:right;padding-right:14px;color:var(--t5)}
+.tbl .tno{font:700 18px var(--f-num)}
+.tbl .nm{color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tbl .band{color:var(--t6);font-size:12.5px}
 
-.cl{font:800 10.5px Barlow,sans-serif;letter-spacing:.08em}
-.cl.l3{color:var(--red-alert)}
+.cl{font:700 12.5px var(--f-body);padding:3px 10px;border-radius:999px;background:var(--soft2);color:var(--t2);white-space:nowrap}
+.cl.l3{background:var(--red-bg);color:var(--red-alert)}
 .cl.l2{color:var(--t1)}
 .cl.l1{color:var(--t4)}
-.cl.none{color:var(--t6)}
+.cl.none{background:transparent;color:var(--t6)}
+.tbl .r:nth-child(odd) .cl:not(.l3):not(.none){background:var(--panel)}
 
-.trust{display:inline-block;width:52px;height:5px;background:var(--track)}
-.trust i{display:block;height:5px;background:var(--red)}
+.trust{display:inline-block;width:56px;height:6px;border-radius:3px;background:var(--soft2);overflow:hidden;vertical-align:middle}
+.trust i{display:block;height:6px;border-radius:3px;background:var(--red)}
 .trust i.low{background:var(--red-dim)}
+.tbl .r:nth-child(odd) .trust{background:var(--panel)}
 
 /* -------------------------------------------------------------- picklist */
-.pk{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--raised);
-  border-left:3px solid var(--track)}
-.pk.top{border-left-color:var(--red)}
-.pk .i{font:700 13px 'Barlow Condensed',sans-serif;color:var(--red);width:12px}
-.pk .n{font:700 16px 'Barlow Condensed',sans-serif;min-width:44px}
-.pk .nm{flex:1;font:500 12px Barlow,sans-serif;color:var(--t3);overflow:hidden;
+.pk{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:18px;background:var(--soft)}
+.pk.top{background:var(--red-bg)}
+.pk .i{font:700 14px var(--f-num);color:var(--red-alert);width:14px}
+.pk .n{font:700 17px var(--f-num);min-width:44px}
+.pk .nm{flex:1;font:500 13px var(--f-body);color:var(--t2);overflow:hidden;
   text-overflow:ellipsis;white-space:nowrap}
-.pk .s{font:800 12px Barlow,sans-serif;color:var(--red-label)}
-.pk.taken{opacity:.4}
+.pk .s{font:800 13px var(--f-body);color:var(--red-label)}
+.pk.taken{opacity:.45}
 .pk.taken .nm{text-decoration:line-through}
-.pk.dnp{border-left-color:var(--red-ring);background:rgba(225,29,43,.06)}
-.pk .x{font:700 10px Barlow,sans-serif;letter-spacing:.1em;color:var(--t5);cursor:pointer;
-  border:1px solid var(--btn);border-radius:5px;padding:3px 6px;background:transparent}
+.pk.dnp{background:transparent;box-shadow:inset 0 0 0 2px var(--red-ring)}
+.x{font:700 12px var(--f-body);color:var(--t3);cursor:pointer;
+  border:0;border-radius:999px;padding:4px 11px;background:var(--soft2)}
+.x:hover{color:var(--t0)}
+.pk .x{background:var(--panel)}
 
-/* Filters over the draft board. One row, directly above what it scopes - the
-   same rule the graph tab's team chips follow. An active filter wears the red
-   the board uses for "this is doing something", so a list that is hiding rows
-   can never look like the whole list. */
-.pkf{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:9px 16px;
-  background:var(--thead);border-bottom:1px solid var(--line)}
-.pkf input,.pkf select{background:var(--raised);border:1px solid var(--btn);border-radius:7px;
-  padding:5px 8px;color:var(--t0);font:600 11px Barlow,sans-serif}
-.pkf input{width:132px}
+/* Filters over the draft board. One row, directly above what it scopes. An
+   active filter wears red, so a list that is hiding rows can never look like
+   the whole list. */
+.pkf{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:0 4px 10px}
+.pkf input,.pkf select{background:var(--soft);border:0;border-radius:999px;
+  padding:7px 12px;color:var(--t0);font:600 13px var(--f-body)}
+.pkf input{width:150px}
 .pkf input::placeholder{color:var(--t6);font-weight:500}
-.pkf select{color:var(--t2);letter-spacing:.06em;color-scheme:dark;cursor:pointer}
-.pkf button{padding:5px 9px;border-radius:7px;background:transparent;cursor:pointer;
-  border:1px solid var(--btn);color:var(--t4);font:700 10.5px Barlow,sans-serif;letter-spacing:.06em}
-.pkf button.on{border-color:var(--red-ring);background:rgba(225,29,43,.1);color:var(--red-soft)}
-.pkf .c{margin-left:auto;white-space:nowrap;font:500 11px Barlow,sans-serif;color:var(--t5)}
-.pkf button.clear{color:var(--t5)}
+.pkf select{color:var(--t1);cursor:pointer}
+.pkf button{padding:7px 12px;border-radius:999px;background:var(--soft);cursor:pointer;
+  border:0;color:var(--t3);font:700 12.5px var(--f-body)}
+.pkf button.on{background:var(--red-bg);color:var(--red-alert)}
+.pkf .c{margin-left:auto;white-space:nowrap;font:500 13px var(--f-body);color:var(--t5)}
+.pkf button.clear{background:transparent;color:var(--t5)}
 
-.wt{display:flex;flex-direction:column;gap:3px}
-.wt .lb{display:flex;justify-content:space-between;font:600 10.5px Barlow,sans-serif;
-  letter-spacing:.1em;color:var(--t4)}
+.wt{display:flex;flex-direction:column;gap:4px}
+.wt .lb{display:flex;justify-content:space-between;font:600 13px var(--f-body);color:var(--t3)}
 .wt input[type=range]{width:100%;accent-color:var(--red);height:4px}
 
 /* ---------------------------------------------------------------- misc */
-.list{display:flex;flex-direction:column;gap:5px}
-.kv{display:flex;justify-content:space-between;font:500 12.5px Barlow,sans-serif;color:var(--t2);
-  padding:7px 0;border-bottom:1px solid var(--row)}
-.kv:last-child{border-bottom:none}
+.list{display:flex;flex-direction:column;gap:6px}
+.kv{display:flex;justify-content:space-between;gap:12px;font:500 14px var(--f-body);color:var(--t2);
+  padding:7px 4px}
+.kv + .kv{border-top:1px solid var(--line-row)}
 .kv b{color:var(--t0);font-weight:700}
-.mono{font-family:'JetBrains Mono',ui-monospace,monospace}
+.mono{font-family:var(--f-mono)}
 .hide{display:none !important}
-.empty{padding:22px 16px;font:500 12.5px Barlow,sans-serif;color:var(--t5);text-align:center}
+.empty{padding:22px 16px;font:500 14px var(--f-body);color:var(--t5);text-align:center;
+  background:var(--soft);border-radius:22px}
 
 /* ------------------------------------------------------------- charts */
 /* Marks carry the series colour; every piece of text wears a text token, so a
@@ -186,12 +190,12 @@ a:hover{color:var(--red-label)}
 .chart .plot{position:relative}
 .chart svg{display:block;width:100%;height:auto;overflow:visible}
 .chart .grid{stroke:var(--line);stroke-width:1}
-.chart .ax{font:600 10px Barlow,sans-serif;fill:var(--t5)}
-.chart .rowlab{font:700 12px 'Barlow Condensed',sans-serif;fill:var(--t2)}
-.chart .val{font:600 10.5px Barlow,sans-serif;fill:var(--t4)}
-.chart .endlab{font:700 10.5px Barlow,sans-serif;fill:var(--t3)}
+.chart .ax{font:600 11px var(--f-body);fill:var(--t5)}
+.chart .rowlab{font:700 13px var(--f-num);fill:var(--t2)}
+.chart .val{font:600 11.5px var(--f-body);fill:var(--t4)}
+.chart .endlab{font:700 11.5px var(--f-body);fill:var(--t3)}
 .chart .ln{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
-.chart .band{opacity:.16;stroke:none}   /* a wash on a near-black surface */
+.chart .band{opacity:.16;stroke:none}
 /* The 2px ring is the surface doing the separating, so a dot stays legible
    where it lands on another line. */
 .chart .dot{stroke:var(--panel);stroke-width:2}
@@ -200,29 +204,30 @@ a:hover{color:var(--red-label)}
 .chart .agree{stroke:var(--track);stroke-width:1;stroke-dasharray:3 4}
 .chart .legend{display:flex;flex-wrap:wrap;gap:4px 14px}
 .chart .legend .key{display:flex;align-items:center;gap:6px;
-  font:600 10.5px Barlow,sans-serif;letter-spacing:.06em;color:var(--t4)}
+  font:600 12.5px var(--f-body);color:var(--t3)}
 .chart .legend .key i{width:12px;height:3px;border-radius:2px;flex:none}
-.chart .tip{position:absolute;pointer-events:none;z-index:5;min-width:120px;
-  background:var(--chrome);border:1px solid var(--btn);border-radius:8px;
-  padding:8px 10px;box-shadow:0 10px 24px rgba(0,0,0,.55)}
-.chart .tip .hd{font:800 10px Barlow,sans-serif;letter-spacing:.12em;color:var(--t4);
-  margin-bottom:5px}
+.chart .tip{position:absolute;pointer-events:none;z-index:5;min-width:130px;
+  background:var(--chrome);border-radius:16px;
+  padding:9px 12px;box-shadow:0 10px 24px rgba(0,0,0,.28)}
+.chart .tip .hd{font:800 12.5px var(--f-body);color:var(--t2);margin-bottom:5px}
 .chart .tip .row{display:flex;align-items:center;gap:7px;padding:1px 0}
 .chart .tip .row i{width:10px;height:3px;border-radius:2px;flex:none}
-.chart .tip .row b{font:700 13px 'Barlow Condensed',sans-serif;color:var(--t0);min-width:34px}
-.chart .tip .row span{font:500 11px Barlow,sans-serif;color:var(--t5)}
-.chart .tip .u{font:500 10px Barlow,sans-serif;color:var(--t6);margin-top:4px}
-.chart .tblview summary{font:600 10.5px Barlow,sans-serif;color:var(--t5);cursor:pointer}
+.chart .tip .row b{font:700 14px var(--f-num);color:var(--t0);min-width:34px}
+.chart .tip .row span{font:500 12px var(--f-body);color:var(--t4)}
+.chart .tip .u{font:500 11px var(--f-body);color:var(--t5);margin-top:4px}
+.chart .tblview summary{font:600 12.5px var(--f-body);color:var(--t4);cursor:pointer}
 .chart .tblview table{width:100%;border-collapse:collapse;margin-top:6px}
-.chart .tblview th,.chart .tblview td{text-align:right;padding:4px 8px;
-  font:500 11px Barlow,sans-serif;color:var(--t2);border-bottom:1px solid var(--row)}
+.chart .tblview th,.chart .tblview td{text-align:right;padding:5px 8px;
+  font:500 12.5px var(--f-body);color:var(--t2)}
+.chart .tblview tr:nth-child(even) td{background:var(--soft)}
 .chart .tblview th:first-child,.chart .tblview td:first-child{text-align:left;color:var(--t4)}
 .chart .tblview th{color:var(--t5);font-weight:700}
-.empty-chart{padding:22px 16px;font:500 12.5px Barlow,sans-serif;color:var(--t5);text-align:center}
+.empty-chart{padding:22px 16px;font:500 14px var(--f-body);color:var(--t5);text-align:center;
+  background:var(--soft);border-radius:22px}
 
 /* The team picker above the event-wide charts. One row, above what it scopes. */
-.picker{display:flex;flex-wrap:wrap;gap:5px}
-.picker button{padding:5px 9px;border-radius:7px;background:transparent;cursor:pointer;
-  border:1px solid var(--btn);color:var(--t4);font:700 10.5px Barlow,sans-serif;letter-spacing:.06em}
-.picker button.on{border-color:transparent;color:var(--t0)}
-.picker button.on i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:6px}
+.picker{display:flex;flex-wrap:wrap;gap:6px}
+.picker button{padding:6px 12px;border-radius:999px;background:var(--soft);cursor:pointer;
+  border:0;color:var(--t3);font:700 12.5px var(--f-body)}
+.picker button.on{background:var(--soft2);color:var(--t0)}
+.picker button.on i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
