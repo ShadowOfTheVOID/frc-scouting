@@ -76,6 +76,73 @@ def event_summary(store, event_key, include_scouts=False):
     return out
 
 
+#: The interval lists on a scout entry: when the robot was shooting, feeding
+#: and defending.
+INTERVAL_KEYS = ("intervals", "feedIntervals", "defenseIntervals")
+
+
+def one_per_robot(entries):
+    """Scout entries with a HAND OVER's two rows joined into one.
+
+    A HAND OVER mid-match leaves two rows for one robot from one phone: the
+    outgoing scout's first part of the match and the incoming scout's rest of
+    it, on the same shared clock. The phone is what marks it - two scouts
+    watching the same robot on purpose do it from two phones, and each of
+    those rows is an observation of its own, so only rows that share a
+    match, a team and a device are joined. Every answer comes from the newest row - the after-the-buzzer
+    questions are only ever answered at the end - and its runs are joined by
+    every run from the older rows that does not overlap one already taken.
+
+    Not overlapping is the test, rather than "everything": two phones that
+    really did watch the same robot at the same time (a chair taken by mistake)
+    would otherwise have every volley counted twice. Order in and order out
+    are kept for everything else.
+    """
+    groups, order = {}, []
+    for i, e in enumerate(entries):
+        # A row with no device on it is never joined to anything.
+        key = (e.get("matchKey"), e.get("team"), e.get("deviceId") or ("row", i))
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(e)
+    out = []
+    for key in order:
+        rows = groups[key]
+        if len(rows) == 1:
+            out.append(rows[0])
+            continue
+        rows = sorted(rows, key=lambda r: float(r.get("updatedAt") or 0), reverse=True)
+        base = dict(rows[0])
+        payload = dict(base.get("payload") if isinstance(base.get("payload"), dict) else {})
+        for k in INTERVAL_KEYS:
+            taken = [iv for iv in (payload.get(k) if isinstance(payload.get(k), list) else [])
+                     if isinstance(iv, dict)]
+            for older in rows[1:]:
+                op = older.get("payload") if isinstance(older.get("payload"), dict) else {}
+                for iv in (op.get(k) if isinstance(op.get(k), list) else []):
+                    if not isinstance(iv, dict):
+                        continue
+                    try:
+                        a, b = float(iv.get("start")), float(iv.get("end"))
+                    except (TypeError, ValueError):
+                        continue
+                    if not any(a < float(t.get("end") or 0) and float(t.get("start") or 0) < b
+                               for t in taken):
+                        taken.append(iv)
+            payload[k] = sorted(taken, key=lambda iv: float(iv.get("start") or 0))
+        # A note from the outgoing scout is still somebody's observation.
+        notes = [str(r["payload"].get("note")).strip() for r in rows[1:]
+                 if isinstance(r.get("payload"), dict) and str(r["payload"].get("note") or "").strip()]
+        if notes:
+            own = str(payload.get("note") or "").strip()
+            payload["note"] = " · ".join(([own] if own else []) + [n for n in notes if n != own])
+        base["payload"] = payload
+        base["handedOver"] = [r.get("scoutId") for r in rows[1:]]
+        out.append(base)
+    return out
+
+
 def _event_summary(store, event_key, include_scouts=False):
     matches = store.matches(event_key)
     # Exact side-tables, both straight from an API. Absent is the normal case
@@ -83,7 +150,8 @@ def _event_summary(store, event_key, include_scouts=False):
     rankings = store.get(f"rankings:{event_key}") or {}
     epa = store.get(f"epa:{event_key}") or {}
     lovat_rows = store.get(f"lovat:{event_key}") or {}
-    entries = store.scout_entries(event_key)
+    raw_entries = store.scout_entries(event_key)
+    entries = one_per_robot(raw_entries)
     solved = store.solved(event_key)
     teams = {t["team"]: t for t in store.teams(event_key)}
 
@@ -160,7 +228,9 @@ def _event_summary(store, event_key, include_scouts=False):
         "coverage": _coverage(matches, entries),
         "lovatCoverage": _lovat_coverage(lovat_rows, teams),
         "scoreReport": score_report(store, event_key, matches, entries),
-        **({"scouts": _scout_reliability(entries, by_match, solved)} if include_scouts else {}),
+        # Each scout is graded on the rows they logged themselves, so a HAND OVER
+        # credits neither half of the match to the wrong person.
+        **({"scouts": _scout_reliability(raw_entries, by_match, solved)} if include_scouts else {}),
     }
 
 
@@ -181,7 +251,7 @@ def score_report(store, event_key, matches=None, entries=None):
     Per alliance-match plus event rollups. Names no scout - it grades the data.
     """
     matches = store.matches(event_key) if matches is None else matches
-    entries = store.scout_entries(event_key) if entries is None else entries
+    entries = one_per_robot(store.scout_entries(event_key) if entries is None else entries)
     mult = store.get("multipliers") or dict(rules.BUCKET_PRIORS)
 
     by_match = {}
@@ -311,8 +381,7 @@ def _team_trend(team, matches, entries, solved, lovat, faced_secs):
     and mean opposite things.
     """
     solved_by_key = {s["matchKey"]: s for s in solved}
-    # A HAND OVER mid-match leaves two entries for one (match, team); the
-    # first is the one that covers the start of the match.
+    # One entry per match: `entries` has been through one_per_robot.
     entry_by_key = {}
     for e in entries:
         entry_by_key.setdefault(e["matchKey"], e)

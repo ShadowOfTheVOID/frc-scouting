@@ -479,6 +479,50 @@ def test_pit_scouting_on_the_mirror(H, M, tok, questions):
     return ok
 
 
+def test_mirror_review_fixes(H, M, tok):
+    """What a second review of the mirror's pit inbox turned up."""
+    ok = True
+    auth = {"X-Mirror-Token": tok}
+    team = H.store.teams(EK)[-1]["team"]
+    # The hub pushes the robot back with its photo filed; an edit on the
+    # mirror after that must not owe the hub that photo's bytes again.
+    offsite.push_once(H.hub, force=True)
+    code, e, _ = M.req("/api/pit/entry?event=%s&team=%d" % (EK, team), headers=auth)
+    rec = e.get("record") or {}
+    ok &= check("a phone is never shown the mirror's own bookkeeping", "newPhotos" not in rec)
+    pay = dict(rec.get("payload") or {}, notes="third look")
+    M.req("/api/pit/save", {"eventKey": EK, "team": team, "deviceId": "phoneA", "scoutId": "AK",
+                            "payload": pay}, headers=auth)
+    owed = M.store.pits_for(EK)[team].get("newPhotos")
+    ok &= check("a photo the hub already has is not sent to it again", owed == [], f"({owed})")
+
+    have = M.store.pits_for(EK)[team]
+    ok &= check("an older save of a robot never undoes a newer one",
+                M.store.put_pit({**have, "updatedAt": have["updatedAt"] - 5}) is None
+                and M.store.pits_for(EK)[team]["payload"].get("notes") == "third look")
+
+    # A mirror whose database was rebuilt: a new inbox, and none of the bundle.
+    offsite.pull_pits(H.hub)
+    offsite.push_once(H.hub, force=True)
+    ok &= check("(nothing new, so the next push is skipped)",
+                offsite.push_once(H.hub).get("skipped") == "unchanged")
+    M.store.set("pitInboxId", "rebuilt0000")
+    offsite.pull_pits(H.hub)
+    res = offsite.push_once(H.hub)
+    ok &= check("a rebuilt mirror gets the whole bundle on the next push",
+                res.get("ok") and not res.get("skipped"), f"({res})")
+
+    state = dict(H.store.get("mirrorState") or {}, photosPending=3, photosSent=2)
+    H.store.set("mirrorState", state)
+    res = offsite.push_once(H.hub)
+    ok &= check("a push is made while photos are still owed", not res.get("skipped"), f"({res})")
+    H.store.set("mirrorState", dict(H.store.get("mirrorState") or {}, photosPending=3, photosSent=0))
+    res = offsite.push_once(H.hub)
+    ok &= check("...but not every minute for a photo the hub cannot send",
+                res.get("skipped") == "unchanged", f"({res})")
+    return ok
+
+
 def test_open_mirror_takes_no_writes(tmp):
     M = LiveMirror(os.path.join(tmp, "open2"), passcode=None, open_read=True)
     try:
@@ -524,6 +568,7 @@ def main():
         good, qs = test_pit_questions_on_the_mirror(H, M, tok)
         ok &= good
         ok &= test_pit_scouting_on_the_mirror(H, M, tok, qs)
+        ok &= test_mirror_review_fixes(H, M, tok)
 
         print("\nrestoring from the mirror")
         ok &= test_restores_a_hub(M, tok, tmp)

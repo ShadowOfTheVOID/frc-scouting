@@ -240,9 +240,14 @@ function keepDraft() {
   // Only a change is worth keeping: a robot opened, looked at and closed again
   // must not come back claiming there are unsaved answers.
   if (canon(open.draft) === open.base) { dropDraft(open.team); return; }
-  try { localStorage.setItem(key, JSON.stringify(open.draft)); } catch {
-    // Photos can be more than the phone will keep; the answers are worth more.
-    try { localStorage.setItem(key, JSON.stringify({ ...open.draft, photos: [] })); } catch { /* full */ }
+  // Kept with the save it started from, so a newer save by somebody else is
+  // noticed when the robot is opened again instead of silently overwritten.
+  const keep = (payload) => localStorage.setItem(key, JSON.stringify({ v: 2, payload, baseAt: open.baseAt }));
+  try { keep(open.draft); } catch {
+    // New photos can be more than the phone will keep; the answers are worth
+    // more. Photos already on the mirror are only ids and cost nothing.
+    try { keep({ ...open.draft, photos: open.draft.photos.filter((x) => !String(x).startsWith('data:')) }); }
+    catch { /* full */ }
   }
 }
 /** A pit payload as text that only differs when an answer does: keys in one
@@ -264,8 +269,17 @@ function canon(p) {
   return JSON.stringify(norm(p || {}));
 }
 
+/** {payload, baseAt} kept on this phone for a robot, or null. */
 function savedDraft(team) {
-  try { return JSON.parse(localStorage.getItem(draftKey(team)) || 'null'); } catch { return null; }
+  let d = null;
+  try { d = JSON.parse(localStorage.getItem(draftKey(team)) || 'null'); } catch { return null; }
+  if (!d || typeof d !== 'object') return null;
+  return d.v === 2 ? { payload: d.payload || {}, baseAt: d.baseAt ?? null } : { payload: d, baseAt: null };
+}
+// The questions as last loaded, so a robot with a draft opens with no signal.
+function cacheQuestions(qs) { try { localStorage.setItem('pitQuestionsCache', JSON.stringify(qs)); } catch { /* full */ } }
+function cachedQuestions() {
+  try { return JSON.parse(localStorage.getItem('pitQuestionsCache') || '[]') || []; } catch { return []; }
 }
 function dropDraft(team) { try { localStorage.removeItem(draftKey(team)); } catch { /* private mode */ } }
 
@@ -283,6 +297,7 @@ function letGo(team) {
 
 async function openPit(team) {
   if (!initials()) askInitials();
+  clearTimeout(open.closeTimer);
   open.team = team;
   open.saving = false;
   const b = bundle();
@@ -306,7 +321,8 @@ async function openPit(team) {
   clearInterval(open.renew);
   open.renew = setInterval(() => claim(team), 60000);
 
-  let rec = null, questions = [];
+  let rec = null, questions = [], offline = false;
+  const kept = savedDraft(team);
   try {
     const [e, q] = await Promise.all([
       ctx.api(`/api/pit/entry?event=${encodeURIComponent(ek())}&team=${team}`),
@@ -314,20 +330,45 @@ async function openPit(team) {
     ]);
     rec = e.record;
     questions = q.questions || [];
+    cacheQuestions(questions);
   } catch {
     if (open.team !== team) return;
-    $('#pvBody').innerHTML = '<div class="pv-empty">Could not load this robot. Check your signal and try again.</div>';
-    return;
+    // Answers on this phone open without signal: they are the scout's own,
+    // and saving them waits for a bar of signal anyway.
+    if (!kept) {
+      $('#pvBody').innerHTML = '<div class="pv-empty">Could not load this robot. Check your signal and try again.</div>';
+      return;
+    }
+    offline = true;
+    questions = cachedQuestions();
   }
   if (open.team !== team) return;     // closed, or another robot opened, while loading
-  const kept = savedDraft(team);
-  open.draft = kept || JSON.parse(JSON.stringify((rec && rec.payload) || {}));
-  open.restored = !!kept;
+  // What "unchanged" means for this robot: the record as the mirror has it.
+  open.base = offline ? null : canon((rec && rec.payload) || {});
+  open.restored = !!kept && canon(kept.payload) !== open.base;
+  open.draft = JSON.parse(JSON.stringify(open.restored ? kept.payload : (rec && rec.payload) || {}));
+  if (kept && !open.restored) dropDraft(team);
+  open.baseAt = open.restored ? kept.baseAt : (rec && rec.updatedAt) || null;
+  // Somebody saved this robot after these answers were started here.
+  open.newer = open.restored && rec && rec.updatedAt && (!kept.baseAt || rec.updatedAt > kept.baseAt)
+    ? rec : null;
+  open.offline = offline;
   if (!Array.isArray(open.draft.photos)) open.draft.photos = [];
   if (!open.draft.custom || typeof open.draft.custom !== 'object' || Array.isArray(open.draft.custom)) open.draft.custom = {};
-  // What "unchanged" means for this robot: the record as the mirror has it.
-  open.base = canon((rec && rec.payload) || {});
-  drawForm(team, questions, !!rec);
+  drawForm(team, questions, !!rec || offline);
+  const theirs = $('#pvTheirs');
+  if (theirs) {
+    theirs.onclick = () => {
+      dropDraft(team);
+      open.draft = JSON.parse(JSON.stringify(rec.payload || {}));
+      if (!Array.isArray(open.draft.photos)) open.draft.photos = [];
+      if (!open.draft.custom || typeof open.draft.custom !== 'object') open.draft.custom = {};
+      open.baseAt = rec.updatedAt;
+      open.restored = false;
+      open.newer = null;
+      drawForm(team, questions, true);
+    };
+  }
 }
 
 function inspection(team) {
@@ -355,8 +396,13 @@ function drawForm(team, questions, existed) {
       value="${esc(d.custom[id] ?? '')}">`;
   };
   $('#pvBody').innerHTML = `
-    ${open.restored ? `<div class="pv-busy"><b>Picked up where you left off.</b> These answers were
+    ${open.newer ? `<div class="pv-busy"><b>${esc(open.newer.scoutId || 'Somebody')} saved this robot after you
+      started.</b> Your unsaved answers are shown — saving replaces theirs.
+      <button class="pv-chip" id="pvTheirs">Use theirs instead</button></div>`
+    : open.restored ? `<div class="pv-busy"><b>Picked up where you left off.</b> These answers were
       on this phone but never reached the mirror — save to send them.</div>` : ''}
+    ${open.offline ? `<div class="pv-busy"><b>No signal.</b> Showing the answers kept on this phone;
+      save once you have a bar.</div>` : ''}
     ${c ? `<div class="pv-busy"><b>${esc(claimName(c))} is already on this robot</b> — opened ${
       Math.max(0, Math.round((nowServer() - c.at) / 60)) || 'under a'} min ago. Check with them before you both do it.</div>` : ''}
     <div class="pv-grp"><h3>The robot</h3>
@@ -462,16 +508,19 @@ async function savePit(team) {
   btn.disabled = true;
   btn.textContent = 'Saving…';
   try {
-    await ctx.api('/api/pit/save', { method: 'POST', body: JSON.stringify({
+    const r = await ctx.api('/api/pit/save', { method: 'POST', body: JSON.stringify({
       eventKey: ek(), team, deviceId: deviceId(), scoutId: initials() || 'pit', payload: d,
     }) });
     dropDraft(team);
     open.base = canon(d);          // what the mirror now holds: closing keeps nothing
+    open.baseAt = (r && r.updatedAt) || open.baseAt;
     btn.classList.add('saved');
     btn.textContent = 'Saved — goes to the hub within a minute';
     if (navigator.vibrate) { try { navigator.vibrate(14); } catch { /* not supported */ } }
-    live.status[String(team)] = { done: FIELDS.filter((f) => d[f]).length >= 4 ? 'done' : 'partial' };
-    setTimeout(() => { if (open.team === team) closePit(); }, 900);
+    const n = FIELDS.filter((f) => d[f]).length;
+    live.status[String(team)] = { done: n >= 4 ? 'done' : n ? 'partial' : '' };
+    clearTimeout(open.closeTimer);
+    open.closeTimer = setTimeout(() => { if (open.team === team) closePit(); }, 900);
   } catch (e) {
     // Kept open with everything still in it: no signal in a pit aisle is
     // normal, and the answers are not lost by trying again.
@@ -486,6 +535,7 @@ async function savePit(team) {
 }
 
 function closePit() {
+  clearTimeout(open.closeTimer);
   keepDraft();
   const team = open.team;
   open.team = null;

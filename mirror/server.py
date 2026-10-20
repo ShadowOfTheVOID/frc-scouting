@@ -519,6 +519,9 @@ class Handler(BaseHTTPRequestHandler):
             if err:
                 return self._json({"error": err}, 400)
             seq = m.store.put_pit(rec)
+            if seq is None:
+                return self._json({"error": "a newer save of this robot arrived first - "
+                                            "reopen it to see what was saved"}, 409)
             return self._json({"ok": True, "seq": seq, "updatedAt": rec["updatedAt"]})
 
         if p == "/api/pit/pull":
@@ -529,10 +532,9 @@ class Handler(BaseHTTPRequestHandler):
                 time.sleep(0.5)
                 return self._json({"error": "bad push key"}, 401)
             body = self._body()
-            inbox = m.store.get("pitInboxId")
-            if not inbox:
-                inbox = secrets.token_hex(8)
-                m.store.set("pitInboxId", inbox)
+            # Minted once, under the write lock: two pulls racing here must not
+            # each mint one and send the hub two different inboxes.
+            inbox = m.store.mutate("pitInboxId", _mint_inbox)
             # A hub that last read a different inbox (this database was
             # rebuilt) starts again from the beginning.
             since = body.get("since") if body.get("inboxId") == inbox else 0
@@ -660,6 +662,13 @@ def _claim_pit(store, ek, team, device, scout, release=False):
     return store.mutate("pitClaims:%s" % ek, apply)
 
 
+def _mint_inbox(cur):
+    if cur:
+        return None, cur
+    new = secrets.token_hex(8)
+    return new, new
+
+
 def _pit_records(store, ek):
     """{team: record} - what the hub last pushed, overlaid by saves made here.
 
@@ -678,7 +687,8 @@ def _pit_records(store, ek):
     for team, r in store.pits_for(ek).items():
         have = out.get(team)
         if not have or float(r.get("updatedAt") or 0) >= float(have.get("updatedAt") or 0):
-            out[team] = r
+            # newPhotos is this mirror's bookkeeping for the hub, not the phones'.
+            out[team] = {k: v for k, v in r.items() if k != "newPhotos"}
     return out
 
 
@@ -709,6 +719,12 @@ def _pit_record(store, ek, team, body):
     # the last save of this robot so an edit that keeps them keeps them owed.
     prev = (store.pits_for(ek).get(team) or {})
     owed = set(prev.get("newPhotos") or [])
+    # ...less any the hub already has: once it has collected a photo and pushed
+    # the robot back, the photo is in its record, and sending the bytes again
+    # on every later edit would only cost the pit phones' data.
+    for r in store.latest_part(ek, "pit", []) or []:
+        if isinstance(r, dict) and str(r.get("team")) == str(team):
+            owed -= set((r.get("payload") or {}).get("photos") or [])
     fresh = []
     photos = []
     for src in (payload.get("photos") if isinstance(payload.get("photos"), list) else [])[:PIT_PHOTOS_MAX]:

@@ -111,7 +111,7 @@ class Live:
 def entry(match, team, scout, updated_at, note="", intervals=None):
     return {
         "eventKey": EK, "matchKey": match, "team": team, "scoutId": scout,
-        "deviceId": "test", "alliance": "red", "station": 1, "updatedAt": updated_at,
+        "deviceId": "dev-" + scout, "alliance": "red", "station": 1, "updatedAt": updated_at,
         "payload": {"intervals": intervals if intervals is not None
                     else [{"start": 35.0, "end": 45.0, "phase": "shift1", "intensity": "steady"}],
                     "feedIntervals": [], "defenseIntervals": [], "preload": 3,
@@ -2257,6 +2257,42 @@ def test_vendor_backoff_is_remembered(L):
     return ok
 
 
+def test_a_hand_over_is_one_robot(L):
+    """A HAND OVER's two rows are one robot's match; two phones on it are two."""
+    ok = True
+    iv = lambda a, b: {"start": a, "end": b, "phase": "shift1", "intensity": "steady"}
+    first = entry("m", 7, "OUT", 100.0, note="slow intake", intervals=[iv(10, 20), iv(60, 70)])
+    second = entry("m", 7, "IN", 200.0, intervals=[iv(65, 75), iv(90, 100)])
+    first["deviceId"] = second["deviceId"] = "chair-r1"
+    other = entry("m", 7, "XX", 150.0)
+    out = analytics.one_per_robot([first, second, other])
+    joined = next(e for e in out if e["scoutId"] == "IN")
+    ok &= check("the two halves of a hand over are one row, beside the other phone's",
+                len(out) == 2 and any(e["scoutId"] == "XX" for e in out))
+    ok &= check("with the outgoing scout's runs kept, and an overlap counted once",
+                [(r["start"], r["end"]) for r in joined["payload"]["intervals"]]
+                == [(10, 20), (65, 75), (90, 100)], str(joined["payload"]["intervals"]))
+    ok &= check("and their note", "slow intake" in joined["payload"]["note"]
+                and joined["handedOver"] == ["OUT"])
+
+    # Newer wins, decided by the write itself.
+    mk = f"{EK}_qm1"
+    rec = entry(mk, 104, "NW", 5000.0, note="newer")
+    ok &= check("a newer save applies", L.store.upsert_scout(rec) is True)
+    ok &= check("an older one, or the same one again, does not",
+                L.store.upsert_scout(entry(mk, 104, "NW", 4000.0, note="older")) is False
+                and L.store.upsert_scout(rec) is False)
+    row = next(e for e in L.store.scout_entries(EK, match_key=mk)
+               if e["team"] == 104 and e["scoutId"] == "NW")
+    ok &= check("and the row keeps the newer answers", row["payload"]["note"] == "newer")
+    pit = {"eventKey": EK, "team": 104, "scoutId": "NW", "updatedAt": 5000.0,
+           "payload": {"notes": "newer"}}
+    ok &= check("pit records follow the same rule",
+                L.store.upsert_pit(pit) is True
+                and L.store.upsert_pit({**pit, "updatedAt": 4000.0, "payload": {"notes": "older"}}) is False)
+    return ok
+
+
 def test_after_screen_extras_reach_the_dashboard(L):
     """The optional questions have to survive as observations, not as zeros.
 
@@ -2951,6 +2987,7 @@ def main():
                    test_vendor_backoff_is_remembered,
                    test_collection_path_is_intact,
                    test_after_screen_extras_reach_the_dashboard,
+                   test_a_hand_over_is_one_robot,
                    test_custom_pit_questions,
                    test_one_climb_cannot_also_be_a_fall, test_event_picker_survives_junk,
                    test_env_file_survives_a_failed_write,

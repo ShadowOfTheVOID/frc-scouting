@@ -249,6 +249,30 @@ class Store:
 
     # ------------------------------------------------------------ matches
     def put_match(self, event_key, match_key, **f):
+        """Write one match row, merging `times` with what is already there.
+
+        In one transaction, from the read to the write. Two pollers - TBA and
+        Nexus - write the same row, and the merge below is a read-modify-write:
+        without the lock taken first, both read the old `times`, each merges
+        in its own half, and the second to write wipes out the first's.
+        """
+        c = self.conn()
+        outer = c.in_transaction
+        if not outer:
+            c.execute("BEGIN IMMEDIATE")
+        try:
+            changed = self._put_match(event_key, match_key, **f)
+            if not outer:
+                c.execute("COMMIT")
+        except BaseException:
+            if not outer:
+                c.execute("ROLLBACK")
+            raise
+        # Bumped after the commit, so nobody sees the new version and reads the old row.
+        if changed:
+            self.bump("matches")
+
+    def _put_match(self, event_key, match_key, **f):
         now = time.time()
         # `times` is merged rather than replaced. Nexus supplies
         # estimatedOnFieldTime/estimatedQueueTime (milliseconds) and TBA supplies
@@ -275,13 +299,13 @@ class Store:
         # first turns that into no write at all - which is what keeps the
         # `matches` counter still, and with it every dashboard and phone quiet.
         if prev is not None and _unchanged(prev, **cols):
-            return
+            return False
         self.conn().execute(
             f"INSERT INTO matches(event_key,match_key,{','.join(cols)},updated_at) "
             f"VALUES(?,?,{','.join('?' for _ in cols)},?) "
             f"ON CONFLICT(event_key,match_key) DO UPDATE SET {sets}, updated_at=excluded.updated_at",
             (event_key, match_key, *cols.values(), now))
-        self.bump("matches")
+        return True
 
     def matches(self, event_key):
         rows = self.conn().execute(
@@ -298,18 +322,19 @@ class Store:
     def upsert_scout(self, rec):
         """Last-write-wins on updated_at.  Returns True when the row was applied."""
         now = float(rec.get("updatedAt") or time.time())
-        key = (rec["matchKey"], int(rec["team"]), rec["scoutId"])
+        # "Newer wins" is checked by the write itself (the WHERE on the update),
+        # not by a read before it: two syncs of the same entry landing at once
+        # used to both pass a separate check and then write in either order.
         cur = self.conn().execute(
-            "SELECT updated_at FROM scout_entries WHERE match_key=? AND team=? AND scout_id=?", key).fetchone()
-        if cur and float(cur["updated_at"]) >= now:
-            return False
-        self.conn().execute(
             "INSERT INTO scout_entries(event_key,match_key,team,scout_id,device_id,alliance,station,payload,updated_at)"
             " VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(match_key,team,scout_id) DO UPDATE SET"
             "  event_key=excluded.event_key, device_id=excluded.device_id, alliance=excluded.alliance,"
-            "  station=excluded.station, payload=excluded.payload, updated_at=excluded.updated_at",
+            "  station=excluded.station, payload=excluded.payload, updated_at=excluded.updated_at"
+            " WHERE excluded.updated_at > scout_entries.updated_at",
             (rec["eventKey"], rec["matchKey"], int(rec["team"]), rec["scoutId"], rec.get("deviceId"),
              rec.get("alliance"), rec.get("station"), json.dumps(_payload(rec.get("payload"))), now))
+        if cur.rowcount < 1:
+            return False
         self.bump("scout_entries")
         return True
 
@@ -324,16 +349,16 @@ class Store:
 
     def upsert_pit(self, rec):
         now = float(rec.get("updatedAt") or time.time())
-        cur = self.conn().execute("SELECT updated_at FROM pit_entries WHERE event_key=? AND team=?",
-                                  (rec["eventKey"], int(rec["team"]))).fetchone()
-        if cur and float(cur["updated_at"]) >= now:
-            return False
-        self.conn().execute(
+        # Newer wins, checked by the write itself - see upsert_scout.
+        cur = self.conn().execute(
             "INSERT INTO pit_entries(event_key,team,scout_id,device_id,payload,updated_at) VALUES(?,?,?,?,?,?)"
             " ON CONFLICT(event_key,team) DO UPDATE SET scout_id=excluded.scout_id,"
-            "  device_id=excluded.device_id, payload=excluded.payload, updated_at=excluded.updated_at",
+            "  device_id=excluded.device_id, payload=excluded.payload, updated_at=excluded.updated_at"
+            " WHERE excluded.updated_at > pit_entries.updated_at",
             (rec["eventKey"], int(rec["team"]), rec.get("scoutId"), rec.get("deviceId"),
              json.dumps(_payload(rec.get("payload"))), now))
+        if cur.rowcount < 1:
+            return False
         self.bump("pit_entries")
         return True
 

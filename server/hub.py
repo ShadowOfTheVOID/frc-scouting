@@ -1678,15 +1678,12 @@ class Hub:
         bd = m["breakdown"]
         mult = self.store.get("multipliers") or dict(rules.BUCKET_PRIORS)
         offset = self.clock_offset(m)
-        entries = self.store.scout_entries(ek, match_key=match_key)
-        # A mid-match HAND OVER leaves two rows for one (match, team). Take the
-        # newest rather than whichever the query happened to return first - the
-        # outgoing scout's row is a partial match by definition.
-        by_team = {}
-        for e in entries:
-            cur = by_team.get(e["team"])
-            if cur is None or (e.get("updatedAt") or 0) > (cur.get("updatedAt") or 0):
-                by_team[e["team"]] = e
+        # A mid-match HAND OVER leaves two rows for one (match, team), each with
+        # part of the match. Taking only the newest threw away every run the
+        # outgoing scout logged; one_per_robot joins them.
+        entries = analytics.one_per_robot(self.store.scout_entries(ek, match_key=match_key))
+        # Two phones on one robot on purpose: the newest row stands for it.
+        by_team = {e["team"]: e for e in sorted(entries, key=lambda e: float(e.get("updatedAt") or 0))}
 
         out_rows = []
         for alliance in ("red", "blue"):
@@ -1791,7 +1788,8 @@ class Hub:
             bd = m.get("breakdown")
             if not bd:
                 continue
-            entries = {e["team"]: e for e in self.store.scout_entries(ek, match_key=m["matchKey"])}
+            entries = {e["team"]: e for e in analytics.one_per_robot(
+                self.store.scout_entries(ek, match_key=m["matchKey"]))}
             for alliance in ("red", "blue"):
                 info = bd.get(alliance)
                 if not info:

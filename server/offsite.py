@@ -322,6 +322,12 @@ def _push_once(hub, force=False):
         return {"ok": False, "reason": "no event selected"}
 
     stale = time.time() - float(state.get("pushedAt") or 0) > HEARTBEAT_SECONDS
+    # Photos still owed are sent a batch per push, so a push with nothing new
+    # in the bundle is still worth making while the mirror is missing any -
+    # as long as the last one got some across, so a photo this hub cannot
+    # produce does not turn every minute into a full push.
+    if int(state.get("photosPending") or 0) > 0 and int(state.get("photosSent") or 0) > 0:
+        force = True
     version = hub.store.version_for(*BUNDLE_SCOPES)
     if (state.get("version") == version and state.get("event") == ek
             and not stale and not force):
@@ -363,6 +369,7 @@ def _push_once(hub, force=False):
         "pushedAt": time.time(),
         "revision": body.get("revision"), "bytes": body.get("bytes"),
         "photosPending": max(0, int(body.get("photosMissing") or 0) - sent),
+        "photosSent": sent,
         "error": None, "erroredAt": None,
     })
     hub.store.set("mirrorState", state)
@@ -406,6 +413,12 @@ def pull_questions(hub):
     return True
 
 
+def _forget_push(state):
+    state = dict(state or {})
+    state.update({"digest": None, "version": None})
+    return state, None
+
+
 def pull_pits(hub, rounds=5):
     """Collect pit scouting done on the mirror. Returns how many records landed.
 
@@ -433,6 +446,11 @@ def pull_pits(hub, rounds=5):
         for rec in body.get("records") or []:
             if isinstance(rec, dict) and hub.accept_pit(rec):
                 landed += 1
+        if cursor.get("inboxId") and body.get("inboxId") != cursor.get("inboxId"):
+            # A different inbox is a mirror whose database was rebuilt: it has
+            # none of what was pushed to it, and the digest the hub keeps would
+            # skip every push until something here changed. Forget it.
+            hub.store.mutate("mirrorState", _forget_push, {})
         cursor = {"inboxId": body.get("inboxId"), "seq": body.get("seq") or 0}
         hub.store.set("mirrorPitCursor", cursor)
         if not body.get("more"):

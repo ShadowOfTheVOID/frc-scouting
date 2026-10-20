@@ -558,7 +558,9 @@ function renderSpeed() {
     }
   }
   const iv = pendingRun();
-  const shown = iv ? iv.intensity : rate;
+  // Mid-hold the run being held is the one at `rate`; the last run's speed is
+  // only what is shown once the hand is off the pad.
+  const shown = padHeld ? rate : iv ? iv.intensity : rate;
   for (const d of el.children) d.classList.toggle('on', d.dataset.id === shown);
   $('#speed').classList.toggle('dim', padHeld);
   $('#speedQ').textContent = iv && !padHeld ? 'How fast was that?' : 'How fast?';
@@ -655,7 +657,7 @@ function setMode(on) {
   simple = !!on;
   try { localStorage.setItem('inputMode', simple ? 'simple' : 'pro'); } catch {}
   pending = null;
-  if (entry) entry.payload.inputMode = simple ? 'simple' : 'pro';
+  if (entry) { entry.payload.inputMode = simple ? 'simple' : 'pro'; autosave(); }
   buzz();
   paintMode();
   placeLive();
@@ -1296,18 +1298,10 @@ async function main() {
   // for why the timing of this one matters more than it looks.
   fs.offerHomeScreen({ el: $('#a2hs') });
 
-  // Right pad records shooting; the two left utility buttons record their own runs.
-  // The question moves to a new run only once one is recorded. Clearing it on
-  // touch let a brush too short to count wipe the question about the last run.
-  holdRecorder($('#holdpad'), () => entry.payload.intervals, paintHold, {
-    onRecord: (i) => { if (simple) pending = i; },
-  });
-  holdRecorder($('#btnFeeding'), () => entry.payload.feedIntervals,
-    (on) => $('#btnFeeding').classList.toggle('on', on));
-  holdRecorder($('#btnDefending'), () => entry.payload.defenseIntervals,
-    (on) => $('#btnDefending').classList.toggle('on', on));
-
   // Tapping the pad before the match starts the clock; that is the only start control.
+  // Bound before the pad's recorder, so a press that starts the clock is also
+  // the start of a run when it is held: a robot shooting from the first second
+  // of auto is not missed.
   $('#holdpad').addEventListener('pointerdown', () => {
     if (clock.running || clock.elapsed() !== 0 || !entry || !entry.team) return;
     clock.start(); buzz(30);
@@ -1321,6 +1315,18 @@ async function main() {
       }).catch(() => { /* offline: our own clock stands */ });
     }
   });
+
+  // Right pad records shooting; the two left utility buttons record their own runs.
+  // The question moves to a new run only once one is recorded. Clearing it on
+  // touch let a brush too short to count wipe the question about the last run.
+  holdRecorder($('#holdpad'), () => entry.payload.intervals, paintHold, {
+    onRecord: (i) => { if (simple) pending = i; },
+  });
+  holdRecorder($('#btnFeeding'), () => entry.payload.feedIntervals,
+    (on) => $('#btnFeeding').classList.toggle('on', on));
+  holdRecorder($('#btnDefending'), () => entry.payload.defenseIntervals,
+    (on) => $('#btnDefending').classList.toggle('on', on));
+
 
   // Undo the most recent run of ANY kind. It used to pop the shooting list
   // only, so a mis-held FEEDING or DEFENDING pad could not be taken back at all.

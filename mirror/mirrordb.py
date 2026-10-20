@@ -226,7 +226,8 @@ class Store:
 
     # ----------------------------------------------------------- pit inbox
     def put_pit(self, rec):
-        """Keep the newest save for one robot. Returns its new seq.
+        """Keep the newest save for one robot. Returns its new seq, or None
+        when a newer save of the same robot is already here.
 
         Replaced rather than updated, so the row takes a fresh seq and the hub,
         asking for everything after the last seq it collected, picks it up.
@@ -237,6 +238,13 @@ class Store:
             # the two statements, and a crash never loses the save.
             c.execute("BEGIN IMMEDIATE")
             try:
+                # Two phones saving the same robot in the same second can reach
+                # here in either order; the later save must not be undone.
+                have = c.execute("SELECT updated_at FROM pit_inbox WHERE event_key=? AND team=?",
+                                 (rec["eventKey"], int(rec["team"]))).fetchone()
+                if have and float(have["updated_at"]) > float(rec["updatedAt"]):
+                    c.execute("ROLLBACK")
+                    return None
                 c.execute("DELETE FROM pit_inbox WHERE event_key=? AND team=?",
                           (rec["eventKey"], int(rec["team"])))
                 cur = c.execute(
