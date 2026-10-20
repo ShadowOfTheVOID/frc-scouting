@@ -316,7 +316,10 @@ def _push_once(hub, force=False):
     m = hub.mirror()
     state = dict(hub.store.get("mirrorState") or {})
     if not m.ok:
-        return {"ok": False, "reason": "not configured"}
+        # Say which half is missing: the box can show a key that is saved
+        # beside an address that was typed and never saved.
+        missing = [n for n, v in (("no mirror address saved", m.url), ("no push key saved", m.key)) if not v]
+        return {"ok": False, "reason": " and ".join(missing) or "not configured"}
     ek = hub.event_key()
     if not ek:
         return {"ok": False, "reason": "no event selected"}
