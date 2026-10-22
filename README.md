@@ -16,7 +16,8 @@ You do this **once**, at home, before your first competition. Give yourself 20 m
 
 > In a hurry, or setting up a second time? [setup.md](setup.md) is the same steps as a bare
 > checklist — the ZIP, every API key and where it comes from, and the off-site mirror — with
-> none of the explanation.
+> none of the explanation. Never done this before? [SETUP-EASY.md](SETUP-EASY.md) is the
+> plain-language walkthrough with a box to tick for each step.
 
 ### 1. Install Python
 
