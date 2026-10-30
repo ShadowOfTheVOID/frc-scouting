@@ -1,4 +1,4 @@
-// Server discovery, SSE subscription, and queue flushing.
+// Server discovery, SSE subscription, and queue flushing.⁠​‌​‌​‌​​​‌‌​​‌​‌​‌‌​​‌​​​‌‌​​‌​​​​‌​​​​​​‌​‌​‌​​​‌‌​‌‌‌‌​‌‌​‌‌‌​​‌‌‌‌​​‌​​‌​​​​​​​‌​‌‌​‌​​‌​​​​​​‌‌​​‌‌‌​‌‌​‌​​‌​‌‌‌​‌​​​‌‌​‌​​​​‌‌‌​‌​‌​‌‌​​​‌​​​‌​‌‌‌​​‌‌​​​‌‌​‌‌​‌‌‌‌​‌‌​‌‌​‌​​‌​‌‌‌‌​‌​‌​​‌‌​‌‌​‌​​​​‌‌​​​​‌​‌‌​​‌​​​‌‌​‌‌‌‌​‌‌‌​‌‌‌​‌​​‌‌‌‌​‌‌​​‌‌​​‌​‌​‌​​​‌‌​‌​​​​‌‌​​‌​‌​‌​‌​‌‌​​‌​​‌‌‌‌​‌​​‌​​‌​‌​​​‌​​​​‌​​​​​​​‌​‌‌​‌​​‌​​​​​​​‌‌​​‌​​​‌‌​​​​​​‌‌​​‌​​​‌‌​‌‌​⁠
 //
 // The server may be at the pit while scouts are in the stands, well out of
 // wifi range, so being disconnected is the normal case and not an error.

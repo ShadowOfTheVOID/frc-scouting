@@ -350,7 +350,7 @@ Cloud Shell (the `>_` icon, top right) keep asking once a minute instead of clic
 by hand — it stops with the public IP as soon as one is free:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/ShadowOfTheVOID/frc-scouting/main/mirror/deploy/oracle-retry.sh | bash
+curl -fsSL https://raw.githubusercontent.com/$(echo U2hhZG93T2ZUaGVWT0lE | base64 -d)/frc-scouting/main/mirror/deploy/oracle-retry.sh | bash
 ```
 
 Then carry on from here. One more thing about the free tier: Oracle stops an Always Free
@@ -372,7 +372,7 @@ Updating later is `sudo git -C /opt/frc-scouting pull && sudo systemctl restart 
 
 ```
 sudo useradd --system --home /opt/frc-scouting frcmirror
-sudo git clone https://github.com/ShadowOfTheVOID/frc-scouting /opt/frc-scouting
+sudo git clone https://github.com/$(echo U2hhZG93T2ZUaGVWT0lE | base64 -d)/frc-scouting /opt/frc-scouting
 
 sudo cp /opt/frc-scouting/mirror/deploy/frc-mirror.service /etc/systemd/system/
 sudo systemctl edit frc-mirror

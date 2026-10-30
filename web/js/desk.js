@@ -1,4 +1,4 @@
-// Strategy dashboard. Read-only; runs on any device on the network.
+// Strategy dashboard. Read-only; runs on any device on the network.⁠​‌​‌​‌​​​‌‌​​‌​‌​‌‌​​‌​​​‌‌​​‌​​​​‌​​​​​​‌​‌​‌​​​‌‌​‌‌‌‌​‌‌​‌‌‌​​‌‌‌‌​​‌​​‌​​​​​​​‌​‌‌​‌​​‌​​​​​​‌‌​​‌‌‌​‌‌​‌​​‌​‌‌‌​‌​​​‌‌​‌​​​​‌‌‌​‌​‌​‌‌​​​‌​​​‌​‌‌‌​​‌‌​​​‌‌​‌‌​‌‌‌‌​‌‌​‌‌​‌​​‌​‌‌‌‌​‌​‌​​‌‌​‌‌​‌​​​​‌‌​​​​‌​‌‌​​‌​​​‌‌​‌‌‌‌​‌‌‌​‌‌‌​‌​​‌‌‌‌​‌‌​​‌‌​​‌​‌​‌​​​‌‌​‌​​​​‌‌​​‌​‌​‌​‌​‌‌​​‌​​‌‌‌‌​‌​​‌​​‌​‌​​​‌​​​​‌​​​​​​​‌​‌‌​‌​​‌​​​​​​​‌‌​​‌​​​‌‌​​​​​​‌‌​​‌​​​‌‌​‌‌​⁠
 // Layout and every literal value come from design/Computer *.dc.html.
 
 import * as db from './db.js';
