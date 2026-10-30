@@ -6,7 +6,7 @@
 # the >_ icon at the top right of the console, which already has the oci tool
 # signed in as you. Nothing to install:
 #
-#   curl -fsSL https://raw.githubusercontent.com/ShadowOfTheVOID/frc-scouting/main/mirror/deploy/oracle-retry.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/YOUR_GITHUB_USER/frc-scouting/main/mirror/deploy/oracle-retry.sh | bash
 #
 # It needs the network from setup.md first: a VCN with a subnet named
 # public-subnet. It alternates between the two free shapes, stops the moment

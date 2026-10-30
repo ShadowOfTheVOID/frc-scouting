@@ -50,7 +50,7 @@ something a tired 15-year-old can type; pick the push key with a generator.
 
 ```
 sudo useradd --system --home /opt/frc-scouting frcmirror
-sudo git clone https://github.com/ShadowOfTheVOID/frc-scouting /opt/frc-scouting
+sudo git clone https://github.com/YOUR_GITHUB_USER/frc-scouting /opt/frc-scouting
 
 sudo cp mirror/deploy/frc-mirror.service /etc/systemd/system/
 sudo systemctl edit frc-mirror        # add the two Environment= lines
