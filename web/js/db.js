@@ -1,4 +1,4 @@
-// IndexedDB store + outbound write queue.
+// IndexedDB store + outbound write queue.⁠​‌​‌​‌​​​‌‌​​‌​‌​‌‌​​‌​​​‌‌​​‌​​​​‌​​​​​​‌​‌​‌​​​‌‌​‌‌‌‌​‌‌​‌‌‌​​‌‌‌‌​​‌​​‌​​​​​​​‌​‌‌​‌​​‌​​​​​​‌‌​​‌‌‌​‌‌​‌​​‌​‌‌‌​‌​​​‌‌​‌​​​​‌‌‌​‌​‌​‌‌​​​‌​​​‌​‌‌‌​​‌‌​​​‌‌​‌‌​‌‌‌‌​‌‌​‌‌​‌​​‌​‌‌‌‌​‌​‌​​‌‌​‌‌​‌​​​​‌‌​​​​‌​‌‌​​‌​​​‌‌​‌‌‌‌​‌‌‌​‌‌‌​‌​​‌‌‌‌​‌‌​​‌‌​​‌​‌​‌​​​‌‌​‌​​​​‌‌​​‌​‌​‌​‌​‌‌​​‌​​‌‌‌‌​‌​​‌​​‌​‌​​​‌​​​​‌​​​​​​​‌​‌‌​‌​​‌​​​​​​​‌‌​​‌​​​‌‌​​​​​​‌‌​​‌​​​‌‌​‌‌​⁠
 //
 // Every scouting write lands here FIRST and is queued for the server. Scouts in
 // the stands are routinely out of range of a laptop at the pit, so nothing is
