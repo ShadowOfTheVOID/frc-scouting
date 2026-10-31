@@ -960,7 +960,8 @@ async function testKeys() {
                  warn: ['!', 'var(--amber)'], down: ['?', 'var(--t4)'],
                  unset: ['·', 'var(--t6)'] };
   const NAME = { tba: 'The Blue Alliance', nexus: 'Nexus', frcEvents: 'FRC Events',
-                 lovat: 'Lovat', match13: 'Match 13', ai: 'AI model', mirror: 'Off-site mirror' };
+                 lovat: 'Lovat', match13: 'Match 13', statbotics: 'Statbotics (no key)',
+                 ai: 'AI model', mirror: 'Off-site mirror' };
   try {
     const res = await admin('/api/keytest', { method: 'POST', body: '{}' });
     const out = $('#testOut');

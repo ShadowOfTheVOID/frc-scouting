@@ -257,9 +257,9 @@ class Hub:
             # be down (sources.Statbotics backs off on its own) and the honest
             # report is which of those two states we are in.
             svc("statbotics", True,
-                "unreachable, backing off" if self.statbotics.down_until > now
+                (self.statbotics.problem() or "backing off") if self.statbotics.down_until > now
                 else age(self.status["statbotics"]),
-                not self.status["statbotics"]),
+                bool(self.statbotics.problem()) or not self.status["statbotics"]),
             svc("lovat", bool(lv.ok),
                 ("rate limited, backing off" if lv.down_until > now
                  else age(self.status["lovat"])) if lv.ok else "no api key",
@@ -479,6 +479,7 @@ class Hub:
             "frcEvents": lambda: self.frc_events().verify(int(season) if season else 2026),
             "lovat": lambda: self.lovat().verify(ek),
             "match13": lambda: self.match13().verify(ek),
+            "statbotics": lambda: self.statbotics.verify(ek, int(season) if season else 2026),
             "ai": lambda: self.ai().verify(),
             # The mirror is the only one of these that sends anything out
             # rather than fetching, so "does the key work" is worth knowing
@@ -586,6 +587,9 @@ class Hub:
         # not at another is exactly the failure this catches.
         fresh = test.get("eventKey") == ek and ek
         states = test.get("states") or {} if fresh else {}
+        # Statbotics is in Test keys only to say whether it is up. It has no
+        # key, so it must not tick off the step that is about keys.
+        states = {k: v for k, v in states.items() if k != "statbotics"}
         devices = self.store.get("devices") or {}
         urls = discover.urls(port) if port else []
         lan = urls[0] if urls else (f"http://localhost:{port}" if port else "the hub address")
@@ -625,7 +629,8 @@ class Hub:
         # is the only step that reports whether it works, which is the
         # difference nothing else in the app can see.
         names = {"tba": "The Blue Alliance", "nexus": "Nexus", "frcEvents": "FRC Events",
-                 "lovat": "Lovat", "match13": "Match 13", "ai": "the AI model",
+                 "lovat": "Lovat", "match13": "Match 13", "statbotics": "Statbotics",
+                 "ai": "the AI model",
                  "mirror": "the mirror"}
         listed = lambda want: ", ".join(names.get(k, k) for k, v in sorted(states.items())
                                         if v == want)

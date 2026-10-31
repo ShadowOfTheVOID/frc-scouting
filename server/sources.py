@@ -332,15 +332,51 @@ class Statbotics:
 
     def __init__(self):
         self.down_until = 0.0
+        #: The HTTP status of the last answer: 0 for no answer at all, a 5xx
+        #: for Statbotics answering with its own error. Two different problems
+        #: (this laptop's internet, or their servers) that read the same
+        #: everywhere else, so the diagnostics line says which.
+        self.last_status = None
 
     def _get(self, path):
         if time.time() < self.down_until:
             return None
         body, status = _request(STATBOTICS_BASE + path, timeout=8)
+        self.last_status = status
+        # A 500 comes back with an empty `[]` or `{}` body, which is not data.
+        if status != 200 and status != 304:
+            body = None
         if body is None:
             # back off for a while rather than hammering a service that is 500ing
             self.down_until = time.time() + 300
         return body
+
+    def problem(self):
+        """What is wrong right now, in words, or None if the last answer was good."""
+        if self.last_status in (None, 200, 304):
+            return None
+        if self.last_status == 0:
+            return "could not reach Statbotics - check this laptop is online"
+        return (f"Statbotics is answering with errors (HTTP {self.last_status}) - "
+                "their servers, not anything here. Retrying every 5 minutes")
+
+    def verify(self, event_key=None, year=2026):
+        """For the Test keys button: is Statbotics serving data right now?
+
+        There is no key to be wrong, so this is only ever ok, warn or down.
+        """
+        path = "/team_events?" + urllib.parse.urlencode(
+            {"event": event_key, "year": year, "limit": 200} if event_key
+            else {"team": 254, "year": year, "limit": 1})
+        body, status = _request(STATBOTICS_BASE + path, timeout=10)
+        self.last_status = status
+        if status == 200 and isinstance(body, list):
+            if event_key and not body:
+                return verdict("warn", f"Statbotics is up, but has nothing for {event_key} yet")
+            return verdict("ok", f"Statbotics is up - {len(body)} team(s) for {event_key}"
+                           if event_key else "Statbotics is up")
+        self.down_until = time.time() + 300
+        return verdict("down", self.problem() or f"Statbotics answered HTTP {status}")
 
     def team_year(self, team, year=2026):
         return self._get(f"/team_year/{team}/{year}")

@@ -1221,10 +1221,28 @@ def test_key_hygiene(L):
     for f in ("nexusKey", "lovatKey", "aiKey", "frcEventsUser", "frcEventsToken", "mirrorKey"):
         L.req("/api/config", {f: ""})
     L.req("/api/config", {"aiModel": "none", "mirrorUrl": ""})
-    code, r = L.req("/api/keytest", {})
+    # Statbotics has no key and is always asked; it is stubbed here, answering
+    # the way it really did while this was written: HTTP 500 with a `[]` body.
+    keep = sources._request
+    sources._request = lambda *a, **k: ([], 500)
+    try:
+        code, r = L.req("/api/keytest", {})
+    finally:
+        sources._request = keep
+    sb = r["checked"].pop("statbotics", {})
     ok &= check("testing the keys reports every unset one as unset, not as broken",
                 code == 200 and all(v["state"] == "unset" for v in r["checked"].values()),
                 f"({r.get('checked')})")
+    ok &= check("a Statbotics that answers 500 is called down, and named as their end",
+                sb.get("state") == "down" and "HTTP 500" in sb.get("detail", ""), f"({sb})")
+    sources._request = lambda *a, **k: ([], 500)
+    try:
+        L.hub.statbotics.down_until = 0.0
+        ok &= check("and its empty error body is not read as data",
+                    L.hub.statbotics._get("/team_events?event=x") is None)
+    finally:
+        sources._request = keep
+        L.hub.statbotics.down_until = 0.0
 
     L.store.set("eventKey", was)      # hand the shared harness back its event
     return ok
