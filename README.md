@@ -542,8 +542,8 @@ time:
 - **Anyone can read the numbers from anywhere.** A lead in the stands on cell data, a mentor at
   home, a driver in the queue line — none of them have to be on venue wifi. The numbers are
   read-only over there.
-- **Pit scouting happens there.** Pit scouts use the mirror on their own phones, and the hub
-  collects what they save once a minute — see [Pit scouting](#pit-scouting).
+- **Pit scouting can happen there.** Pit scouts can use the mirror on their own phones, and the
+  hub collects what they save once a minute — see [Pit scouting](#pit-scouting).
 
 The hub always starts the conversation: it pushes the event, and it asks for pit scouting.
 The mirror never calls the hub. That is the only direction that works from behind a venue's
@@ -623,18 +623,27 @@ they have got it.
 
 ## Pit scouting
 
-Pit scouting is done on your team's mirror site (for example
-`scouting.systemoverload.org`), not on the hub — students open it on their own phones, enter
-the team passcode and tap **Pit scouting**. They get the venue's pit map from Nexus, a form per
-robot, and a blue *AK is on it* marker so two of them never walk to the same pit. The hub
-collects everything once a minute, and it shows on the dashboard. Answers are kept on the phone
-until they reach the mirror, so a pit aisle with no signal loses nothing.
+Press **Scout** on the hub admin page and pick **Pit scouting** (or open `/pit` on any phone
+on the hub's wifi). **Match scouting** is the other choice, and goes to the usual `/scout`
+screen. Pit scouts get the venue's pit map from Nexus, a form per robot, and a blue *AK is on
+it* marker so two of them never walk to the same pit. Saves are kept on the phone until they
+reach the hub, so a pit aisle with no signal loses nothing.
 
-The **Pit questions** tab on the mirror adds questions of your own — pick one, yes or no, a
-number, or a short answer. Each gets its own column in the pit spreadsheet, and renaming one
-keeps the answers already given.
+The **Pit questions** tab on the dashboard (under Setup) decides what the form asks:
 
-Pit scouting needs the mirror set up with a passcode — see [mirror/README.md](mirror/README.md).
+- **Built-in questions** — drivetrain, shooter, climb, and the rest. **Remove** any you do not
+  want asked; **Put back** brings one back. Answers already given are kept, and a removed
+  question loses its column in the pit spreadsheet.
+- **Your own questions** — pick one, yes or no, a number, or a short answer. Each gets its own
+  column in the pit spreadsheet, and renaming one keeps the answers already given.
+
+Changing them needs the strategy passcode once one is set. Phones pick up a save within a few
+seconds.
+
+Pit scouting can also be done on your team's mirror site, over students' own data — see
+[mirror/README.md](mirror/README.md). The hub collects what is saved there once a minute.
+Questions edited on the mirror replace the hub's custom questions when saved there; removed
+built-in questions are set on the hub only.
 
 ## The picklist
 

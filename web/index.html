@@ -96,7 +96,12 @@
       <span class="sp"></span>
       <div style="display:flex;gap:8px;align-items:center">
         <button type="button" class="themebtn" data-theme-toggle></button>
-        <a class="lk" href="/scout">Scout</a>
+        <details class="scoutpick"><summary class="lk">Scout</summary>
+          <div class="menu">
+            <a href="/scout">Match scouting<span>Watch one robot through a match, from the stands</span></a>
+            <a href="/pit">Pit scouting<span>Walk the pits and fill in a form per robot</span></a>
+          </div>
+        </details>
         <a class="lk" href="/dashboard">Dashboard</a>
         <a class="lk" href="/join">Join QR</a>
       </div>
@@ -274,8 +279,8 @@
         the solved numbers — and pushes it to a site your team hosts. Two things come of that:
         the data survives this laptop, and anyone with the mirror passcode can read the numbers
         from a phone on cell data, off the venue wifi entirely. The numbers are read-only over
-        there. <b>Pit scouting is done on the mirror</b>, along with your own pit questions, and
-        this hub collects both every minute. Nothing is sent while the event has not changed.</div>
+        there. Pit scouting saved on the mirror, and pit questions edited there, are collected
+        by this hub every minute — beside the pit scouting and questions done here. Nothing is sent while the event has not changed.</div>
       <div class="form">
         <div class="f"><label>Mirror address</label>
           <input id="mirrorUrl" placeholder="https://scouting.systemoverload.org" autocomplete="off"

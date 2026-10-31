@@ -40,6 +40,7 @@ import firewall
 import keys as keyhygiene
 import lovat as lovat_report
 import offsite
+import pitquestions
 import rules
 import solve
 import sources
@@ -105,6 +106,7 @@ AI_ASK_TOKENS = 3000
 # 304s left to give.
 STATE_SCOPES = ("events", "teams", "matches", "flags", "pit_entries",
                 "kv:nexusLive", "kv:pits", "kv:pitMap", "kv:inspection", "kv:pitQuestions",
+                "kv:pitClaims", "kv:pitHidden",
                 "kv:alliances", "kv:seats", "kv:matchClocks", "kv:clockFixes",
                 "kv:rankings", "kv:epa", "kv:earlyScores")
 ANALYTICS_SCOPES = ("matches", "teams", "scout_entries", "solved",
@@ -1554,6 +1556,46 @@ class Hub:
             return (seats if touched else None), None
         self.store.mutate("seats", apply, {})
 
+    # --------------------------------------------------------- pit claims
+    #: How long an open pit form holds its robot with nobody touching it. The
+    #: tablet renews its claim every minute while the form is open, so this
+    #: is three missed renewals - a tablet that went to sleep or out of range
+    #: lets go of the robot within a few minutes rather than for the day.
+    PIT_CLAIM_SECONDS = 180
+
+    def pit_claims(self, ek):
+        """{team: {deviceId: {scoutId, at}}} - who has each robot's form open now.
+
+        More than one tablet can hold the same robot: a second scout is told
+        about the first, not stopped, and neither claim may replace the other.
+        """
+        cut = time.time() - self.PIT_CLAIM_SECONDS
+        return _fresh_claims(self.store.get("pitClaims:%s" % ek) or {}, cut)
+
+    def claim_pit(self, ek, team, device, scout, release=False):
+        """Open (or renew) a robot's pit form for one tablet, or let it go.
+
+        A claim is a marker, not a lock: a second scout who opens the same
+        robot is told who has it and may carry on - the hub would rather two
+        people scouted a pit than nobody did because a tablet died holding it.
+        A tablet only ever adds or removes its own claim. Returns the claims as
+        they now stand.
+        """
+        key, now = str(team), time.time()
+        cut = now - self.PIT_CLAIM_SECONDS
+
+        def apply(cur):
+            cur = _fresh_claims(cur or {}, cut)
+            holders = cur.setdefault(key, {})
+            if release:
+                holders.pop(device, None)
+            else:
+                holders[device] = {"scoutId": scout, "at": now}
+            if not holders:
+                del cur[key]
+            return cur, cur
+        return self.store.mutate("pitClaims:%s" % ek, apply, default=dict)
+
     def accept_pit(self, rec):
         """Merge one pit record collected from the mirror. True if it landed.
 
@@ -2033,6 +2075,19 @@ def _ai_provider(h, body):
     return h.ai().provider
 
 
+def _fresh_claims(claims, cut):
+    """Pit claims with every holder older than `cut` dropped, and empty teams."""
+    out = {}
+    for team, holders in (claims or {}).items():
+        if not isinstance(holders, dict):
+            continue
+        live = {d: c for d, c in holders.items()
+                if isinstance(c, dict) and (c.get("at") or 0) > cut}
+        if live:
+            out[team] = live
+    return out
+
+
 def _mirror_url(raw):
     """What somebody typed into the mirror box, as an address that works.
 
@@ -2299,17 +2354,20 @@ def _csv_table(h, ek, table):
     if table == "pit":
         # The team's own questions follow the built-in ones, a column each,
         # headed by the question as it is worded now.
+        # Built-in questions the team removed lose their column too; answers
+        # given before the removal stay in the full JSON export.
         extra = [q for q in (h.store.get("pitQuestions") or []) if isinstance(q, dict)]
-        header = ["team", "scoutId", "drivetrain", "shooter", "maxClimb", "stockpile",
-                  "groundPickup", "weight", "autos", "notes", "photos"] + [q["label"] for q in extra]
+        hidden = set(h.store.get("pitHidden") or [])
+        cols = [f for f in ("drivetrain", "shooter", "maxClimb", "stockpile", "groundPickup",
+                            "weight", "autos", "notes", "photos") if f not in hidden]
+        header = ["team", "scoutId"] + cols + [q["label"] for q in extra]
         rows = []
         for e in sorted(h.store.pit_entries(ek), key=lambda x: x["team"]):
             p = e.get("payload") or {}
             custom = p.get("custom") if isinstance(p.get("custom"), dict) else {}
-            rows.append([e["team"], e.get("scoutId"), p.get("drivetrain"), p.get("shooter"),
-                         p.get("maxClimb"), p.get("stockpile"), p.get("groundPickup"),
-                         p.get("weight"), p.get("autos"), p.get("notes"),
-                         len(p.get("photos") or [])] + [custom.get(q["id"]) for q in extra])
+            rows.append([e["team"], e.get("scoutId")]
+                        + [len(p.get("photos") or []) if f == "photos" else p.get(f) for f in cols]
+                        + [custom.get(q["id"]) for q in extra])
         return header, rows
 
     raise KeyError(table)
@@ -3000,6 +3058,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._file("dashboard.html")
         if p == "/join":
             return self._file("join.html")
+        if p == "/pit":
+            return self._file("pit.html")
         if p == "/api/stream":
             return self._stream()
         if p == "/api/config":
@@ -3087,6 +3147,11 @@ class Handler(BaseHTTPRequestHandler):
                 # rather than on their own route so the pit tablet has them in
                 # the copy of this it keeps for when the wifi goes.
                 "pitQuestions": h.store.get("pitQuestions") or [],
+                # Built-in questions the team removed from its pit forms.
+                "pitHidden": h.store.get("pitHidden") or [],
+                # Which robots a pit scout has open right now, so two of them
+                # do not walk to the same pit. Stale ones are left out.
+                "pitClaims": h.pit_claims(ek),
                 "rankings": h.event_data("rankings", ek, {}),
                 "epa": h.event_data("epa", ek, {}),
                 "earlyScores": h.event_data("earlyScores", ek, {}),
@@ -3345,6 +3410,45 @@ class Handler(BaseHTTPRequestHandler):
                 time.sleep(0.6)                  # blunt the guessing rate
                 return self._json({"ok": False}, 403)
             return self._json({"ok": True, "token": h.issue_token()})
+
+        if p == "/api/pitclaim":
+            # A pit tablet opening a robot's form, renewing it once a minute
+            # while the form stays open, and letting it go on close or save.
+            ek = h.event_key()
+            team = _int(body.get("team"))
+            device = str(body.get("deviceId") or "")[:64]
+            if not ek or not team or team <= 0 or not device:
+                return self._json({"error": "needs an event, a team and a deviceId"}, 400)
+            scout = str(body.get("scoutId") or "pit")[:16]
+            claims = h.claim_pit(ek, team, device, scout, release=bool(body.get("release")))
+            h.broadcast("pitClaims", {"team": team})
+            return self._json({"ok": True, "claims": claims, "serverTime": time.time()})
+
+        if p == "/api/pitquestions":
+            # The same gate as the picklist: open on a hub with no strategy
+            # passcode, and behind it once one is set. Edited from the
+            # dashboard's Pit questions tab. A mirror, if there is one, can
+            # still edit them too: its next newer save replaces these.
+            if not self._unlocked():
+                return self._json({"error": "Pit questions can only be changed with the "
+                                            "strategy passcode."}, 403)
+            qs, err = pitquestions.clean(body.get("questions"),
+                                         h.store.get("pitQuestions") or [])
+            if err:
+                return self._json({"error": err}, 400)
+            # The built-in questions the team removed. Sent with every save
+            # from the dashboard; a client that leaves it out changes nothing.
+            hidden = h.store.get("pitHidden") or []
+            if "hiddenBuiltins" in body:
+                hidden = pitquestions.clean_hidden(body.get("hiddenBuiltins"))
+                h.store.set("pitHidden", hidden)
+            h.store.set("pitQuestions", qs)
+            h.note("info", "pit questions saved: %d custom, %d built-in removed"
+                   % (len(qs), len(hidden)))
+            # The pit tablets refetch /api/state on this, rather than waiting
+            # out their thirty-second poll.
+            h.broadcast("pitQuestions", {"count": len(qs)})
+            return self._json({"ok": True, "questions": qs, "hiddenBuiltins": hidden})
 
         if p == "/api/picklist":
             if not self._unlocked():

@@ -1489,12 +1489,11 @@ function renderTeamDetail() {
   wireAi('#aiNotesGo', '#aiNotesBody', `notes/${team}`, () => ({}), 'Not summarised yet.');
   const p = (pit && pit.payload) || null;
   $('#tdSide').innerHTML = `<div class="eyebrow">From the pit</div>` + (p ? `
-    <div class="kv"><span>drivetrain</span><b>${esc(p.drivetrain || '—')}</b></div>
-    <div class="kv"><span>shooter</span><b>${esc(p.shooter || '—')}</b></div>
-    <div class="kv"><span>claims climb</span><b>${esc(p.maxClimb || '—')}</b></div>
-    <div class="kv"><span>can stockpile</span><b>${esc(p.stockpile || '—')}</b></div>
-    <div class="kv"><span>ground pickup</span><b>${esc(p.groundPickup || '—')}</b></div>
-    <div class="kv"><span>weight</span><b>${esc(p.weight || '—')}</b></div>
+    ${[['drivetrain', 'drivetrain'], ['shooter', 'shooter'], ['maxClimb', 'claims climb'],
+       ['stockpile', 'can stockpile'], ['groundPickup', 'ground pickup'], ['weight', 'weight']]
+      // A removed built-in question is left off, unless it was answered before.
+      .filter(([f]) => !savedHidden().includes(f) || p[f])
+      .map(([f, l]) => `<div class="kv"><span>${l}</span><b>${esc(p[f] || '—')}</b></div>`).join('')}
     ${pitCustomRows(p)}
     <div style="margin-top:8px" class="hint">${esc(p.autos || '')}</div>
     <div style="margin-top:6px" class="hint">${esc(p.notes || '')}</div>
@@ -1921,10 +1920,55 @@ function renderServer() {
 // parsed and inserted the markup for all ten, and re-bound every handler on
 // them, when nine were display:none. Scatter plots with a circle per team,
 // full team tables, the log listing - all of it, for nobody.
-// The team's own pit questions are edited on the mirror (and pit scouting is
-// done there); the hub collects both once a minute. Here they only label the
-// answers on a team's page.
+// ═══════════════════════════════════════════════════════════ PIT QUESTIONS
+// The team's own pit questions. Edited as a working copy and saved as a whole.
+// The tab is deliberately not in TAB_RENDER: the ten-second refresh redrawing
+// it would throw away whatever is half-typed. It is drawn when it is opened,
+// and again after each change made on it.
+const Q_TYPES = [['choice', 'Pick one'], ['yesno', 'Yes or no'], ['number', 'Number'], ['text', 'Short answer']];
+const Q_MAX = 30;
+let QDRAFT = null;          // the working copy; null means "the same as the hub"
+let HDRAFT = null;          // built-in fields removed, as a working copy; null likewise
+let qSaving = false;
+
+/** The questions every pit form starts with: field, wording, and what it offers. */
+const PIT_BUILTIN = [
+  ['drivetrain', 'Drivetrain', ['swerve', 'tank', 'mecanum', 'other']],
+  ['shooter', 'How do they shoot?', ['drum', 'flywheel', 'dump', 'none']],
+  ['maxClimb', 'Highest tower level they claim', ['L3', 'L2', 'L1', 'none']],
+  ['stockpile', 'Can they hold fuel through an inactive shift?', ['yes', 'some', 'no']],
+  ['groundPickup', 'Ground pickup?', ['yes', 'no']],
+  ['autos', 'Auto routines', null],
+  ['weight', 'Weight (lb)', null],
+  ['notes', 'Notes', null],
+  ['photos', 'Photos', null],
+];
+
 const savedQuestions = () => ((STATE && STATE.pitQuestions) || []);
+const savedHidden = () => ((STATE && STATE.pitHidden) || []);
+const hiddenNow = () => new Set(HDRAFT || savedHidden());
+const qChanged = () => (QDRAFT !== null && JSON.stringify(QDRAFT) !== JSON.stringify(savedQuestions()))
+  || (HDRAFT !== null && JSON.stringify([...HDRAFT].sort()) !== JSON.stringify([...savedHidden()].sort()));
+
+function renderBuiltins() {
+  const locked = PIN_SET && !CAN_EDIT;
+  const hidden = hiddenNow();
+  $('#qBuiltin').innerHTML = PIT_BUILTIN.map(([f, label]) => {
+    const off = hidden.has(f);
+    return `<div class="qcard builtin${off ? ' off' : ''}">
+      <div class="blbl">${esc(label)}</div>
+      <div class="tools"><button class="qbtn sm" data-f="${f}"${locked ? ' disabled' : ''}>${off ? 'Put back' : 'Remove'}</button></div>
+    </div>`;
+  }).join('');
+  for (const b of $$('#qBuiltin [data-f]')) {
+    b.onclick = () => {
+      const h = hiddenNow();
+      if (h.has(b.dataset.f)) h.delete(b.dataset.f); else h.add(b.dataset.f);
+      HDRAFT = PIT_BUILTIN.map(([f]) => f).filter((f) => h.has(f));
+      renderBuiltins(); paintQState(); renderQPreview();
+    };
+  }
+}
 
 /** Custom answers on a team's page, labelled with today's wording. */
 function pitCustomRows(p) {
@@ -1932,6 +1976,114 @@ function pitCustomRows(p) {
   return savedQuestions().filter((q) => answers[q.id] != null && answers[q.id] !== '')
     .map((q) => `<div class="kv"><span>${esc(q.label)}</span><b>${esc(answers[q.id])}</b></div>`).join('');
 }
+
+function renderQuestions() {
+  if (!QDRAFT) QDRAFT = JSON.parse(JSON.stringify(savedQuestions()));
+  renderBuiltins();
+  const locked = PIN_SET && !CAN_EDIT;
+  const dis = locked ? ' disabled' : '';
+  $('#qLock').innerHTML = locked ? `<div class="callout" style="margin:0"><div class="h">Read only</div>
+    <div class="b">Changing the questions needs the strategy passcode. Unlock editing on the
+    Picklist tab, then come back.</div></div>` : '';
+  $('#qList').innerHTML = QDRAFT.length ? QDRAFT.map((q, i) => `
+    <div class="qcard" data-i="${i}">
+      <input data-k="label" value="${esc(q.label || '')}" maxlength="120"
+        placeholder="The question — e.g. What colour are their bumpers?"${dis}>
+      <select data-k="type" aria-label="Kind of answer"${dis}>${Q_TYPES.map(([v, l]) =>
+        `<option value="${v}"${(q.type || 'text') === v ? ' selected' : ''}>${l}</option>`).join('')}</select>
+      <div class="tools">
+        <button class="qbtn sm" data-act="up" aria-label="Move up"${i === 0 || locked ? ' disabled' : ''}>↑</button>
+        <button class="qbtn sm" data-act="down" aria-label="Move down"${i === QDRAFT.length - 1 || locked ? ' disabled' : ''}>↓</button>
+        <button class="qbtn sm" data-act="del"${dis}>Remove</button>
+      </div>
+      ${q.type === 'choice' ? `<div class="wide"><div class="sub">Answers to pick from, separated by commas (2 to 8)</div>
+        <input data-k="options" value="${esc((q.options || []).join(', '))}" placeholder="red, blue, both"${dis}></div>` : ''}
+      <div class="wide"><input data-k="hint" value="${esc(q.hint || '')}" maxlength="160"
+        placeholder="Optional: a help line under the question"${dis}></div>
+    </div>`).join('')
+    : '<div class="empty">No questions of your own yet. Add one and it shows up on every pit tablet.</div>';
+
+  for (const card of $$('#qList .qcard')) {
+    const i = Number(card.dataset.i);
+    const q = QDRAFT[i];
+    for (const el of card.querySelectorAll('[data-k]')) {
+      el.oninput = () => {
+        const k = el.dataset.k;
+        if (k === 'options') q.options = el.value.split(',').map((x) => x.trim()).filter(Boolean);
+        else q[k] = el.value;
+        if (k === 'type') { if (q.type === 'choice' && !q.options) q.options = []; renderQuestions(); return; }
+        paintQState(); renderQPreview();
+      };
+    }
+    for (const b of card.querySelectorAll('[data-act]')) {
+      b.onclick = () => {
+        if (b.dataset.act === 'del') QDRAFT.splice(i, 1);
+        else {
+          const j = b.dataset.act === 'up' ? i - 1 : i + 1;
+          [QDRAFT[i], QDRAFT[j]] = [QDRAFT[j], QDRAFT[i]];
+        }
+        renderQuestions();
+      };
+    }
+  }
+  $('#qAdd').disabled = locked || QDRAFT.length >= Q_MAX;
+  paintQState();
+  renderQPreview();
+}
+
+function paintQState() {
+  const locked = PIN_SET && !CAN_EDIT;
+  const changed = qChanged();
+  $('#qSave').disabled = locked || qSaving || !changed;
+  $('#qUndo').disabled = !changed || qSaving;
+  if (!qSaving) $('#qMsg').textContent = changed ? 'Unsaved changes' : '';
+}
+
+/** The questions as a pit scout will see them, from the working copy. */
+function renderQPreview() {
+  const hidden = hiddenNow();
+  const builtin = PIT_BUILTIN.filter(([f]) => !hidden.has(f))
+    .map(([, label, opts]) => ({ label, type: opts ? 'choice' : 'text', options: opts || [] }));
+  const qs = builtin.concat((QDRAFT || []).filter((q) => (q.label || '').trim()));
+  $('#qPreview').innerHTML = qs.length ? qs.map((q) => {
+    const opts = q.type === 'yesno' ? ['yes', 'no'] : q.type === 'choice' ? (q.options || []) : null;
+    return `<div><div class="lbl">${esc(q.label)}</div>${opts
+      ? `<div class="chips">${opts.map((o) => `<span class="chip">${esc(o)}</span>`).join('')
+        || '<span class="h2">add some answers</span>'}</div>`
+      : '<div class="box"></div>'}${q.hint ? `<div class="h2">${esc(q.hint)}</div>` : ''}</div>`;
+  }).join('') : '<div class="hint">No questions left — the form will be empty.</div>';
+}
+
+$('#qAdd').onclick = () => {
+  if (!QDRAFT) QDRAFT = JSON.parse(JSON.stringify(savedQuestions()));
+  QDRAFT.push({ label: '', type: 'choice', options: [] });
+  renderQuestions();
+  const inputs = $$('#qList .qcard input[data-k="label"]');
+  if (inputs.length) inputs[inputs.length - 1].focus();
+};
+$('#qUndo').onclick = () => { QDRAFT = null; HDRAFT = null; renderQuestions(); };
+$('#qSave').onclick = async () => {
+  qSaving = true;
+  paintQState();
+  $('#qMsg').textContent = 'Saving…';
+  try {
+    // Half-filled cards (no wording yet) are left out rather than refused.
+    const send = QDRAFT.filter((q) => (q.label || '').trim());
+    const r = await net.api('/api/pitquestions', { method: 'POST',
+      body: JSON.stringify({ questions: send, hiddenBuiltins: [...hiddenNow()] }) });
+    if (STATE) { STATE.pitQuestions = r.questions; STATE.pitHidden = r.hiddenBuiltins || []; }
+    QDRAFT = null;
+    HDRAFT = null;
+    qSaving = false;
+    renderQuestions();
+    $('#qMsg').textContent = 'Saved. The pit tablets pick it up in a few seconds.';
+  } catch (e) {
+    qSaving = false;
+    paintQState();
+    $('#qMsg').textContent = e.locked ? 'Needs the strategy passcode — unlock editing on the Picklist tab.'
+      : e.status ? e.message : 'Could not reach the hub. Nothing was saved.';
+  }
+};
 
 const TAB_RENDER = {
   crew: () => renderCrew(),
@@ -2040,7 +2192,7 @@ async function main() {
   ourTeam = Number((CONFIG && CONFIG.ourTeam) || 0) || null;
 
   const TABS = ['crew', 'live', 'teams', 'graphs', 'picklist', 'health', 'seats', 'server',
-                'match', 'team'];
+                'match', 'team', 'questions'];
   const goTab = (name) => {
     for (const x of $$('#tabs button')) x.classList.toggle('on', x.dataset.tab === name);
     for (const t of TABS) { const el = $(`#t-${t}`); if (el) el.classList.toggle('hide', t !== name); }
@@ -2050,6 +2202,7 @@ async function main() {
     // hand - no fetch, and nothing to wait for.
     if (dirtyTabs.has(name)) renderTab(name);
     if (name === 'picklist') renderEditBar();
+    if (name === 'questions') renderQuestions();
     // The SERVER tab is the only reader of /api/diag, and refresh() skips it
     // otherwise; opening the tab should not mean waiting 30s to see anything.
     if (name === 'server') refresh();
