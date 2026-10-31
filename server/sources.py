@@ -21,6 +21,7 @@ STATBOTICS_BASE = "https://api.statbotics.io/v3"
 NEXUS_BASE = "https://frc.nexus/api/v1"
 FRC_EVENTS_BASE = "https://frc-api.firstinspires.org/v3.0"
 LOVAT_BASE = "https://api.lovat.app/v1"
+MATCH13_BASE = "https://actions.match13.com/v1"
 
 USER_AGENT = "frc-rebuilt-scouting/1.0 (+https://frc.nexus)"
 _ctx = ssl.create_default_context()
@@ -490,3 +491,70 @@ class Lovat:
                                   "check on your team, not a problem with the key - a new "
                                   "key will fail the same way")
         return _rejection(status, "Lovat")
+
+
+# ------------------------------------------------------------- Match 13
+
+class Match13:
+    """Ratings and match forecasts from https://www.match13.com.
+
+    Auth is a key made on the account page there, starting `m13_live_`, sent as
+    `Authorization: Bearer`. All of one account's keys share an allowance of 60
+    requests a minute and 1000 an hour, and a 304 still counts - so the hub asks
+    for two routes every couple of minutes and nothing more. A 401 or 429 backs
+    off, the same shape as Lovat, rather than spend the allowance re-asking.
+    Their API sends no CORS headers, which is fine: only the hub ever calls it.
+    """
+
+    #: A rejected key stays rejected; a spent window opens again within the
+    #: hour. Either way the next few polls would fail the same way.
+    BACKOFF_SECONDS = 300
+
+    def __init__(self, key):
+        self.key = (key or "").strip()
+        self.down_until = 0.0
+
+    @property
+    def ok(self):
+        return bool(self.key)
+
+    def _get(self, path, poll=True):
+        """(body, status). `poll` honours the backoff; the Test keys button does not."""
+        if not self.ok:
+            return None, None
+        if poll and time.time() < self.down_until:
+            return None, None
+        body, status = _request(MATCH13_BASE + path,
+                                {"Authorization": f"Bearer {self.key}",
+                                 "Accept": "application/json"},
+                                use_etag=poll, timeout=12)
+        if body is None and status in (401, 403, 429):
+            self.down_until = time.time() + self.BACKOFF_SECONDS
+        return body, status
+
+    def event_teams(self, event_key):
+        """Every team at the event with its xP rating, or None for "we do not know"."""
+        body, _ = self._get(f"/events/{urllib.parse.quote(event_key)}/teams")
+        return body if isinstance(body, dict) else None
+
+    def event_matches(self, event_key):
+        """Every match at the event with Match 13's forecast for it, or None."""
+        body, _ = self._get(f"/events/{urllib.parse.quote(event_key)}/matches")
+        return body if isinstance(body, dict) else None
+
+    def verify(self, event_key=None):
+        if not self.ok:
+            return verdict("unset")
+        body, status = self._get("/years", poll=False)
+        if body is None:
+            if status == 404:
+                return verdict("down", "Match 13 answered 404 for a route that should exist - "
+                                       "their API may have moved")
+            return _rejection(status, "Match 13")
+        if not event_key:
+            return verdict("ok", "key accepted")
+        body, status = self._get(f"/events/{urllib.parse.quote(event_key)}/teams", poll=False)
+        teams = (body or {}).get("teams") if isinstance(body, dict) else None
+        if teams:
+            return verdict("ok", f"key accepted, {len(teams)} team(s) rated at {event_key}")
+        return verdict("warn", f"the key works, but Match 13 has nothing for {event_key} yet")

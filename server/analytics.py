@@ -25,7 +25,7 @@ import solve
 # What event_summary reads.  Kept here, beside the reads themselves, and mirrored
 # by ANALYTICS_SCOPES in hub.py for the matching ETag.
 SCOPES = ("matches", "teams", "scout_entries", "solved",
-          "kv:rankings", "kv:epa", "kv:lovat", "kv:multipliers")
+          "kv:rankings", "kv:epa", "kv:lovat", "kv:multipliers", "kv:m13")
 
 # Per store, not global: a snapshot restore opens a second Store over the
 # restored file, and a fresh one starts every counter at zero - so a global
@@ -82,6 +82,7 @@ def _event_summary(store, event_key, include_scouts=False):
     # (no key, or Statbotics down) and must read as "unknown", never as zero.
     rankings = store.get(f"rankings:{event_key}") or {}
     epa = store.get(f"epa:{event_key}") or {}
+    m13 = store.get(f"m13:{event_key}") or {}
     lovat_rows = store.get(f"lovat:{event_key}") or {}
     entries = store.scout_entries(event_key)
     solved = store.solved(event_key)
@@ -153,6 +154,10 @@ def _event_summary(store, event_key, include_scouts=False):
                                          solved_by.get(team, []),
                                          _lookup(lovat_rows, team),
                                          faced_secs.get(team) or {})
+        # Match 13's xP, beside Statbotics' EPA: another outside read on the
+        # same robot. Empty when there is no key, never zeros.
+        r13 = _lookup(m13, team)
+        out[team]["m13"] = {k: r13.get(k) for k in ("xp", "auto", "teleop", "endgame")}
 
     return {
         "eventKey": event_key,

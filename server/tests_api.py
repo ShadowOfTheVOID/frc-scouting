@@ -1032,7 +1032,7 @@ def test_config_scope(L):
     code, c = L.req("/api/config")
     ok &= check("config reports which keys are set",
                 code == 200 and c["keys"] == {"tba": False, "nexus": False, "frcEvents": False,
-                                              "lovat": False, "ai": False, "mirror": False},
+                                              "lovat": False, "match13": False, "ai": False, "mirror": False},
                 f"({c['keys']})")
     L.req("/api/config", {"frcEventsUser": "someone", "frcEventsToken": "secret"})
     code, c = L.req("/api/config")
@@ -2660,6 +2660,67 @@ def test_two_saves_at_once_keep_both_keys(L):
     return ok
 
 
+def test_match13(L):
+    """Match 13: the key is sent as a Bearer, its ratings land beside EPA on
+    each team, its forecasts reach the match screen, and a refusal backs off."""
+    ok = True
+    keep = sources._request
+    seen = []
+    teams = {"eventKey": EK, "year": 2026, "teams": [
+        {"teamNumber": 101, "xpStart": 40.0, "xpEnd": 52.345, "xAuto": 10.0, "xTele": 30.0,
+         "xEnd": 12.0, "opr": 50.0},
+        {"teamNumber": 102, "xpStart": 20.0, "xpEnd": None, "xAuto": None, "xTele": None,
+         "xEnd": None},
+        {"teamNumber": "junk"}]}
+    matches = {"eventKey": EK, "year": 2026, "matches": [
+        {"key": EK + "_qm1", "pred": {"winProb": 0.73456, "redScore": 101.26, "blueScore": 80.0}},
+        {"key": None, "pred": {}}]}
+
+    def fake(url, headers=None, **k):
+        seen.append((url, (headers or {}).get("Authorization")))
+        if url.endswith("/teams"):
+            return teams, 200
+        if url.endswith("/matches"):
+            return matches, 200
+        return {"years": [2026]}, 200
+    try:
+        r = L.req("/api/config", {"match13Key": "m13_live_" + "a" * 24})
+        ok &= check("a Match 13 key saves", r[0] == 200, f"({r})")
+        sources._request = fake
+        L.hub.poll_match13()
+        ok &= check("the key goes as a Bearer to actions.match13.com",
+                    seen and seen[0][0].startswith("https://actions.match13.com/v1/events/")
+                    and seen[0][1] == "Bearer m13_live_" + "a" * 24, f"({seen[:1]})")
+        code, a = L.req("/api/analytics")
+        t = (a.get("teams") or {}).get("101") or (a.get("teams") or {}).get(101) or {}
+        ok &= check("a team's xP is its latest rating, rounded", (t.get("m13") or {}).get("xp") == 52.3,
+                    f"({t.get('m13')})")
+        t2 = (a.get("teams") or {}).get("102") or (a.get("teams") or {}).get(102) or {}
+        ok &= check("before its first match a team's xP is the one it arrived with",
+                    (t2.get("m13") or {}).get("xp") == 20.0, f"({t2.get('m13')})")
+        code, st = L.req("/api/state")
+        f = (st.get("m13Matches") or {}).get(EK + "_qm1") or {}
+        ok &= check("match forecasts reach /api/state",
+                    f.get("redWin") == 0.735 and f.get("redScore") == 101.3, f"({f})")
+        ok &= check("a forecast row with no key is dropped", len(st.get("m13Matches") or {}) == 1)
+
+        sources._request = lambda *a, **k: (None, 401)
+        L.hub.match13().down_until = 0.0
+        L.hub.poll_match13()
+        ok &= check("a rejected key backs off rather than re-asking every poll",
+                    L.hub.match13().down_until > time.time())
+        code, st = L.req("/api/state")
+        ok &= check("and the last forecasts are kept, not wiped", len(st.get("m13Matches") or {}) == 1)
+        v = sources.Match13("m13_live_x").verify(EK)
+        ok &= check("Test keys calls a rejected key bad", v["state"] == "bad", f"({v})")
+        ok &= check("a Lovat key in the Match 13 box is refused",
+                    L.req("/api/config", {"match13Key": "lvt-abc123"})[0] == 400)
+    finally:
+        sources._request = keep
+        L.req("/api/config", {"match13Key": ""})
+    return ok
+
+
 def test_a_dead_button_does_not_spend_the_budget(L):
     """The ceiling is there so a stuck button cannot spend a team's credit.
 
@@ -3018,6 +3079,7 @@ def main():
                    test_collection_path_is_intact,
                    test_after_screen_extras_reach_the_dashboard,
                    test_custom_pit_questions,
+                   test_match13,
                    test_pit_claims,
                    test_one_climb_cannot_also_be_a_fall, test_event_picker_survives_junk,
                    test_env_file_survives_a_failed_write,

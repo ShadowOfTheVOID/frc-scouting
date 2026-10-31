@@ -83,6 +83,10 @@ FRC_EVENTS_POLL_SECONDS = 60
 # every five minutes pulls the whole tournament and leaves that limit alone
 # even when a config save fires _poll_all at the same moment.
 LOVAT_POLL_SECONDS = 300
+# Match 13: two requests a poll against an allowance of 1000 an hour shared by
+# every key on the account. Every two minutes is 60 an hour - well clear, and
+# soon enough for a forecast that moves after every match.
+MATCH13_POLL_SECONDS = 120
 # Outbound, to a site the team hosts - see server/offsite.py. Nothing is sent
 # when the bundle has not changed, so this is a ceiling on how often the hub
 # *could* speak, not on how much it says.
@@ -108,9 +112,9 @@ STATE_SCOPES = ("events", "teams", "matches", "flags", "pit_entries",
                 "kv:nexusLive", "kv:pits", "kv:pitMap", "kv:inspection", "kv:pitQuestions",
                 "kv:pitClaims", "kv:pitHidden",
                 "kv:alliances", "kv:seats", "kv:matchClocks", "kv:clockFixes",
-                "kv:rankings", "kv:epa", "kv:earlyScores")
+                "kv:rankings", "kv:epa", "kv:earlyScores", "kv:m13Matches")
 ANALYTICS_SCOPES = ("matches", "teams", "scout_entries", "solved",
-                    "kv:rankings", "kv:epa", "kv:lovat", "kv:multipliers")
+                    "kv:rankings", "kv:epa", "kv:lovat", "kv:multipliers", "kv:m13")
 SEATLOG_SCOPES = ("kv:seatLog",)
 # `connected` on a crew row is read from the live SSE subscriber set, which no
 # store write touches - hence the subscriber generation mixed in at the call.
@@ -153,7 +157,7 @@ class Hub:
         self.stop_flag = threading.Event()
         self.port = PORT
         self.status = {"nexus": None, "tba": None, "statbotics": None,
-                       "frcEvents": None, "lovat": None, "mirror": None,
+                       "frcEvents": None, "lovat": None, "match13": None, "mirror": None,
                        "lastUpdate": None}
         self.last_snapshot = None
         self._snapshot_token = None
@@ -237,7 +241,7 @@ class Hub:
                     "detail": detail}
 
         nx, tba, fe = self.nexus(), self.tba(), self.frc_events()
-        lv, ai_c = self.lovat(), self.ai()
+        lv, ai_c, m13 = self.lovat(), self.ai(), self.match13()
         mrr, mst = self.mirror(), self.store.get("mirrorState") or {}
         age = lambda t: f"{int(now - t)}s ago" if t else "never"
         services = [
@@ -260,6 +264,10 @@ class Hub:
                 ("rate limited, backing off" if lv.down_until > now
                  else age(self.status["lovat"])) if lv.ok else "no api key",
                 bool(lv.ok) and not self.status["lovat"]),
+            svc("match 13", m13.ok,
+                ("rejected or rate limited, backing off" if m13.down_until > now
+                 else age(self.status["match13"])) if m13.ok else "no api key",
+                bool(m13.ok) and not self.status["match13"]),
             svc("ai", ai_c.ok, f"{ai_c.provider} · {ai_c.model} · {self.ai_calls()}"
                 f"/{self.ai_ceiling()} answers this event" if ai_c.ok else "no provider set"),
             svc("solver", True, f"multipliers fitted from {self.store.get('multipliersFittedFrom') or 0} windows"),
@@ -439,6 +447,10 @@ class Hub:
         key = self.cfg("lovatKey")
         return self._client("lovat", key, lambda: sources.Lovat(key))
 
+    def match13(self):
+        key = self.cfg("match13Key")
+        return self._client("match13", key, lambda: sources.Match13(key))
+
     def ai(self):
         sig = (self.cfg("aiProvider"), self.cfg("aiKey"), self.cfg("aiModel"))
         return self._client("ai", sig, lambda: ai.client(self.cfg))
@@ -466,6 +478,7 @@ class Hub:
             "nexus": lambda: self.nexus().verify(ek),
             "frcEvents": lambda: self.frc_events().verify(int(season) if season else 2026),
             "lovat": lambda: self.lovat().verify(ek),
+            "match13": lambda: self.match13().verify(ek),
             "ai": lambda: self.ai().verify(),
             # The mirror is the only one of these that sends anything out
             # rather than fetching, so "does the key work" is worth knowing
@@ -612,7 +625,8 @@ class Hub:
         # is the only step that reports whether it works, which is the
         # difference nothing else in the app can see.
         names = {"tba": "The Blue Alliance", "nexus": "Nexus", "frcEvents": "FRC Events",
-                 "lovat": "Lovat", "ai": "the AI model", "mirror": "the mirror"}
+                 "lovat": "Lovat", "match13": "Match 13", "ai": "the AI model",
+                 "mirror": "the mirror"}
         listed = lambda want: ", ".join(names.get(k, k) for k, v in sorted(states.items())
                                         if v == want)
         ago = lambda: (lambda m: "just now" if m < 1 else f"{m}m ago")(
@@ -667,7 +681,8 @@ class Hub:
                 "later": [
                     "The other keys are all free and all optional: The Blue Alliance for "
                     "official results and climb, FRC Events for the same result a few minutes "
-                    "sooner, Lovat for what other teams' scouts wrote. Statbotics needs no key.",
+                    "sooner, Lovat for what other teams' scouts wrote, Match 13 for a second "
+                    "team rating and match forecasts. Statbotics needs no key.",
                     "An AI model, if you want the notes summarised and the picklist explained. "
                     "Pick the model and paste that company's key - cents per answer, and off "
                     "until you do.",
@@ -1142,6 +1157,56 @@ class Hub:
         if self.store.get(cache) != out:
             self.store.set(cache, out)
             self.broadcast("epa", {"teams": len(out)})
+
+    def poll_match13(self):
+        """Match 13's xP rating for every team, and its forecast for every match.
+
+        Two requests, and each one stands alone: a forecast that came back is
+        kept even when the ratings did not. Like Statbotics, this is an outside
+        read on the same robots, so absent means "unknown" and never zero.
+        """
+        ek = self.event_key()
+        m = self.match13()
+        if not (ek and m.ok):
+            return
+        body = m.event_teams(ek)
+        if body is not None:
+            self.status["match13"] = time.time()
+            out = {}
+            for r in body.get("teams") or []:
+                team = _int((r or {}).get("teamNumber"))
+                if not team:
+                    continue
+                out[str(team)] = {
+                    # Their rating as the team stands now: the one it took out
+                    # of its latest match here, else the one it arrived with.
+                    "xp": _round(r.get("xpEnd") if r.get("xpEnd") is not None
+                                 else r.get("xpStart")),
+                    "auto": _round(r.get("xAuto")),
+                    "teleop": _round(r.get("xTele")),
+                    "endgame": _round(r.get("xEnd")),
+                    "opr": _round(r.get("opr")),
+                }
+            if self.store.get(f"m13:{ek}") != out:
+                self.store.set(f"m13:{ek}", out)
+                self.broadcast("m13", {"teams": len(out)})
+        body = m.event_matches(ek)
+        if body is not None:
+            self.status["match13"] = time.time()
+            out = {}
+            for r in body.get("matches") or []:
+                key, pred = (r or {}).get("key"), (r or {}).get("pred") or {}
+                if not isinstance(key, str) or not isinstance(pred, dict):
+                    continue
+                win = pred.get("winProb")
+                out[key] = {
+                    "redWin": round(float(win), 3) if isinstance(win, (int, float)) else None,
+                    "redScore": _round(pred.get("redScore")),
+                    "blueScore": _round(pred.get("blueScore")),
+                }
+            if self.store.get(f"m13Matches:{ek}") != out:
+                self.store.set(f"m13Matches:{ek}", out)
+                self.broadcast("m13", {"matches": len(out)})
 
     def poll_lovat(self):
         """Other teams' scouting, pulled whole in one request.
@@ -1988,6 +2053,7 @@ class Hub:
                  (self.poll_frc_events, FRC_EVENTS_POLL_SECONDS),
                  (self.poll_statbotics, STATBOTICS_POLL_SECONDS),
                  (self.poll_lovat, LOVAT_POLL_SECONDS),
+                 (self.poll_match13, MATCH13_POLL_SECONDS),
                  (self.poll_mirror, MIRROR_PUSH_SECONDS))
         due = [0.0] * len(every)
         while not self.stop_flag.is_set():
@@ -2211,7 +2277,7 @@ def _csv_table(h, ek, table):
     """
     if table == "teams":
         summary = analytics.event_summary(h.store, ek)
-        header = ["team", "name", "rank", "record", "rankingPoints", "opr", "epa",
+        header = ["team", "name", "rank", "record", "rankingPoints", "opr", "epa", "match13Xp",
                   "matchesScouted", "matchesWithOfficial", "scoutVsOfficialPct",
                   "avgFuel", "fuelBand",
                   "fuelConsistency", "bestClimb", "climbL3Pct", "climbL2Pct", "climbL1Pct",
@@ -2249,6 +2315,7 @@ def _csv_table(h, ek, table):
                 t["team"], t.get("name"), e.get("rank"),
                 f"{rec['wins']}-{rec['losses']}-{rec['ties']}" if rec else None,
                 e.get("rankingPoints"), e.get("opr"), ep.get("epa"),
+                (t.get("m13") or {}).get("xp"),
                 t["matchesScouted"], e["matchesWithOfficial"],
                 round(sum(deltas) / len(deltas), 1) if deltas else None,
                 es["avgFuel"], es["band"], es["consistency"], e["bestClimb"],
@@ -2464,6 +2531,7 @@ def _ai_team_payload(rec, rank=None):
                       "startLane", "accuracy", "traversalRate", "beachedRate",
                       "scoresWhileMovingRate", "disruptRate", "climbStartSecs")},
         "epa": rec.get("epa") or {},
+        "m13": rec.get("m13") or {},
         "noteCount": len(rec.get("notes") or []),
     }
     if lv.get("matches"):
@@ -2546,7 +2614,7 @@ def _poll_all(h, force=False):
         with h._clients_lock:
             h._last_poll_all = now
     for fn in (h.poll_nexus, h.poll_nexus_slow, h.poll_tba, h.poll_frc_events,
-               h.poll_statbotics, h.poll_lovat):
+               h.poll_statbotics, h.poll_lovat, h.poll_match13):
         threading.Thread(target=fn, daemon=True).start()
     return True
 
@@ -3076,6 +3144,7 @@ class Handler(BaseHTTPRequestHandler):
                 "eventLevel": (h.store.event(ek) or {}).get("level", "regional") if ek else "regional",
                 "keys": {"tba": bool(h.cfg("tbaKey")), "nexus": bool(h.cfg("nexusKey")),
                          "frcEvents": frc.ok, "lovat": bool(h.cfg("lovatKey")),
+                         "match13": bool(h.cfg("match13Key")),
                          "ai": aic.ok, "mirror": mir.ok},
                 # Which boxes have something in them, box by box, so the Setup
                 # page can say SAVED beside each one and offer to forget it.
@@ -3154,6 +3223,8 @@ class Handler(BaseHTTPRequestHandler):
                 "pitClaims": h.pit_claims(ek),
                 "rankings": h.event_data("rankings", ek, {}),
                 "epa": h.event_data("epa", ek, {}),
+                # Match 13's forecast for each match, keyed as TBA keys them.
+                "m13Matches": h.event_data("m13Matches", ek, {}),
                 "earlyScores": h.event_data("earlyScores", ek, {}),
             }, etag=etag)
         if p == "/api/scout":

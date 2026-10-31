@@ -33,7 +33,7 @@ const activeWeights = () => (PICK_MODE === 'first' ? WEIGHTS : WEIGHTS2);
 const CLIMB_RANK = { Level3: 3, Level2: 2, Level1: 1, None: 0 };
 
 const RANK_COLS = '56px minmax(120px,1fr) 84px 74px 52px 44px 86px';
-const ALL_COLS  = '62px 56px minmax(160px,1fr) 84px 74px 62px 60px 62px 62px 56px 52px 70px 64px';
+const ALL_COLS  = '62px 56px minmax(160px,1fr) 84px 74px 62px 56px 60px 62px 62px 56px 52px 70px 64px';
 
 // ------------------------------------------------------------------ bits
 /** TBA's climb for one robot, or a dash for one no result has landed for.
@@ -265,7 +265,7 @@ function recordText(rec) {
 let sortKey = 'fuel', sortDir = -1;
 const ALL_HEAD = [
   ['rank', 'Rank', 2], ['team', 'Team', 0], ['name', 'Name', 0], ['fuel', 'Fuel/match', 1],
-  ['climb', 'Climb', 1], ['epa', 'EPA', 1], ['tower', 'Tower', 1], ['stock', 'Stock', 1],
+  ['climb', 'Climb', 1], ['epa', 'EPA', 1], ['xp', 'xP', 1], ['tower', 'Tower', 1], ['stock', 'Stock', 1],
   ['waste', 'Wasted', 1], ['died', 'Died', 1], ['drv', 'Driver', 1],
   ['lovat', 'Lovat', 1], ['n', 'Matches', 1],
 ];
@@ -274,6 +274,7 @@ function sortVal(t, k) {
     // rank 1 is best, so invert it; unranked teams sort to the bottom either way
     case 'rank': return t.exact.rank == null ? -9999 : -t.exact.rank;
     case 'epa': return t.epa.epa ?? -1;
+    case 'xp': return (t.m13 || {}).xp ?? -1;
     case 'team': return t.team; case 'name': return 0;
     case 'fuel': return t.estimated.avgFuel;
     case 'climb': return CLIMB_RANK[t.exact.bestClimb] || 0;
@@ -394,6 +395,7 @@ function renderTeams() {
       <span class="num">${t.estimated.avgFuel} <span class="band">±${t.estimated.band}</span></span>
       <span class="num">${climbCell(t)}</span>
       <span class="num">${t.epa.epa ?? '—'}</span>
+      <span class="num">${(t.m13 || {}).xp ?? '—'}</span>
       <span class="num">${t.exact.avgTowerPoints ?? '—'}</span>
       <span class="num">${Math.round(t.observed.stockpileRate)}%</span>
       <span class="num">${t.observed.wastedFuelPct == null ? '—' : Math.round(t.observed.wastedFuelPct) + '%'}</span>
@@ -1157,6 +1159,17 @@ function verdictBanner(m, side) {
       margin of error ±${Math.round(w.sd)}. Fuel is estimated; fouls are not modelled.</div></div>`;
 }
 
+/** Match 13's forecast for this match, as a second opinion under ours. */
+function m13Note(m, side) {
+  const f = m && ((STATE && STATE.m13Matches) || {})[m.matchKey];
+  if (!f || f.redWin == null) return '';
+  const pct = Math.round((side === 'red' ? f.redWin : 1 - f.redWin) * 100);
+  const mine = side === 'red' ? f.redScore : f.blueScore;
+  const theirs = side === 'red' ? f.blueScore : f.redScore;
+  return `<div class="hint" style="margin-top:-6px">Match 13 says <b>${pct}%</b> to win${
+    mine != null && theirs != null ? `, ${Math.round(mine)}–${Math.round(theirs)}` : ''}.</div>`;
+}
+
 function allianceCard(m, side) {
   const pr = project(m, side);
   const { lineup, teams, records, fuel, tower } = pr;
@@ -1189,6 +1202,7 @@ function allianceCard(m, side) {
     <div class="eyebrow" style="color:${side === 'red' ? 'var(--red-label)' : 'var(--blue-label)'}">
       ${label} · ${esc((m && m.label) || '')}</div>
     ${verdictBanner(m, side)}
+    ${m13Note(m, side)}
     ${autoClashNote(records)}
     ${defenseNote(m, side, records)}
     <div class="tiles" style="grid-template-columns:repeat(3,1fr)">
@@ -1369,7 +1383,7 @@ function renderTeamDetail() {
       <div style="padding-bottom:6px"><div style="font:600 14px var(--f-body);color:var(--t1)">${esc(t.name || '')}</div>
         <div class="hint">${t.matchesScouted} matches scouted · ${e.matchesWithOfficial} with official results${recordLine(e)}</div></div>
     </div>
-    <div class="tiles" style="grid-template-columns:repeat(3,1fr)">
+    <div class="tiles" style="grid-template-columns:repeat(4,1fr)">
       ${tile('Fuel / match', es.avgFuel,
              `± ${es.band}${es.cycleRate ? ` · ${es.cycleRate}/s` : ''} · estimated`)}
       ${tile('Best climb', !e.bestClimb || e.bestClimb === 'None' ? '—'
@@ -1385,6 +1399,8 @@ function renderTeamDetail() {
              (o.diedRate + o.noShowRate) > 20 ? 'warn' : '')}
       ${tile('EPA', t.epa.epa ?? '—', t.epa.epa == null ? 'statbotics unavailable'
              : `auto ${t.epa.auto ?? '—'} · teleop ${t.epa.teleop ?? '—'} · statbotics`)}
+      ${tile('xP', (t.m13 || {}).xp ?? '—', (t.m13 || {}).xp == null ? 'match 13 unavailable'
+             : `auto ${t.m13.auto ?? '—'} · teleop ${t.m13.teleop ?? '—'} · match 13`)}
       ${tile('OPR', e.opr ?? '—', e.rank ? `rank ${e.rank} · exact` : 'no rankings yet')}
     </div>
     <div class="tbl"><div class="cap"><span class="t">What scouts saw</span>
@@ -2236,7 +2252,7 @@ async function main() {
   // of each other - and each one used to be its own full refresh.
   const nudge = coalesce(refresh, 750);
   for (const t of ['nexus', 'alliances', 'results', 'scout', 'calibration', 'matchStatus',
-                   'seats', 'matchStart', 'lovat', 'solved', 'rankings', 'epa', 'earlyScores'])
+                   'seats', 'matchStart', 'lovat', 'solved', 'rankings', 'epa', 'earlyScores', 'm13'])
     net.on(t, nudge);
   // Settings are not in refresh() any more: /api/config carries serverTime, so
   // it can never answer 304, and nothing on it changes without one of these.

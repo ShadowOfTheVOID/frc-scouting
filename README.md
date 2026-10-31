@@ -174,6 +174,7 @@ runs without them, just with less live data.
 | **The Blue Alliance** | official match results, per-robot climb | [thebluealliance.com/account](https://www.thebluealliance.com/account) |
 | **FRC Events** | the official result a few minutes before TBA posts it | [frc-events.firstinspires.org](https://frc-events.firstinspires.org/services/API) |
 | **Lovat** | what other teams' scouts recorded about the same robots | [lovat.app](https://lovat.app) — see below |
+| **Match 13** | its xP rating for every team, and a win probability and score forecast for every match | [match13.com/account](https://www.match13.com/account) — make a key there (`m13_live_…`), and paste it in the **Match 13 API key** box |
 | **AI model** | summaries of your scout notes, and a read of the next match | Claude, Gemini, OpenAI or OpenRouter — see below |
 | Statbotics | EPA next to your own numbers | nothing to do — no key needed |
 
