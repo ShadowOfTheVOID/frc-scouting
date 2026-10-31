@@ -96,7 +96,12 @@
       <span class="sp"></span>
       <div style="display:flex;gap:8px;align-items:center">
         <button type="button" class="themebtn" data-theme-toggle></button>
-        <a class="lk" href="/scout">Scout</a>
+        <details class="scoutpick"><summary class="lk">Scout</summary>
+          <div class="menu">
+            <a href="/scout">Match scouting<span>Watch one robot through a match, from the stands</span></a>
+            <a href="/pit">Pit scouting<span>Walk the pits and fill in a form per robot</span></a>
+          </div>
+        </details>
         <a class="lk" href="/dashboard">Dashboard</a>
         <a class="lk" href="/join">Join QR</a>
       </div>
@@ -220,6 +225,14 @@
               their 403 means. It is shown next to our own numbers, never mixed into
               them. lovat.app</div>
             <div class="say"></div></div>
+          <div class="f" data-key="match13Key"><label>Match 13 API key<span class="tag"></span></label>
+            <input id="match13Key" placeholder="m13_live_…" autocomplete="off">
+            <div class="h">Match 13's xP rating for every team and its forecast for every
+              match, shown beside Statbotics' EPA and our own projection — never mixed into
+              them. Sign in at match13.com and make a key on your account page; you see it
+              once, so paste it straight in. Polled every two minutes, well inside their
+              allowance.</div>
+            <div class="say"></div></div>
           <div class="f"><label>AI model</label>
             <select id="aiModel"></select>
             <div class="h">Summarises scout notes, explains the picklist and answers questions
@@ -274,8 +287,8 @@
         the solved numbers — and pushes it to a site your team hosts. Two things come of that:
         the data survives this laptop, and anyone with the mirror passcode can read the numbers
         from a phone on cell data, off the venue wifi entirely. The numbers are read-only over
-        there. <b>Pit scouting is done on the mirror</b>, along with your own pit questions, and
-        this hub collects both every minute. Nothing is sent while the event has not changed.</div>
+        there. Pit scouting saved on the mirror, and pit questions edited there, are collected
+        by this hub every minute — beside the pit scouting and questions done here. Nothing is sent while the event has not changed.</div>
       <div class="form">
         <div class="f"><label>Mirror address</label>
           <input id="mirrorUrl" placeholder="https://scouting.systemoverload.org" autocomplete="off"
@@ -535,6 +548,7 @@ async function reload() {
   const bits = [c.keys.tba ? 'TBA set' : 'No TBA key', c.keys.nexus ? 'Nexus set' : 'No Nexus key'];
   if (c.keys.frcEvents) bits.push('FRC Events set');
   if (c.keys.lovat) bits.push('Lovat set');
+  if (c.keys.match13) bits.push('Match 13 set');
   bits.push(c.keys.ai ? `AI · ${(c.ai && c.ai.label) || 'On'}` : 'No AI');
   buildModelPicker(c.ai || {});
   bits.push(c.multipliersFittedFrom ? `Calibrated · ${c.multipliersFittedFrom} windows` : 'Priors only');
@@ -560,7 +574,7 @@ async function reload() {
 // open on a hub that has - a lead who set a Lovat key last week must not have to
 // go hunting for the box it is in. A hand on the fold wins over both.
 const OPTIONAL = ['tbaKey', 'nexusToken', 'frcEventsUser', 'frcEventsToken', 'lovatKey',
-                  'aiKey', 'strategyPin'];
+                  'match13Key', 'aiKey', 'strategyPin'];
 let foldTouched = false;
 $('#moreKeys').querySelector('summary').addEventListener('click', () => { foldTouched = true; });
 
@@ -769,7 +783,7 @@ function buildModelPicker(ai) {
 }
 
 const SECRETS = ['tbaKey','nexusKey','nexusToken','frcEventsUser','frcEventsToken',
-                'lovatKey','aiKey','strategyPin','mirrorKey'];
+                'lovatKey','match13Key','aiKey','strategyPin','mirrorKey'];
 
 /** What the boxes currently say, as the hub wants it. */
 function typed() {
@@ -946,7 +960,8 @@ async function testKeys() {
                  warn: ['!', 'var(--amber)'], down: ['?', 'var(--t4)'],
                  unset: ['·', 'var(--t6)'] };
   const NAME = { tba: 'The Blue Alliance', nexus: 'Nexus', frcEvents: 'FRC Events',
-                 lovat: 'Lovat', ai: 'AI model', mirror: 'Off-site mirror' };
+                 lovat: 'Lovat', match13: 'Match 13', statbotics: 'Statbotics (no key)',
+                 ai: 'AI model', mirror: 'Off-site mirror' };
   try {
     const res = await admin('/api/keytest', { method: 'POST', body: '{}' });
     const out = $('#testOut');

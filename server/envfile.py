@@ -60,6 +60,7 @@ KEYS = {
     "frcEventsUser": "FRC_EVENTS_USER",
     "frcEventsToken": "FRC_EVENTS_TOKEN",
     "lovatKey": "LOVAT_API_KEY",
+    "match13Key": "MATCH13_API_KEY",
     "aiKey": "AI_API_KEY",
     "mirrorKey": "MIRROR_PUSH_KEY",
 }

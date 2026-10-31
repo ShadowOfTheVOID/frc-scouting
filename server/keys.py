@@ -67,6 +67,7 @@ PLACEHOLDER = re.compile(
 #: "does not match" has to keep meaning "we do not know".
 SIGNATURES = (
     ("lovatKey", re.compile(r"^lvt-"), "a Lovat key"),
+    ("match13Key", re.compile(r"^m13_"), "a Match 13 key"),
     ("aiKey", re.compile(r"^sk-ant-"), "an Anthropic (Claude) key"),
     ("aiKey", re.compile(r"^AIza[\w-]{10,}$"), "a Google (Gemini) key"),
     ("aiKey", re.compile(r"^sk-proj-"), "an OpenAI key"),
@@ -132,6 +133,9 @@ FIELDS = {
     "lovatKey": Field(
         "Lovat", "the LOVAT API KEY box",
         re.compile(r"^lvt-\S+$"), "Lovat keys start with `lvt-`"),
+    "match13Key": Field(
+        "Match 13", "the MATCH 13 API KEY box",
+        re.compile(r"^m13_live_\S+$"), "Match 13 keys start with `m13_live_`"),
     "aiKey": Field("AI", "the AI KEY box"),
     "mirrorKey": Field("mirror push key", "the MIRROR PUSH KEY box"),
     #: Not a key, and not checked like one - but a passcode with a space on the

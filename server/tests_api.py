@@ -612,8 +612,21 @@ def test_custom_pit_questions(L):
                 [q["id"] for q in pitquestions.trusted(
                     again + [{"id": "<script>", "label": "x"}, {"id": again[0]["id"], "label": "dup"}])]
                 == [q["id"] for q in again])
-    ok &= check("the hub no longer edits questions itself",
-                L.req("/api/pitquestions", {"questions": []})[0] == 404)
+
+    # Edited from the dashboard's Pit questions tab: the same cleaning, over HTTP.
+    code, r = L.req("/api/pitquestions", {"questions": qs})
+    ok &= check("custom pit questions save from the dashboard with no passcode set",
+                code == 200 and len((r or {}).get("questions") or []) == 4, f"({code})")
+    code, r = L.req("/api/pitquestions", {"questions": "junk"})
+    ok &= check("a list that is not a list is refused", code == 400)
+    L.req("/api/config", {"strategyPin": "4821"})
+    code, _ = L.req("/api/pitquestions", {"questions": []})
+    ok &= check("with a passcode set, changing questions needs it", code == 403)
+    code, r = L.req("/api/unlock", {"pin": "4821"})
+    code, _ = L.req("/api/pitquestions", {"questions": []},
+                    headers={"X-Strategy-Token": r.get("token")})
+    ok &= check("...and works with it", code == 200)
+    L.req("/api/config", {"strategyPin": ""})
 
     L.store.set("pitQuestions", again)
     code, st = L.req("/api/state")
@@ -638,8 +651,60 @@ def test_custom_pit_questions(L):
     ok &= check("the pit spreadsheet has a column per custom question, answered",
                 head.endswith(",Batteries,Bumper colour") and row.endswith(",6,orange"),
                 f"({head[-40:]} | {row[-20:]})")
+
+    # Built-in questions can be removed too, and put back.
+    code, r = L.req("/api/pitquestions", {"questions": again,
+                                          "hiddenBuiltins": ["shooter", "weight", "nonsense", 3]})
+    ok &= check("built-in questions can be removed, and unknown names are dropped",
+                code == 200 and r.get("hiddenBuiltins") == ["shooter", "weight"], f"({r})")
+    code, st = L.req("/api/state")
+    ok &= check("the pit tablet gets the removed built-ins in /api/state",
+                st.get("pitHidden") == ["shooter", "weight"])
+    code, body = L.req("/api/export.csv?table=pit", raw=True)
+    head = body.splitlines()[0].split(",")
+    ok &= check("a removed built-in question has no column in the spreadsheet",
+                "shooter" not in head and "weight" not in head and "drivetrain" in head, f"({head})")
+    code, r = L.req("/api/pitquestions", {"questions": again})
+    ok &= check("a save that does not mention built-ins leaves them as they were",
+                r.get("hiddenBuiltins") == ["shooter", "weight"])
+    code, r = L.req("/api/pitquestions", {"questions": again, "hiddenBuiltins": []})
+    ok &= check("and they can be put back", r.get("hiddenBuiltins") == [])
     return ok
 
+
+def test_pit_claims(L):
+    """Two pit scouts should not walk to the same pit: an open form is shown
+    on every other tablet, renewed each minute, and gone once it closes."""
+    ok = True
+    L.store.set("eventKey", EK)
+    code, r = L.req("/api/pitclaim", {"team": 9982, "deviceId": "tabA", "scoutId": "AK"})
+    ok &= check("a pit tablet can claim the robot it opened",
+                code == 200 and r["claims"].get("9982", {}).get("tabA", {}).get("scoutId") == "AK")
+    code, st = L.req("/api/state")
+    ok &= check("other tablets see the claim in /api/state",
+                code == 200 and "tabA" in (st.get("pitClaims") or {}).get("9982", {}))
+    code, r = L.req("/api/pitclaim", {"team": 9982, "deviceId": "tabB", "scoutId": "JM"})
+    ok &= check("a second tablet opening the same robot does not replace the first",
+                set(r["claims"]["9982"]) == {"tabA", "tabB"})
+    code, r = L.req("/api/pitclaim", {"team": 9982, "deviceId": "tabB", "release": True})
+    ok &= check("closing the second leaves the first's claim alone",
+                set(r["claims"].get("9982", {})) == {"tabA"})
+    code, r = L.req("/api/pitclaim", {"team": 9982, "deviceId": "tabA", "release": True})
+    ok &= check("the claiming tablet can release it", "9982" not in r["claims"])
+
+    L.req("/api/pitclaim", {"team": 9983, "deviceId": "tabA", "scoutId": "AK"})
+    def age(c):
+        for holders in c.values():
+            for v in holders.values():
+                v["at"] -= hub.Hub.PIT_CLAIM_SECONDS + 5
+        return c, None
+    L.store.mutate("pitClaims:" + EK, age, default=dict)
+    ok &= check("a claim nobody renews runs out", "9983" not in L.hub.pit_claims(EK))
+
+    for bad in ({"team": "x", "deviceId": "t"}, {"team": 9982}, {"team": -4, "deviceId": "t"}):
+        code, _ = L.req("/api/pitclaim", bad)
+        ok &= check("a claim without a real team and device is refused (%s)" % sorted(bad), code == 400)
+    return ok
 
 def test_hostile_input(L):
     """Anything on the venue wifi can POST here. None of it may take a thread down.
@@ -967,7 +1032,7 @@ def test_config_scope(L):
     code, c = L.req("/api/config")
     ok &= check("config reports which keys are set",
                 code == 200 and c["keys"] == {"tba": False, "nexus": False, "frcEvents": False,
-                                              "lovat": False, "ai": False, "mirror": False},
+                                              "lovat": False, "match13": False, "ai": False, "mirror": False},
                 f"({c['keys']})")
     L.req("/api/config", {"frcEventsUser": "someone", "frcEventsToken": "secret"})
     code, c = L.req("/api/config")
@@ -1156,10 +1221,28 @@ def test_key_hygiene(L):
     for f in ("nexusKey", "lovatKey", "aiKey", "frcEventsUser", "frcEventsToken", "mirrorKey"):
         L.req("/api/config", {f: ""})
     L.req("/api/config", {"aiModel": "none", "mirrorUrl": ""})
-    code, r = L.req("/api/keytest", {})
+    # Statbotics has no key and is always asked; it is stubbed here, answering
+    # the way it really did while this was written: HTTP 500 with a `[]` body.
+    keep = sources._request
+    sources._request = lambda *a, **k: ([], 500)
+    try:
+        code, r = L.req("/api/keytest", {})
+    finally:
+        sources._request = keep
+    sb = r["checked"].pop("statbotics", {})
     ok &= check("testing the keys reports every unset one as unset, not as broken",
                 code == 200 and all(v["state"] == "unset" for v in r["checked"].values()),
                 f"({r.get('checked')})")
+    ok &= check("a Statbotics that answers 500 is called down, and named as their end",
+                sb.get("state") == "down" and "HTTP 500" in sb.get("detail", ""), f"({sb})")
+    sources._request = lambda *a, **k: ([], 500)
+    try:
+        L.hub.statbotics.down_until = 0.0
+        ok &= check("and its empty error body is not read as data",
+                    L.hub.statbotics._get("/team_events?event=x") is None)
+    finally:
+        sources._request = keep
+        L.hub.statbotics.down_until = 0.0
 
     L.store.set("eventKey", was)      # hand the shared harness back its event
     return ok
@@ -1994,7 +2077,8 @@ def test_scope_lists_are_complete(L):
              h.nexus_data("pits", EK, {}), h.nexus_data("pitMap", EK),
              h.nexus_data("inspection", EK, {}), h.nexus_data("alliances", EK, []),
              st.flags(EK), h.seats(), st.get("matchClocks"), st.get("clockFixes"),
-             st.pit_entries(EK), st.get("pitQuestions"), h.event_data("rankings", EK, {}),
+             st.pit_entries(EK), st.get("pitQuestions"), h.pit_claims(EK),
+             h.event_data("rankings", EK, {}),
              h.event_data("epa", EK, {}), h.event_data("earlyScores", EK, {}))),
         ("ANALYTICS_SCOPES", hub.ANALYTICS_SCOPES,
          {"matches", "teams", "scout_entries", "solved"},
@@ -2594,6 +2678,67 @@ def test_two_saves_at_once_keep_both_keys(L):
     return ok
 
 
+def test_match13(L):
+    """Match 13: the key is sent as a Bearer, its ratings land beside EPA on
+    each team, its forecasts reach the match screen, and a refusal backs off."""
+    ok = True
+    keep = sources._request
+    seen = []
+    teams = {"eventKey": EK, "year": 2026, "teams": [
+        {"teamNumber": 101, "xpStart": 40.0, "xpEnd": 52.345, "xAuto": 10.0, "xTele": 30.0,
+         "xEnd": 12.0, "opr": 50.0},
+        {"teamNumber": 102, "xpStart": 20.0, "xpEnd": None, "xAuto": None, "xTele": None,
+         "xEnd": None},
+        {"teamNumber": "junk"}]}
+    matches = {"eventKey": EK, "year": 2026, "matches": [
+        {"key": EK + "_qm1", "pred": {"winProb": 0.73456, "redScore": 101.26, "blueScore": 80.0}},
+        {"key": None, "pred": {}}]}
+
+    def fake(url, headers=None, **k):
+        seen.append((url, (headers or {}).get("Authorization")))
+        if url.endswith("/teams"):
+            return teams, 200
+        if url.endswith("/matches"):
+            return matches, 200
+        return {"years": [2026]}, 200
+    try:
+        r = L.req("/api/config", {"match13Key": "m13_live_" + "a" * 24})
+        ok &= check("a Match 13 key saves", r[0] == 200, f"({r})")
+        sources._request = fake
+        L.hub.poll_match13()
+        ok &= check("the key goes as a Bearer to actions.match13.com",
+                    seen and seen[0][0].startswith("https://actions.match13.com/v1/events/")
+                    and seen[0][1] == "Bearer m13_live_" + "a" * 24, f"({seen[:1]})")
+        code, a = L.req("/api/analytics")
+        t = (a.get("teams") or {}).get("101") or (a.get("teams") or {}).get(101) or {}
+        ok &= check("a team's xP is its latest rating, rounded", (t.get("m13") or {}).get("xp") == 52.3,
+                    f"({t.get('m13')})")
+        t2 = (a.get("teams") or {}).get("102") or (a.get("teams") or {}).get(102) or {}
+        ok &= check("before its first match a team's xP is the one it arrived with",
+                    (t2.get("m13") or {}).get("xp") == 20.0, f"({t2.get('m13')})")
+        code, st = L.req("/api/state")
+        f = (st.get("m13Matches") or {}).get(EK + "_qm1") or {}
+        ok &= check("match forecasts reach /api/state",
+                    f.get("redWin") == 0.735 and f.get("redScore") == 101.3, f"({f})")
+        ok &= check("a forecast row with no key is dropped", len(st.get("m13Matches") or {}) == 1)
+
+        sources._request = lambda *a, **k: (None, 401)
+        L.hub.match13().down_until = 0.0
+        L.hub.poll_match13()
+        ok &= check("a rejected key backs off rather than re-asking every poll",
+                    L.hub.match13().down_until > time.time())
+        code, st = L.req("/api/state")
+        ok &= check("and the last forecasts are kept, not wiped", len(st.get("m13Matches") or {}) == 1)
+        v = sources.Match13("m13_live_x").verify(EK)
+        ok &= check("Test keys calls a rejected key bad", v["state"] == "bad", f"({v})")
+        ok &= check("a Lovat key in the Match 13 box is refused",
+                    L.req("/api/config", {"match13Key": "lvt-abc123"})[0] == 400)
+    finally:
+        sources._request = keep
+        L.req("/api/config", {"match13Key": ""})
+    return ok
+
+
 def test_a_dead_button_does_not_spend_the_budget(L):
     """The ceiling is there so a stuck button cannot spend a team's credit.
 
@@ -2952,6 +3097,8 @@ def main():
                    test_collection_path_is_intact,
                    test_after_screen_extras_reach_the_dashboard,
                    test_custom_pit_questions,
+                   test_match13,
+                   test_pit_claims,
                    test_one_climb_cannot_also_be_a_fall, test_event_picker_survives_junk,
                    test_env_file_survives_a_failed_write,
                    test_both_halves_read_a_key_the_same_way,

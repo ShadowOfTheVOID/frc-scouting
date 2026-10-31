@@ -107,3 +107,24 @@ def trusted(raw):
         seen.add(qid)
         out.append(shaped)
     return out
+
+
+#: The questions every pit form starts with, as (field, label). A team can
+#: remove any of them from its own forms; the field names are what the answers
+#: are filed under, so they never change.
+BUILTIN = (("drivetrain", "Drivetrain"), ("shooter", "How do they shoot?"),
+           ("maxClimb", "Highest tower level they claim"),
+           ("stockpile", "Can they hold fuel through an inactive shift?"),
+           ("groundPickup", "Ground pickup?"), ("autos", "Auto routines"),
+           ("weight", "Weight (lb)"), ("notes", "Notes"), ("photos", "Photos"))
+BUILTIN_FIELDS = tuple(f for f, _ in BUILTIN)
+
+
+def clean_hidden(raw):
+    """The built-in questions a team removed, as a list of known field names.
+
+    Anything that is not one of BUILTIN_FIELDS is dropped; order follows the
+    form, so the same choice always saves as the same list.
+    """
+    picked = set(x for x in (raw if isinstance(raw, list) else []) if isinstance(x, str))
+    return [f for f in BUILTIN_FIELDS if f in picked]
